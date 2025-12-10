@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./app:/app/app
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_ENABLED=true
+      - DUCKDB_PATH=/app/data/storage_analytics.duckdb
+      - SNAPSHOTS_PATH=/app/data/snapshots
+    depends_on:
+      - redis
+    networks:
+      - storage-analytics
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - storage-analytics
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+
+networks:
+  storage-analytics:
+    driver: bridge
