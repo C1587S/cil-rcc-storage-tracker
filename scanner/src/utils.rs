@@ -1,4 +1,3 @@
-use std::fmt;
 
 /// Format bytes in human-readable format (e.g., 1.5 GB, 256 MB)
 pub fn format_bytes(bytes: u64) -> String {

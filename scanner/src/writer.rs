@@ -12,7 +12,7 @@ use parquet::file::properties::WriterProperties;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Parquet writer for FileEntry records
 pub struct ParquetFileWriter {
