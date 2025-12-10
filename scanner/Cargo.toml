@@ -1,0 +1,53 @@
+[package]
+name = "storage-scanner"
+version = "0.1.0"
+edition = "2021"
+authors = ["S Cadavid-Sanchez"]
+description = "filesystem scanner for storage analytics"
+license = "MIT"
+
+[[bin]]
+name = "storage-scanner"
+path = "src/main.rs"
+
+[lib]
+name = "storage_scanner"
+path = "src/lib.rs"
+
+[dependencies]
+jwalk = "0.8"
+rayon = "1.8"
+arrow = "40.0"
+parquet = "40.0"
+clap = { version = "4.4", features = ["derive", "cargo"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.35", features = ["full"] }
+chrono = { version = "=0.4.31", default-features = false }
+anyhow = "1.0"
+thiserror = "1.0"
+indicatif = { version = "0.17", features = ["rayon"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi"] }
+humantime = "2.1"
+num_cpus = "1.16"
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+tempfile = "3.8"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+
+[[bench]]
+name = "scan_benchmark"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.bench]
+inherits = "release"

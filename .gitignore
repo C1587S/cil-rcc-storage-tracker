@@ -1,0 +1,75 @@
+# Rust
+scanner/target/
+scanner/**/*.rs.bk
+scanner/Cargo.lock
+scanner/**/*.pdb
+
+# Python
+backend/__pycache__/
+backend/**/*.py[cod]
+backend/**/*$py.class
+backend/**/*.so
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
+backend/.env
+backend/venv/
+backend/env/
+backend/**/*.egg-info/
+backend/dist/
+backend/build/
+
+# Node/Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/build/
+frontend/.turbo/
+frontend/.vercel/
+frontend/**/*.log
+frontend/.env*.local
+
+# IDE
+.vscode/
+.idea/
+**/*.swp
+**/*.swo
+**/*~
+.DS_Store
+
+# Testing
+scanner/tests/fixtures/test_project/
+backend/tests/fixtures/sample_snapshots/
+**/coverage/
+
+# Logs
+logs/
+**/*.log
+
+# Snapshots and data
+snapshots/
+**/*.parquet
+**/*.duckdb
+**/*.db
+
+# Temporary files
+tmp/
+temp/
+**/*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Benchmarks
+scanner/target/criterion/
+
+# Documentation build
+docs/_build/
+docs/.doctrees/
+
+# Environment
+.env
+.env.local
+.env.*.local
