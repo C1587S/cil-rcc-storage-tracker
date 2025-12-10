@@ -3,7 +3,12 @@ import type { SearchParams, SearchResponse, FileEntry } from '@/lib/types'
 
 export const searchApi = {
   files: (params: SearchParams): Promise<SearchResponse> => {
-    return apiClient.get<SearchResponse>('/api/search', params)
+    return apiClient.get<SearchResponse>('/api/search', params as unknown as Record<string, unknown>)
+  },
+
+  // Alias for consistency
+  search: (params: SearchParams): Promise<SearchResponse> => {
+    return apiClient.get<SearchResponse>('/api/search', params as unknown as Record<string, unknown>)
   },
 
   history: (path: string): Promise<{ history: FileEntry[] }> => {

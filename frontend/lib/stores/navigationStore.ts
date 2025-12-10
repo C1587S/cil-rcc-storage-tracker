@@ -43,9 +43,9 @@ function getParentPath(path: string): string {
 }
 
 export const useNavigationStore = create<NavigationState>((set, get) => ({
-  currentPath: '/project',
+  currentPath: '/',
   snapshot: null,
-  breadcrumbs: generateBreadcrumbs('/project'),
+  breadcrumbs: generateBreadcrumbs('/'),
 
   setCurrentPath: (path) => {
     const breadcrumbs = generateBreadcrumbs(path)
@@ -61,14 +61,14 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
   },
 
   navigateToRoot: () => {
-    get().setCurrentPath('/project')
+    get().setCurrentPath('/')
   },
 
   reset: () => {
     set({
-      currentPath: '/project',
+      currentPath: '/',
       snapshot: null,
-      breadcrumbs: generateBreadcrumbs('/project'),
+      breadcrumbs: generateBreadcrumbs('/'),
     })
   },
 }))
