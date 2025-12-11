@@ -429,7 +429,7 @@ export function VoronoiTreemapView({ path, snapshot }: VoronoiTreemapViewProps) 
               }
             })
         } else {
-          // Files as hexagons
+          // Files as hexagons - NOT clickable, only show tooltip
           const color = getFileColor(nodeData.name)
           const fileRadius = Math.max(4, Math.min(radius, 20))
 
@@ -453,6 +453,7 @@ export function VoronoiTreemapView({ path, snapshot }: VoronoiTreemapViewProps) 
                 .attr('stroke-width', 1)
               hideTooltip()
             })
+            // No click handler for files
         }
       })
 
@@ -627,7 +628,7 @@ export function VoronoiTreemapView({ path, snapshot }: VoronoiTreemapViewProps) 
             }
           })
       } else {
-        // Files as colored rectangles with rounded corners
+        // Files as colored rectangles - NOT clickable, only show tooltip
         const color = getFileColor(nodeData.name)
 
         g.append('rect')
@@ -655,6 +656,7 @@ export function VoronoiTreemapView({ path, snapshot }: VoronoiTreemapViewProps) 
               .attr('stroke-width', 1)
             hideTooltip()
           })
+          // No click handler for files
       }
     })
   }

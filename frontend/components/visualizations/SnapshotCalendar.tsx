@@ -43,7 +43,7 @@ export function SnapshotCalendar() {
 
   if (isLoading) {
     return (
-      <div className="h-64 flex items-center justify-center text-muted-foreground">
+      <div className="h-32 flex items-center justify-center text-muted-foreground">
         <div className="animate-pulse">Loading calendar...</div>
       </div>
     )
@@ -51,7 +51,7 @@ export function SnapshotCalendar() {
 
   if (snapshots.length === 0) {
     return (
-      <div className="h-64 flex items-center justify-center text-muted-foreground">
+      <div className="h-32 flex items-center justify-center text-muted-foreground">
         <div className="text-center">
           <p>No snapshots available</p>
           <p className="text-xs mt-2">Scan a directory to create your first snapshot</p>
@@ -61,7 +61,7 @@ export function SnapshotCalendar() {
   }
 
   return (
-    <div className="h-64 w-full">
+    <div className="h-32 w-full">
       <ResponsiveCalendar
         data={calendarData}
         from={dateRange.from}

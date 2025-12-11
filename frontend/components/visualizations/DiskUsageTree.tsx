@@ -3,9 +3,7 @@
 import { useState } from 'react'
 import { foldersApi } from '@/lib/api'
 import { useQuery } from '@tanstack/react-query'
-import { formatBytes, getFileExtension } from '@/lib/utils/formatters'
-import { ChevronRight, ChevronDown, Folder, File } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { formatBytes } from '@/lib/utils/formatters'
 import type { FolderTreeNode } from '@/lib/types'
 
 interface TreeNodeProps {
@@ -14,153 +12,124 @@ interface TreeNodeProps {
   maxSize: number
   depth?: number
   parentExpanded?: boolean
+  isLast?: boolean
+  prefix?: string
 }
 
-const getFileTypeColor = (name: string, isDirectory: boolean): string => {
-  if (isDirectory) return '#3b82f6'
-
-  const ext = getFileExtension(name).toLowerCase()
-  const colorMap: Record<string, string> = {
-    'py': '#3776ab',
-    'js': '#f7df1e',
-    'ts': '#3178c6',
-    'json': '#292929',
-    'csv': '#16a34a',
-    'log': '#6b7280',
-    'txt': '#9ca3af',
-    'pdf': '#dc2626',
-    'zip': '#7c3aed',
-    'tar': '#7c3aed',
-    'gz': '#6d28d9',
-  }
-  return colorMap[ext] || '#10b981'
+// Terminal-like box drawing characters
+const TREE_CHARS = {
+  branch: '├── ',
+  last: '└── ',
+  vertical: '│   ',
+  space: '    ',
 }
 
-// Helper function to adjust color brightness
-const adjustColor = (color: string, amount: number): string => {
-  // Convert hex to RGB
-  const hex = color.replace('#', '')
-  const r = parseInt(hex.substring(0, 2), 16)
-  const g = parseInt(hex.substring(2, 4), 16)
-  const b = parseInt(hex.substring(4, 6), 16)
-
-  // Adjust brightness
-  const newR = Math.max(0, Math.min(255, r + amount))
-  const newG = Math.max(0, Math.min(255, g + amount))
-  const newB = Math.max(0, Math.min(255, b + amount))
-
-  // Convert back to hex
-  return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`
+// Color palette inspired by rich library
+const COLORS = {
+  directory: 'text-blue-400',
+  file: 'text-gray-400',
+  size: 'text-yellow-400',
+  percent: 'text-cyan-400',
+  bar: 'text-green-400',
+  barHeavy: 'text-red-400',
+  barMedium: 'text-yellow-400',
+  barLight: 'text-green-400',
 }
 
-function TreeNode({ node, snapshot, maxSize, depth = 0, parentExpanded = true }: TreeNodeProps) {
+function TreeNode({
+  node,
+  snapshot,
+  maxSize,
+  depth = 0,
+  parentExpanded = true,
+  isLast = false,
+  prefix = ''
+}: TreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const hasChildren = node.is_directory && (node.children?.length ?? 0) > 0
   const percentage = (node.size / maxSize) * 100
-  const barColor = getFileTypeColor(node.name, node.is_directory)
-
-  // Calculate opacity based on size (larger files = more opaque, like dutree)
-  const opacity = Math.min(0.95, 0.4 + (percentage / 100) * 0.6)
-
-  // Calculate gradient colors - lighter files vs heavier files
-  const getGradientColors = (baseColor: string, weight: number) => {
-    // Weight goes from 0 (light files) to 1 (heavy files)
-    if (weight > 0.7) {
-      // Heavy files: darker, more saturated colors
-      return `linear-gradient(90deg, ${baseColor} 0%, ${adjustColor(baseColor, -20)} 100%)`
-    } else if (weight > 0.3) {
-      // Medium files: standard gradient
-      return `linear-gradient(90deg, ${baseColor} 0%, ${adjustColor(baseColor, -10)} 100%)`
-    } else {
-      // Light files: lighter, less saturated colors
-      return `linear-gradient(90deg, ${adjustColor(baseColor, 30)} 0%, ${baseColor} 100%)`
-    }
-  }
-
-  const gradientStyle = getGradientColors(barColor, percentage / 100)
 
   // Only show if parent is expanded or if we're at root level
   if (!parentExpanded && depth > 0) return null
 
+  // Calculate bar width (max 30 characters for the bar)
+  const barWidth = Math.max(1, Math.floor((percentage / 100) * 30))
+  const barChar = percentage > 70 ? '█' : percentage > 30 ? '▓' : '░'
+  const bar = barChar.repeat(barWidth)
+
+  // Choose bar color based on percentage
+  const barColor = percentage > 70 ? COLORS.barHeavy : percentage > 30 ? COLORS.barMedium : COLORS.barLight
+
+  // Tree structure prefix
+  const connector = isLast ? TREE_CHARS.last : TREE_CHARS.branch
+  const linePrefix = prefix + connector
+
   return (
-    <div className="font-mono text-xs">
-      <div className="flex items-center gap-2 hover:bg-accent py-1 px-2 rounded group transition-colors">
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          {hasChildren ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-5 w-5 p-0 hover:bg-accent/50"
-              onClick={() => setIsExpanded(!isExpanded)}
-            >
-              {isExpanded ? (
-                <ChevronDown className="h-3.5 w-3.5" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5" />
-              )}
-            </Button>
-          ) : (
-            <span className="w-5" />
+    <div className="font-mono text-xs leading-relaxed">
+      <div
+        className="flex items-center hover:bg-accent/5 group transition-colors cursor-pointer"
+        onClick={() => hasChildren && setIsExpanded(!isExpanded)}
+      >
+        {/* Tree structure and name */}
+        <div className="flex items-center min-w-0 flex-shrink-0" style={{ width: '400px' }}>
+          <span className="text-muted-foreground/50 select-none">{linePrefix}</span>
+
+          {hasChildren && (
+            <span className="mr-1 text-muted-foreground">
+              {isExpanded ? '▼' : '▶'}
+            </span>
           )}
 
-          {node.is_directory ? (
-            <Folder className="h-3.5 w-3.5 flex-shrink-0 text-blue-500" />
-          ) : (
-            <File className="h-3.5 w-3.5 flex-shrink-0 text-gray-500" />
-          )}
+          <span className={node.is_directory ? COLORS.directory : COLORS.file}>
+            {node.is_directory ? '📁 ' : '📄 '}
+            {node.name}
+          </span>
 
-          <span className="truncate font-medium text-foreground">{node.name}</span>
           {node.is_directory && node.file_count > 0 && (
-            <span className="text-[9px] text-muted-foreground ml-1">
+            <span className="text-muted-foreground/50 ml-1 text-[10px]">
               ({node.file_count.toLocaleString()})
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-3 flex-shrink-0">
-          <div className="w-56 bg-secondary/30 rounded-full h-5 overflow-hidden shadow-sm">
-            <div
-              className="h-full flex items-center px-2 transition-all duration-300"
-              style={{
-                width: `${Math.max(percentage, 2)}%`,
-                background: gradientStyle,
-                opacity: opacity,
-              }}
-            >
-              {percentage > 8 && (
-                <span className="text-[10px] text-white font-semibold whitespace-nowrap drop-shadow-sm">
-                  {formatBytes(node.size)}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <span className="text-[10px] text-muted-foreground w-12 text-right tabular-nums">
-            {percentage.toFixed(1)}%
+        {/* Bar visualization */}
+        <div className="flex items-center gap-3 ml-4">
+          <span className={`${barColor} min-w-[240px]`}>
+            {bar}
           </span>
 
-          {percentage <= 8 && (
-            <span className="text-[10px] text-muted-foreground w-16 text-right tabular-nums">
-              {formatBytes(node.size)}
-            </span>
-          )}
+          <span className={`${COLORS.size} w-20 text-right tabular-nums`}>
+            {formatBytes(node.size)}
+          </span>
+
+          <span className={`${COLORS.percent} w-12 text-right tabular-nums`}>
+            {percentage.toFixed(1)}%
+          </span>
         </div>
       </div>
 
+      {/* Children */}
       {isExpanded && hasChildren && (
-        <div className="ml-4 border-l-2 border-border/50 pl-2 mt-0.5">
+        <div>
           {node.children!
             .sort((a, b) => b.size - a.size)
-            .map((child) => (
-              <TreeNode
-                key={child.path}
-                node={child}
-                snapshot={snapshot}
-                maxSize={maxSize}
-                depth={depth + 1}
-                parentExpanded={isExpanded}
-              />
-            ))}
+            .map((child, index) => {
+              const isLastChild = index === node.children!.length - 1
+              const childPrefix = prefix + (isLast ? TREE_CHARS.space : TREE_CHARS.vertical)
+
+              return (
+                <TreeNode
+                  key={child.path}
+                  node={child}
+                  snapshot={snapshot}
+                  maxSize={maxSize}
+                  depth={depth + 1}
+                  parentExpanded={isExpanded}
+                  isLast={isLastChild}
+                  prefix={childPrefix}
+                />
+              )
+            })}
         </div>
       )}
     </div>
@@ -176,8 +145,8 @@ export function DiskUsageTree({ path, snapshot }: { path: string; snapshot: stri
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-32 text-muted-foreground">
-        Loading tree structure...
+      <div className="flex items-center justify-center h-32 text-muted-foreground font-mono text-sm">
+        <div className="animate-pulse">Loading tree structure...</div>
       </div>
     )
   }
@@ -185,7 +154,7 @@ export function DiskUsageTree({ path, snapshot }: { path: string; snapshot: stri
   if (error) {
     console.error('DiskUsageTree error:', error)
     return (
-      <div className="flex flex-col items-center justify-center h-32 text-destructive">
+      <div className="flex flex-col items-center justify-center h-32 text-destructive font-mono text-sm">
         <div className="font-semibold">Error loading tree</div>
         <div className="text-xs mt-1">{(error as any)?.message || 'Unknown error'}</div>
         <div className="text-xs text-muted-foreground">Path: {path}</div>
@@ -195,7 +164,7 @@ export function DiskUsageTree({ path, snapshot }: { path: string; snapshot: stri
 
   if (!data) {
     return (
-      <div className="flex items-center justify-center h-32 text-muted-foreground">
+      <div className="flex items-center justify-center h-32 text-muted-foreground font-mono text-sm">
         <div className="text-center">
           <div>No data available</div>
           <div className="text-xs mt-1">Path: {path}</div>
@@ -206,12 +175,12 @@ export function DiskUsageTree({ path, snapshot }: { path: string; snapshot: stri
 
   console.log('DiskUsageTree data:', data)
 
-  // Show only immediate children at first (similar to dutree default behavior)
+  // Show immediate children - both directories AND files (sorted by size)
   const immediateChildren = data.children?.sort((a, b) => b.size - a.size) || []
 
   if (immediateChildren.length === 0) {
     return (
-      <div className="flex items-center justify-center h-32 text-muted-foreground">
+      <div className="flex items-center justify-center h-32 text-muted-foreground font-mono text-sm">
         <div className="text-center">
           <div>No children found</div>
           <div className="text-xs mt-1">{data.name || path}</div>
@@ -221,21 +190,34 @@ export function DiskUsageTree({ path, snapshot }: { path: string; snapshot: stri
   }
 
   return (
-    <div className="space-y-1 p-2">
-      <div className="text-xs text-muted-foreground mb-3 px-2 flex items-center justify-between">
-        <span>Click chevrons to expand folders. Colors indicate file types. Sorted by size.</span>
-        <span className="font-mono text-[10px]">Current: {data.name}</span>
+    <div className="space-y-1 p-4 bg-slate-950 rounded-lg border border-slate-800">
+      {/* Terminal-like header */}
+      <div className="font-mono text-xs text-muted-foreground mb-4 pb-2 border-b border-slate-800 flex items-center justify-between">
+        <span className="text-cyan-400">
+          Current: <span className="text-blue-400">{data.name}</span>
+        </span>
+        <span className="text-yellow-400">
+          Total: {formatBytes(data.size)}
+        </span>
       </div>
-      <div className="space-y-0.5">
-        {immediateChildren.map((child) => (
+
+      {/* Tree visualization */}
+      <div className="space-y-0">
+        {immediateChildren.map((child, index) => (
           <TreeNode
             key={child.path}
             node={child}
             snapshot={snapshot}
             maxSize={data.size}
             depth={0}
+            isLast={index === immediateChildren.length - 1}
           />
         ))}
+      </div>
+
+      {/* Terminal-like footer */}
+      <div className="font-mono text-[10px] text-muted-foreground mt-4 pt-2 border-t border-slate-800">
+        Click items to expand. Bars show relative size. Sorted by size (largest first).
       </div>
     </div>
   )
