@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { DashboardLayout } from '@/components/layout/DashboardLayout'
 import { DiskUsageTree } from '@/components/visualizations/DiskUsageTree'
-import { NivoVoronoiView } from '@/components/visualizations/NivoVoronoiView'
+import { HierarchicalVoronoiView } from '@/components/visualizations/HierarchicalVoronoiView'
 import { HeavyFilesPanel } from '@/components/panels/HeavyFilesPanel'
 import { AdvancedSearchPanel } from '@/components/panels/AdvancedSearchPanel'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -44,7 +44,7 @@ function CollapsibleVoronoiView({ path, snapshot }: { path: string; snapshot: st
       </CardHeader>
       {isExpanded && (
         <CardContent className="pt-0">
-          <NivoVoronoiView path={path} snapshot={snapshot} autoGenerate={true} />
+          <HierarchicalVoronoiView path={path} snapshot={snapshot} autoGenerate={true} />
         </CardContent>
       )}
     </Card>
