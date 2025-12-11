@@ -79,19 +79,22 @@ async def get_snapshot(
     """
     try:
         validate_date_format(date)
+        logger.info(f"Getting snapshot for date: {date}")
         snapshot = await service.get_snapshot(date)
 
         if not snapshot:
+            logger.warning(f"Snapshot not found for date: {date}")
             raise HTTPException(
                 status_code=404,
                 detail=f"Snapshot not found for date: {date}"
             )
 
+        logger.info(f"Successfully retrieved snapshot for date: {date}")
         return snapshot
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting snapshot {date}: {e}")
+        logger.error(f"Error getting snapshot {date}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error retrieving snapshot")
 
 

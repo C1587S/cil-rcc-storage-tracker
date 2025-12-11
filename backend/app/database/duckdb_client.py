@@ -45,11 +45,26 @@ class DuckDBClient:
             # Create view over all parquet snapshots
             snapshot_pattern = str(self.snapshots_path / "**/*.parquet")
 
+            # Extract snapshot date from directory structure
+            # Path format: snapshots/YYYY-MM-DD/filename.parquet
+            # Note: Explicitly select columns to avoid type conversion issues
             self.conn.execute(f"""
                 CREATE OR REPLACE VIEW file_snapshots AS
-                SELECT * FROM read_parquet(
+                SELECT
+                    path,
+                    size,
+                    modified_time,
+                    accessed_time,
+                    created_time,
+                    file_type,
+                    inode,
+                    permissions,
+                    parent_path,
+                    depth,
+                    top_level_dir,
+                    regexp_extract(filename, '([0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}})', 1) as snapshot_date
+                FROM read_parquet(
                     '{snapshot_pattern}',
-                    hive_partitioning = true,
                     union_by_name = true,
                     filename = true
                 )

@@ -46,7 +46,7 @@ class FolderBreakdown(BaseModel):
     total_size: int = Field(..., description="Total size in bytes", ge=0)
     file_count: int = Field(..., description="Total file count", ge=0)
     directory_count: int = Field(..., description="Total directory count", ge=0)
-    items: list[FolderItem] = Field(default_factory=list, description="Folder items")
+    children: list[FolderItem] = Field(default_factory=list, description="Folder items")
     snapshot: Optional[str] = Field(None, description="Snapshot date")
     depth: int = Field(1, description="Depth of breakdown", ge=1)
 

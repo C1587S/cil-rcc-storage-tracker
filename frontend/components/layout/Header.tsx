@@ -1,7 +1,7 @@
 'use client'
 
 import { Menu } from 'lucide-react'
-import { SnapshotSelector } from '@/components/navigation/SnapshotSelector'
+import { SnapshotCalendarSelector } from '@/components/navigation/SnapshotCalendarSelector'
 import { Button } from '@/components/ui/button'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
 
@@ -15,7 +15,7 @@ export function Header({ snapshot }: { snapshot: string }) {
       </Button>
       <h1 className="text-xl font-bold">Storage Analytics</h1>
       <div className="ml-auto">
-        <SnapshotSelector currentSnapshot={snapshot} />
+        <SnapshotCalendarSelector currentSnapshot={snapshot} />
       </div>
     </header>
   )

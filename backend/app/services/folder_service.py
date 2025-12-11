@@ -66,7 +66,7 @@ class FolderService:
                     total_size=0,
                     file_count=0,
                     directory_count=0,
-                    items=[],
+                    children=[],
                     snapshot=snapshot,
                     depth=depth
                 )
@@ -94,7 +94,7 @@ class FolderService:
                 total_size=int(total_size),
                 file_count=df["file_count"].sum(),
                 directory_count=len(items) if group_by == "directory" else 0,
-                items=items,
+                children=items,
                 snapshot=snapshot,
                 depth=depth
             )
@@ -174,9 +174,10 @@ class FolderService:
             FolderTreeNode
         """
         # Get immediate children
-        df = self.db.get_folder_breakdown(path, snapshot, depth=1)
+        df = self.db.get_folder_breakdown(path, snapshot, depth=1, group_by="directory")
 
         if df.is_empty():
+            # This is likely a leaf node (file or empty directory)
             return FolderTreeNode(
                 name=path.split("/")[-1] or path,
                 path=path,
@@ -189,21 +190,37 @@ class FolderService:
 
         # Calculate total size
         total_size = df["total_size"].sum()
+        total_file_count = df["file_count"].sum()
 
         children = []
 
-        # Build child nodes if within depth limit
+        # Build child nodes recursively if within depth limit
         if current_depth < max_depth:
             for row in df.to_dicts():
                 child_path = f"{path}/{row['name']}" if not path.endswith("/") else f"{path}{row['name']}"
                 child_node = await self._build_tree_node(child_path, snapshot, current_depth + 1, max_depth)
+                children.append(child_node)
+        else:
+            # At max depth, create leaf nodes without recursion
+            # This ensures the tree has children to display in visualizations
+            for row in df.to_dicts():
+                child_path = f"{path}/{row['name']}" if not path.endswith("/") else f"{path}{row['name']}"
+                child_node = FolderTreeNode(
+                    name=row['name'],
+                    path=child_path,
+                    size=int(row['total_size']),
+                    file_count=row['file_count'],
+                    is_directory=True,
+                    children=[],  # No further children at max depth
+                    percentage=(row['total_size'] / total_size * 100) if total_size > 0 else 0
+                )
                 children.append(child_node)
 
         node = FolderTreeNode(
             name=path.split("/")[-1] or path,
             path=path,
             size=int(total_size),
-            file_count=df["file_count"].sum(),
+            file_count=total_file_count,
             is_directory=True,
             children=children,
             percentage=100.0  # Will be calculated relative to root

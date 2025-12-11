@@ -22,7 +22,7 @@ echo "Python version OK: $python_version"
 # Create virtual environment if it doesn't exist
 if [ ! -d "venv" ]; then
     echo "Creating virtual environment..."
-    python3 -m venv venv
+    python3.11 -m venv venv
 fi
 
 # Activate virtual environment
@@ -50,7 +50,7 @@ fi
 
 # Run tests to verify installation
 echo "Running tests to verify installation..."
-pytest tests/ -v
+PYTHONPATH=. pytest tests/ -v
 
 echo ""
 echo "Setup complete!"

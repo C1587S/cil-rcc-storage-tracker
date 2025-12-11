@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { DashboardLayout } from '@/components/layout/DashboardLayout'
 import { TreemapView } from '@/components/visualizations/TreemapView'
 import { DiskUsageTree } from '@/components/visualizations/DiskUsageTree'
-import { CirclePackView } from '@/components/visualizations/CirclePackView'
+import { VoronoiTreemapView } from '@/components/visualizations/VoronoiTreemapView'
 import { HeavyFilesPanel } from '@/components/panels/HeavyFilesPanel'
 import { AdvancedSearchPanel } from '@/components/panels/AdvancedSearchPanel'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -134,30 +134,33 @@ export default function DashboardPage({ params }: DashboardPageProps) {
         {/* Advanced Search Panel */}
         <AdvancedSearchPanel snapshot={snapshot} />
 
-        {/* Main Visualizations - Two columns */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Storage Treemap</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[500px]">
-                <TreemapView path={currentPath} snapshot={snapshot} />
-              </div>
-            </CardContent>
-          </Card>
+        {/* Main Visualization - Vertical Tree */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Storage Hierarchy Tree</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Expandable vertical tree view • Click folders to navigate or expand
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[600px]">
+              <TreemapView path={currentPath} snapshot={snapshot} />
+            </div>
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Interactive Storage Explorer (Circle Pack)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[500px]">
-                <CirclePackView path={currentPath} snapshot={snapshot} />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        {/* Voronoi Treemap - Full Width */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Interactive Storage Explorer</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Switch between Voronoi (organic cellular), Circle Pack, and Rectangular layouts • Click to zoom into directories
+            </p>
+          </CardHeader>
+          <CardContent>
+            <VoronoiTreemapView path={currentPath} snapshot={snapshot} />
+          </CardContent>
+        </Card>
 
         {/* Heavy Files Panel */}
         <HeavyFilesPanel snapshot={snapshot} />

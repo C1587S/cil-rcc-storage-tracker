@@ -81,18 +81,25 @@ class SnapshotService:
 
         # Query database
         try:
+            logger.info(f"Querying database for snapshot: {date}")
             snapshot_data = self.db.get_snapshot_info(date)
             if not snapshot_data:
+                logger.warning(f"No snapshot data found in database for: {date}")
                 return None
+
+            logger.info(f"Found snapshot data, fetching breakdowns for: {date}")
 
             # Get breakdown by directory
             breakdown_by_dir = await self._get_breakdown_by_directory(date)
+            logger.debug(f"Directory breakdown has {len(breakdown_by_dir)} entries")
 
             # Get breakdown by type
             breakdown_by_type = await self._get_breakdown_by_type(date)
+            logger.debug(f"Type breakdown has {len(breakdown_by_type)} entries")
 
             # Get largest files
             largest_files = await self._get_largest_files(date, limit=10)
+            logger.debug(f"Found {len(largest_files)} largest files")
 
             snapshot_info = SnapshotInfo(
                 snapshot=Snapshot(**snapshot_data),
@@ -112,7 +119,7 @@ class SnapshotService:
             return snapshot_info
 
         except Exception as e:
-            logger.error(f"Error getting snapshot: {e}")
+            logger.error(f"Error getting snapshot: {e}", exc_info=True)
             return None
 
     async def get_latest_snapshot(self) -> Optional[Snapshot]:

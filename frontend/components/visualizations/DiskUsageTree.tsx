@@ -130,10 +130,10 @@ function TreeNode({ node, snapshot, maxSize, depth = 0, parentExpanded = true }:
 }
 
 export function DiskUsageTree({ path, snapshot }: { path: string; snapshot: string }) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['folder-tree', path, snapshot],
     queryFn: () => foldersApi.getTree(path, snapshot),
-    enabled: !!snapshot,
+    enabled: !!snapshot && !!path,
   })
 
   if (isLoading) {
@@ -144,16 +144,43 @@ export function DiskUsageTree({ path, snapshot }: { path: string; snapshot: stri
     )
   }
 
-  if (!data) {
+  if (error) {
+    console.error('DiskUsageTree error:', error)
     return (
-      <div className="flex items-center justify-center h-32 text-muted-foreground">
-        No data available
+      <div className="flex flex-col items-center justify-center h-32 text-destructive">
+        <div className="font-semibold">Error loading tree</div>
+        <div className="text-xs mt-1">{(error as any)?.message || 'Unknown error'}</div>
+        <div className="text-xs text-muted-foreground">Path: {path}</div>
       </div>
     )
   }
 
+  if (!data) {
+    return (
+      <div className="flex items-center justify-center h-32 text-muted-foreground">
+        <div className="text-center">
+          <div>No data available</div>
+          <div className="text-xs mt-1">Path: {path}</div>
+        </div>
+      </div>
+    )
+  }
+
+  console.log('DiskUsageTree data:', data)
+
   // Show only immediate children at first (similar to dutree default behavior)
   const immediateChildren = data.children?.sort((a, b) => b.size - a.size) || []
+
+  if (immediateChildren.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-32 text-muted-foreground">
+        <div className="text-center">
+          <div>No children found</div>
+          <div className="text-xs mt-1">{data.name || path}</div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-1 p-2">

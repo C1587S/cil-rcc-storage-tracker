@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.database.duckdb_client import DuckDBClient
-from app.routers import snapshots, search, folders, analytics, health
+from app.routers import snapshots, search, folders, analytics, health, viz
 
 # Configure logging
 settings = get_settings()
@@ -61,6 +61,7 @@ app.include_router(snapshots.router, prefix="/api/snapshots", tags=["Snapshots"]
 app.include_router(search.router, prefix="/api/search", tags=["Search"])
 app.include_router(folders.router, prefix="/api/folders", tags=["Folders"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
+app.include_router(viz.router, prefix="/api/viz", tags=["Visualization"])
 
 
 @app.exception_handler(Exception)

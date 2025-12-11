@@ -15,9 +15,15 @@ export const foldersApi = {
   },
 
   getTree: (path: string, snapshot: string): Promise<FolderTreeNode> => {
-    const encodedPath = encodeURIComponent(path)
-    return apiClient.get<FolderTreeNode>(`/api/folders/${encodedPath}/tree`, {
+    // Handle root path specially to avoid double encoding issues
+    const pathSegment = path === '/' ? '' : encodeURIComponent(path)
+    const endpoint = pathSegment
+      ? `/api/folders/${pathSegment}/tree`
+      : '/api/folders/tree'
+
+    return apiClient.get<FolderTreeNode>(endpoint, {
       snapshot,
+      path: path === '/' ? '/' : path, // Send path as query param for clarity
     })
   },
 
