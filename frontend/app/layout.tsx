@@ -4,7 +4,7 @@ import { Providers } from '@/components/providers'
 
 export const metadata: Metadata = {
   title: 'RCC-Storage-Tracker',
-  description: 'Terminal-style storage tracking and visualization system',
+  description: 'Storage tracking and visualization system',
 }
 
 export default function RootLayout({

@@ -68,12 +68,12 @@ export default function DashboardPage({ params }: DashboardPageProps) {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {isLoadingSnapshot ? (
+                {isLoadingFolder ? (
                   <span className="text-muted-foreground">Loading...</span>
-                ) : snapshotError ? (
+                ) : folderError ? (
                   <span className="text-destructive text-sm">Error</span>
-                ) : snapshotData && typeof snapshotData.file_count === 'number' ? (
-                  formatNumber(snapshotData.file_count)
+                ) : folderData && typeof folderData.file_count === 'number' ? (
+                  formatNumber(folderData.file_count)
                 ) : (
                   <span className="text-muted-foreground">-</span>
                 )}
@@ -86,12 +86,12 @@ export default function DashboardPage({ params }: DashboardPageProps) {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {isLoadingSnapshot ? (
+                {isLoadingFolder ? (
                   <span className="text-muted-foreground">Loading...</span>
-                ) : snapshotError ? (
+                ) : folderError ? (
                   <span className="text-destructive text-sm">Error</span>
-                ) : snapshotData && typeof snapshotData.total_size === 'number' ? (
-                  formatBytes(snapshotData.total_size)
+                ) : folderData && typeof folderData.total_size === 'number' ? (
+                  formatBytes(folderData.total_size)
                 ) : (
                   <span className="text-muted-foreground">-</span>
                 )}
