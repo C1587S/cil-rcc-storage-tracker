@@ -2,9 +2,8 @@
 
 import { useState } from 'react'
 import { DashboardLayout } from '@/components/layout/DashboardLayout'
-import { TreemapView } from '@/components/visualizations/TreemapView'
 import { DiskUsageTree } from '@/components/visualizations/DiskUsageTree'
-import { VoronoiTreemapView } from '@/components/visualizations/VoronoiTreemapView'
+import { NivoVoronoiView } from '@/components/visualizations/NivoVoronoiView'
 import { HeavyFilesPanel } from '@/components/panels/HeavyFilesPanel'
 import { AdvancedSearchPanel } from '@/components/panels/AdvancedSearchPanel'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,7 +12,6 @@ import { useNavigationStore } from '@/lib/stores/navigationStore'
 import { useFolderData } from '@/lib/hooks/useFolderData'
 import { useSnapshot } from '@/lib/hooks/useSnapshots'
 import { formatBytes, formatNumber } from '@/lib/utils/formatters'
-import { ChevronDown, ChevronUp } from 'lucide-react'
 
 interface DashboardPageProps {
   params: {
@@ -21,33 +19,32 @@ interface DashboardPageProps {
   }
 }
 
-function CollapsibleDiskUsageTree({ path, snapshot }: { path: string; snapshot: string }) {
-  const [isExpanded, setIsExpanded] = useState(true) // Changed to true - expanded by default
+function CollapsibleVoronoiView({ path, snapshot }: { path: string; snapshot: string }) {
+  const [isExpanded, setIsExpanded] = useState(false)
 
   return (
-    <Card>
-      <CardHeader className="cursor-pointer" onClick={() => setIsExpanded(!isExpanded)}>
+    <Card className="border-2">
+      <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">Disk Usage Tree</CardTitle>
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-            {isExpanded ? (
-              <ChevronUp className="h-4 w-4" />
-            ) : (
-              <ChevronDown className="h-4 w-4" />
-            )}
+          <div className="flex-1">
+            <CardTitle className="text-base font-medium">Voronoi Treemap</CardTitle>
+            <p className="text-xs text-muted-foreground/70 mt-1 font-mono">
+              Source: {path}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="h-8 px-3 text-xs font-medium transition-all hover:bg-accent"
+          >
+            {isExpanded ? 'Hide' : 'Show'}
           </Button>
         </div>
-        {!isExpanded && (
-          <p className="text-xs text-muted-foreground mt-1">
-            Click to expand the detailed disk usage tree view
-          </p>
-        )}
       </CardHeader>
       {isExpanded && (
-        <CardContent>
-          <div className="max-h-[600px] overflow-y-auto">
-            <DiskUsageTree path={path} snapshot={snapshot} />
-          </div>
+        <CardContent className="pt-0">
+          <NivoVoronoiView path={path} snapshot={snapshot} autoGenerate={true} />
         </CardContent>
       )}
     </Card>
@@ -134,39 +131,26 @@ export default function DashboardPage({ params }: DashboardPageProps) {
         {/* Advanced Search Panel */}
         <AdvancedSearchPanel snapshot={snapshot} />
 
-        {/* Main Visualization - Vertical Tree */}
+        {/* Heavy Files Panel */}
+        <HeavyFilesPanel snapshot={snapshot} />
+
+        {/* Disk Usage Tree */}
         <Card>
           <CardHeader>
-            <CardTitle>Storage Hierarchy Tree</CardTitle>
+            <CardTitle className="text-lg">Disk Usage Tree</CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              Expandable vertical tree view • Click folders to navigate or expand
+              dutree-style visualization • Click folders to expand and explore
             </p>
           </CardHeader>
           <CardContent>
-            <div className="h-[600px]">
-              <TreemapView path={currentPath} snapshot={snapshot} />
+            <div className="max-h-[600px] overflow-y-auto">
+              <DiskUsageTree path={currentPath} snapshot={snapshot} />
             </div>
           </CardContent>
         </Card>
 
-        {/* Voronoi Treemap - Full Width */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Interactive Storage Explorer</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              Switch between Voronoi (organic cellular), Circle Pack, and Rectangular layouts • Click to zoom into directories
-            </p>
-          </CardHeader>
-          <CardContent>
-            <VoronoiTreemapView path={currentPath} snapshot={snapshot} />
-          </CardContent>
-        </Card>
-
-        {/* Heavy Files Panel */}
-        <HeavyFilesPanel snapshot={snapshot} />
-
-        {/* Collapsible Disk Usage Tree at Bottom */}
-        <CollapsibleDiskUsageTree path={currentPath} snapshot={snapshot} />
+        {/* Collapsible Voronoi Diagram */}
+        <CollapsibleVoronoiView path={currentPath} snapshot={snapshot} />
       </div>
     </DashboardLayout>
   )

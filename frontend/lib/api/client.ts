@@ -17,16 +17,44 @@ class ApiClient {
   }
 
   private setupInterceptors() {
+    // Request interceptor for logging
+    this.client.interceptors.request.use(
+      (config) => {
+        const fullUrl = `${config.baseURL}${config.url}`
+        console.log('[ApiClient] Making request:', {
+          method: config.method?.toUpperCase(),
+          url: fullUrl,
+          params: config.params
+        })
+        return config
+      },
+      (error) => Promise.reject(error)
+    )
+
+    // Response interceptor for error handling
     this.client.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        console.log('[ApiClient] Response received:', {
+          url: response.config.url,
+          status: response.status,
+          dataKeys: Object.keys(response.data || {})
+        })
+        return response
+      },
       (error: AxiosError<ApiError>) => {
         if (error.response) {
+          console.error('[ApiClient] Error response:', {
+            url: error.config?.url,
+            status: error.response.status,
+            detail: error.response.data?.detail
+          })
           const apiError: ApiError = {
             detail: error.response.data?.detail || error.message,
             status_code: error.response.status,
           }
           return Promise.reject(apiError)
         }
+        console.error('[ApiClient] Network error:', error.message)
         return Promise.reject({
           detail: 'Network error. Please check your connection.',
           status_code: 0,

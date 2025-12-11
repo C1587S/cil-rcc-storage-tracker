@@ -14,16 +14,12 @@ export const foldersApi = {
     })
   },
 
-  getTree: (path: string, snapshot: string): Promise<FolderTreeNode> => {
-    // Handle root path specially to avoid double encoding issues
-    const pathSegment = path === '/' ? '' : encodeURIComponent(path)
-    const endpoint = pathSegment
-      ? `/api/folders/${pathSegment}/tree`
-      : '/api/folders/tree'
-
-    return apiClient.get<FolderTreeNode>(endpoint, {
+  getTree: (path: string, snapshot: string, maxDepth: number = 2): Promise<FolderTreeNode> => {
+    // Always use the /tree endpoint with query parameters to avoid path conflicts
+    return apiClient.get<FolderTreeNode>('/api/folders/tree', {
+      path: path || '/',
       snapshot,
-      path: path === '/' ? '/' : path, // Send path as query param for clarity
+      max_depth: maxDepth,
     })
   },
 

@@ -36,11 +36,48 @@ const getFileTypeColor = (name: string, isDirectory: boolean): string => {
   return colorMap[ext] || '#10b981'
 }
 
+// Helper function to adjust color brightness
+const adjustColor = (color: string, amount: number): string => {
+  // Convert hex to RGB
+  const hex = color.replace('#', '')
+  const r = parseInt(hex.substring(0, 2), 16)
+  const g = parseInt(hex.substring(2, 4), 16)
+  const b = parseInt(hex.substring(4, 6), 16)
+
+  // Adjust brightness
+  const newR = Math.max(0, Math.min(255, r + amount))
+  const newG = Math.max(0, Math.min(255, g + amount))
+  const newB = Math.max(0, Math.min(255, b + amount))
+
+  // Convert back to hex
+  return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`
+}
+
 function TreeNode({ node, snapshot, maxSize, depth = 0, parentExpanded = true }: TreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const hasChildren = node.is_directory && (node.children?.length ?? 0) > 0
   const percentage = (node.size / maxSize) * 100
   const barColor = getFileTypeColor(node.name, node.is_directory)
+
+  // Calculate opacity based on size (larger files = more opaque, like dutree)
+  const opacity = Math.min(0.95, 0.4 + (percentage / 100) * 0.6)
+
+  // Calculate gradient colors - lighter files vs heavier files
+  const getGradientColors = (baseColor: string, weight: number) => {
+    // Weight goes from 0 (light files) to 1 (heavy files)
+    if (weight > 0.7) {
+      // Heavy files: darker, more saturated colors
+      return `linear-gradient(90deg, ${baseColor} 0%, ${adjustColor(baseColor, -20)} 100%)`
+    } else if (weight > 0.3) {
+      // Medium files: standard gradient
+      return `linear-gradient(90deg, ${baseColor} 0%, ${adjustColor(baseColor, -10)} 100%)`
+    } else {
+      // Light files: lighter, less saturated colors
+      return `linear-gradient(90deg, ${adjustColor(baseColor, 30)} 0%, ${baseColor} 100%)`
+    }
+  }
+
+  const gradientStyle = getGradientColors(barColor, percentage / 100)
 
   // Only show if parent is expanded or if we're at root level
   if (!parentExpanded && depth > 0) return null
@@ -67,9 +104,9 @@ function TreeNode({ node, snapshot, maxSize, depth = 0, parentExpanded = true }:
           )}
 
           {node.is_directory ? (
-            <Folder className="h-3.5 w-3.5 flex-shrink-0" style={{ color: barColor }} />
+            <Folder className="h-3.5 w-3.5 flex-shrink-0 text-blue-500" />
           ) : (
-            <File className="h-3.5 w-3.5 flex-shrink-0" style={{ color: barColor }} />
+            <File className="h-3.5 w-3.5 flex-shrink-0 text-gray-500" />
           )}
 
           <span className="truncate font-medium text-foreground">{node.name}</span>
@@ -81,16 +118,17 @@ function TreeNode({ node, snapshot, maxSize, depth = 0, parentExpanded = true }:
         </div>
 
         <div className="flex items-center gap-3 flex-shrink-0">
-          <div className="w-56 bg-secondary rounded-full h-5 overflow-hidden">
+          <div className="w-56 bg-secondary/30 rounded-full h-5 overflow-hidden shadow-sm">
             <div
               className="h-full flex items-center px-2 transition-all duration-300"
               style={{
                 width: `${Math.max(percentage, 2)}%`,
-                backgroundColor: barColor,
+                background: gradientStyle,
+                opacity: opacity,
               }}
             >
               {percentage > 8 && (
-                <span className="text-[10px] text-white font-semibold whitespace-nowrap">
+                <span className="text-[10px] text-white font-semibold whitespace-nowrap drop-shadow-sm">
                   {formatBytes(node.size)}
                 </span>
               )}
