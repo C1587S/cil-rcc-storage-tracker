@@ -8,7 +8,7 @@ import * as d3 from 'd3'
 import { voronoiTreemap } from 'd3-voronoi-treemap'
 import { getFileExtension, formatBytes } from '@/lib/utils/formatters'
 import { Button } from '@/components/ui/button'
-import { Home, ChevronLeft } from 'lucide-react'
+import { Maximize2, Minimize2, Focus } from 'lucide-react'
 
 interface Node {
   name: string
@@ -30,8 +30,8 @@ interface HierarchicalVoronoiViewProps {
 const TERMINAL_COLORS = {
   background: '#0a0e14',
   backgroundLight: '#161b22',
-  folder: '#00ff41',      // Green for directories (like ls -la)
-  folderDark: '#00cc33',
+  folder: '#00ff88ff',      // Green for directories (like ls -la)
+  folderDark: '#02631bff',
   file: '#808080',        // Gray for files
   fileBright: '#a0a0a0',
   text: '#c0c0c0',
@@ -135,9 +135,12 @@ function applyHierarchicalVoronoiTreemap(
 export function HierarchicalVoronoiView({ path, snapshot, autoGenerate = false }: HierarchicalVoronoiViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const [currentNode, setCurrentNode] = useState<Node | null>(null)
-  const [breadcrumbs, setBreadcrumbs] = useState<string[]>([])
+  const [navigationHistory, setNavigationHistory] = useState<Array<{ node: Node | null, path: string }>>([])
   const [isTransitioning, setIsTransitioning] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const zoomRef = useRef<any>(null)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['folder-tree-hierarchical-voronoi', path, snapshot],
@@ -148,40 +151,127 @@ export function HierarchicalVoronoiView({ path, snapshot, autoGenerate = false }
 
   useEffect(() => {
     setCurrentNode(null)
-    setBreadcrumbs([])
+    setNavigationHistory([])
   }, [path])
 
   const zoomIntoNode = useCallback((node: Node) => {
     if (isTransitioning || !node.isDirectory) return
 
     setIsTransitioning(true)
-    setBreadcrumbs(prev => [...prev, currentNode?.path || '/'])
+    // Add current level to history before navigating deeper
+    if (currentNode) {
+      // We're already at a deeper level, add current node to history
+      setNavigationHistory(prev => [...prev, { node: currentNode, path: currentNode.path }])
+    }
     setCurrentNode(node)
 
     setTimeout(() => setIsTransitioning(false), 600)
   }, [currentNode, isTransitioning])
 
-  const navigateBack = useCallback(() => {
-    if (breadcrumbs.length === 0 || isTransitioning) return
+  const recenterView = useCallback(() => {
+    if (svgRef.current && zoomRef.current) {
+      const svg = d3.select(svgRef.current)
+      svg.transition()
+        .duration(750)
+        .call(zoomRef.current.transform as any, d3.zoomIdentity)
+    }
+  }, [])
 
-    setIsTransitioning(true)
-    const newBreadcrumbs = [...breadcrumbs]
-    newBreadcrumbs.pop()
-    setBreadcrumbs(newBreadcrumbs)
-    setCurrentNode(null)
+  const toggleFullscreen = useCallback(async () => {
+    if (!wrapperRef.current) return
 
-    setTimeout(() => setIsTransitioning(false), 600)
-  }, [breadcrumbs, isTransitioning])
+    try {
+      if (!isFullscreen) {
+        await wrapperRef.current.requestFullscreen()
+        setIsFullscreen(true)
+      } else {
+        await document.exitFullscreen()
+        setIsFullscreen(false)
+      }
+    } catch (error) {
+      console.error('Fullscreen error:', error)
+    }
+  }, [isFullscreen])
 
-  const navigateHome = useCallback(() => {
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+
+    const handleEscapeKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        toggleFullscreen()
+      }
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('keydown', handleEscapeKey)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('keydown', handleEscapeKey)
+    }
+  }, [isFullscreen, toggleFullscreen])
+
+  const navigateToPathIndex = useCallback((index: number, rootPartsCount: number) => {
     if (isTransitioning) return
 
     setIsTransitioning(true)
-    setBreadcrumbs([])
-    setCurrentNode(null)
+
+    // The breadcrumb is: [root parts...] + [navigation history...] + [current node]
+    // Calculate which section this index belongs to
+
+    if (index < rootPartsCount) {
+      // Clicking on root path - go back to root
+      setNavigationHistory([])
+      setCurrentNode(null)
+    } else {
+      // Clicking on a navigated folder
+      // index = rootPartsCount + historyIndex (or rootPartsCount + historyLength for current)
+      const historyIndex = index - rootPartsCount
+
+      // If clicking on the last item (currentNode), do nothing
+      const totalItems = navigationHistory.length + (currentNode ? 1 : 0)
+      if (historyIndex === totalItems - 1 && currentNode) {
+        // Already at this level
+        setIsTransitioning(false)
+        return
+      }
+
+      if (historyIndex < navigationHistory.length) {
+        // Clicking on a level in history - navigate to that level
+        setCurrentNode(navigationHistory[historyIndex].node)
+        setNavigationHistory(prev => prev.slice(0, historyIndex))
+      }
+    }
 
     setTimeout(() => setIsTransitioning(false), 600)
-  }, [isTransitioning])
+  }, [navigationHistory, currentNode, isTransitioning, path])
+
+  // Build breadcrumb path parts from navigation history
+  const buildBreadcrumbParts = () => {
+    const parts: string[] = []
+
+    // Start with root path parts
+    const rootParts = path === '/' ? ['root'] : path.split('/').filter(Boolean)
+    parts.push(...rootParts)
+
+    // Add navigation history names
+    navigationHistory.forEach(item => {
+      if (item.node && item.node.name) {
+        parts.push(item.node.name)
+      }
+    })
+
+    // Add current node if it exists
+    if (currentNode && currentNode.name) {
+      parts.push(currentNode.name)
+    }
+
+    return { parts, rootPartsCount: rootParts.length }
+  }
+
+  const { parts: pathParts, rootPartsCount } = buildBreadcrumbParts()
 
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current || isTransitioning) return
@@ -191,7 +281,7 @@ export function HierarchicalVoronoiView({ path, snapshot, autoGenerate = false }
 
     const container = containerRef.current
     const width = container.clientWidth
-    const height = 700
+    const height = isFullscreen ? window.innerHeight - 200 : 700
 
     if (width === 0) return
 
@@ -212,6 +302,7 @@ export function HierarchicalVoronoiView({ path, snapshot, autoGenerate = false }
       })
 
     svg.call(zoom)
+    zoomRef.current = zoom
 
     if (!displayNode.children || displayNode.children.length === 0) {
       g.append('text')
@@ -227,7 +318,7 @@ export function HierarchicalVoronoiView({ path, snapshot, autoGenerate = false }
 
     renderHierarchicalVoronoi(g, displayNode, width, height, zoomIntoNode)
 
-  }, [data, currentNode, isTransitioning, zoomIntoNode])
+  }, [data, currentNode, isTransitioning, zoomIntoNode, isFullscreen])
 
   const renderHierarchicalVoronoi = (
     g: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -299,32 +390,32 @@ export function HierarchicalVoronoiView({ path, snapshot, autoGenerate = false }
           const isDirectory = cellNode.isDirectory
 
           if (isDirectory && !isLeaf) {
-            // Folder: green with darker border
+            // Folder: green with darker border and reduced transparency
             const path = g.append('path')
               .attr('d', 'M' + polygon.map((p: any) => p.join(',')).join('L') + 'Z')
               .attr('fill', TERMINAL_COLORS.folder)
-              .attr('fill-opacity', 0.15)
+              .attr('fill-opacity', 0.25)
               .attr('stroke', TERMINAL_COLORS.folder)
-              .attr('stroke-width', depth === 1 ? 2 : 1.5)
-              .attr('stroke-opacity', 0.6)
+              .attr('stroke-width', depth === 1 ? 2.5 : 2)
+              .attr('stroke-opacity', 0.7)
               .style('cursor', 'pointer')
               .style('transition', 'all 0.2s ease')
 
             path
               .on('mouseover', function(event) {
                 d3.select(this)
-                  .attr('fill-opacity', 0.25)
+                  .attr('fill-opacity', 0.35)
                   .attr('stroke', TERMINAL_COLORS.borderBright)
-                  .attr('stroke-width', depth === 1 ? 3 : 2.5)
+                  .attr('stroke-width', depth === 1 ? 4.5 : 3.5)
                   .attr('stroke-opacity', 1)
                 showTooltip(event, cellNode)
               })
               .on('mouseout', function() {
                 d3.select(this)
-                  .attr('fill-opacity', 0.15)
+                  .attr('fill-opacity', 0.25)
                   .attr('stroke', TERMINAL_COLORS.folder)
-                  .attr('stroke-width', depth === 1 ? 2 : 1.5)
-                  .attr('stroke-opacity', 0.6)
+                  .attr('stroke-width', depth === 1 ? 2.5 : 2)
+                  .attr('stroke-opacity', 0.7)
                 hideTooltip()
               })
               .on('click', function(event) {
@@ -569,20 +660,29 @@ export function HierarchicalVoronoiView({ path, snapshot, autoGenerate = false }
     )
   }
 
-  const displayPath = currentNode ? currentNode.path : path
-  const pathParts = displayPath === '/' ? ['root'] : displayPath.split('/').filter(Boolean)
-
   return (
-    <div className="space-y-4">
+    <div ref={wrapperRef} className={`space-y-4 ${isFullscreen ? 'p-6 bg-[#0a0e14]' : ''}`}>
       <div className="flex items-center gap-2 text-sm font-mono" style={{ color: TERMINAL_COLORS.textDim }}>
         <span className="text-xs uppercase tracking-wider">$</span>
         <div className="flex items-center gap-1 px-3 py-1.5 rounded" style={{ background: TERMINAL_COLORS.backgroundLight }}>
           {pathParts.map((part, index) => (
             <span key={index} className="flex items-center">
-              {index > 0 && <span className="mx-1">/</span>}
-              <span style={{ color: index === pathParts.length - 1 ? TERMINAL_COLORS.folder : TERMINAL_COLORS.textDim }}>
+              {index > 0 && <span className="mx-1" style={{ color: TERMINAL_COLORS.textDim }}>/</span>}
+              <button
+                onClick={() => navigateToPathIndex(index, rootPartsCount)}
+                disabled={index === pathParts.length - 1 || isTransitioning}
+                className="transition-all hover:underline disabled:cursor-default"
+                style={{
+                  color: index === pathParts.length - 1 ? TERMINAL_COLORS.folder : TERMINAL_COLORS.textDim,
+                  cursor: index === pathParts.length - 1 ? 'default' : 'pointer',
+                  textDecoration: index === pathParts.length - 1 ? 'underline' : 'none',
+                  textDecorationColor: TERMINAL_COLORS.folder,
+                  textDecorationThickness: '2px',
+                  textUnderlineOffset: '4px'
+                }}
+              >
                 {part}
-              </span>
+              </button>
             </span>
           ))}
         </div>
@@ -593,36 +693,38 @@ export function HierarchicalVoronoiView({ path, snapshot, autoGenerate = false }
           <Button
             variant="outline"
             size="sm"
-            onClick={navigateHome}
-            disabled={breadcrumbs.length === 0 || isTransitioning}
+            onClick={recenterView}
+            disabled={isTransitioning}
             className="h-9 px-3 font-mono"
             style={{
               borderColor: TERMINAL_COLORS.border,
               color: TERMINAL_COLORS.text,
               background: TERMINAL_COLORS.backgroundLight
             }}
+            title="Recenter view"
           >
-            <Home className="h-4 w-4 mr-2" />
-            Root
+            <Focus className="h-4 w-4 mr-2" />
+            Recenter
           </Button>
 
-          {breadcrumbs.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={navigateBack}
-              disabled={isTransitioning}
-              className="h-9 px-3 font-mono"
-              style={{
-                borderColor: TERMINAL_COLORS.border,
-                color: TERMINAL_COLORS.text,
-                background: TERMINAL_COLORS.backgroundLight
-              }}
-            >
-              <ChevronLeft className="h-4 w-4 mr-2" />
-              Back
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={toggleFullscreen}
+            className="h-9 px-3 font-mono"
+            style={{
+              borderColor: TERMINAL_COLORS.border,
+              color: TERMINAL_COLORS.text,
+              background: TERMINAL_COLORS.backgroundLight
+            }}
+            title={isFullscreen ? 'Exit fullscreen (ESC)' : 'Enter fullscreen'}
+          >
+            {isFullscreen ? (
+              <><Minimize2 className="h-4 w-4 mr-2" />Exit</>
+            ) : (
+              <><Maximize2 className="h-4 w-4 mr-2" />Fullscreen</>
+            )}
+          </Button>
         </div>
       </div>
 

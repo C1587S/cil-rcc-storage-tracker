@@ -66,33 +66,48 @@ export function SnapshotCalendar() {
         data={calendarData}
         from={dateRange.from}
         to={dateRange.to}
-        emptyColor="#eeeeee"
-        colors={['#d6e4ff', '#adc6ff', '#85a5ff', '#597ef7', '#2f54eb', '#1d39c4', '#10239e']}
+        emptyColor="#161b22"
+        colors={['#ff990033', '#ff990066', '#ff990099', '#ff9900cc', '#ff9900']}
         margin={{ top: 20, right: 20, bottom: 20, left: 20 }}
         yearSpacing={40}
-        monthBorderColor="#ffffff"
+        monthBorderColor="#30363d"
         dayBorderWidth={2}
-        dayBorderColor="#ffffff"
-        onClick={(day) => {
-          // Navigate to snapshot when a day is clicked
-          router.push(`/dashboard/${day.day}`)
+        dayBorderColor="#30363d"
+        theme={{
+          background: '#0a0e14',
+          textColor: '#c0c0c0',
+          fontSize: 11,
+          labels: {
+            text: {
+              fill: '#c0c0c0',
+              fontFamily: 'monospace'
+            }
+          }
         }}
-        tooltip={({ day, value, color }) => (
+        onClick={(day) => {
+          if (day.value) {
+            router.push(`/dashboard/${day.day}`)
+          }
+        }}
+        tooltip={({ day, value }) => (
           <div
             style={{
-              background: 'white',
+              background: '#161b22',
               padding: '9px 12px',
-              border: '1px solid #ccc',
+              border: '1px solid #30363d',
               borderRadius: '4px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
+              color: '#c0c0c0',
+              fontFamily: 'monospace',
+              fontSize: '12px'
             }}
           >
-            <strong>{day}</strong>
+            <strong style={{ color: '#ffffff' }}>{day}</strong>
             <br />
             {value ? (
-              <span>Snapshot available</span>
+              <span style={{ color: '#ff9900' }}>Snapshot available - Click to view</span>
             ) : (
-              <span style={{ color: '#999' }}>No snapshot</span>
+              <span style={{ color: '#606060' }}>No snapshot</span>
             )}
           </div>
         )}

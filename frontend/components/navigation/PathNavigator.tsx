@@ -13,8 +13,9 @@ export function PathNavigator() {
         variant="ghost"
         size="sm"
         onClick={() => setCurrentPath('/')}
+        className="hover:bg-[#ff9900]/10"
       >
-        <Home className="h-4 w-4" />
+        <Home className="h-4 w-4 text-[#ff9900]" />
       </Button>
       {breadcrumbs.map((crumb, idx) => (
         <div key={crumb.path} className="flex items-center gap-2">
@@ -23,6 +24,7 @@ export function PathNavigator() {
             variant={crumb.isLast ? 'default' : 'ghost'}
             size="sm"
             onClick={() => setCurrentPath(crumb.path)}
+            className={crumb.isLast ? 'bg-[#ff9900] hover:bg-[#ff9900]/90 text-white' : 'hover:bg-[#ff9900]/10'}
           >
             {crumb.label}
           </Button>

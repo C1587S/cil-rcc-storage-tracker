@@ -73,8 +73,8 @@ export function AdvancedSearchPanel({ snapshot }: AdvancedSearchPanelProps) {
     <Card className="w-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Search className="h-5 w-5" />
-          Advanced File Search
+          <Search className="h-5 w-5 text-[#ff9900]" />
+          File Search
         </CardTitle>
         <CardDescription>
           Search using patterns, regular expressions, or SQL-like filters
@@ -91,7 +91,7 @@ export function AdvancedSearchPanel({ snapshot }: AdvancedSearchPanelProps) {
               placeholder="e.g., *.py, data_202[0-9].csv, name:*.txt, path:/project/*/data"
               className="flex-1 font-mono text-sm"
             />
-            <Button type="submit" disabled={!query.trim() || isLoading}>
+            <Button type="submit" disabled={!query.trim() || isLoading} className="bg-[#ff9900] hover:bg-[#ff9900]/90 text-white">
               <Search className="h-4 w-4 mr-2" />
               Search
             </Button>

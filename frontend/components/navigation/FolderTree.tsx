@@ -60,7 +60,7 @@ function TreeNode({ name, path, size, fileCount, isDirectory, snapshot, depth, i
 
         {/* Icon */}
         {isDirectory ? (
-          <Folder className="w-3.5 h-3.5 text-blue-500/70 flex-shrink-0" />
+          <Folder className="w-3.5 h-3.5 text-[#ff9900]/70 flex-shrink-0" />
         ) : (
           <FileText className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
         )}
