@@ -77,13 +77,17 @@ class FolderService:
             # Convert to FolderItem objects
             items = []
             for row in df.to_dicts():
+                # Use is_directory from query if available (for group_by='directory')
+                # For group_by='type', treat as file type aggregation (not directories)
+                is_dir = row.get("is_directory", group_by == "directory")
+
                 item = FolderItem(
                     name=row["name"],
                     path=f"{path}/{row['name']}" if not path.endswith("/") else f"{path}{row['name']}",
                     size=row["total_size"],
                     file_count=row["file_count"],
-                    is_directory=group_by == "directory",
-                    file_type=None if group_by == "directory" else row["name"],
+                    is_directory=is_dir,
+                    file_type=None if is_dir else row.get("name"),
                     percentage=(row["total_size"] / total_size * 100) if total_size > 0 else 0,
                     last_modified=str(row.get("last_modified")) if row.get("last_modified") else None
                 )
@@ -173,8 +177,8 @@ class FolderService:
         Returns:
             FolderTreeNode
         """
-        # Get immediate children
-        df = self.db.get_folder_breakdown(path, snapshot, depth=1, group_by="directory")
+        # Get immediate children (not aggregated from subdirectories)
+        df = self.db.get_immediate_children(path, snapshot)
 
         if df.is_empty():
             # This is likely a leaf node (file or empty directory)
@@ -210,7 +214,7 @@ class FolderService:
                     path=child_path,
                     size=int(row['total_size']),
                     file_count=row['file_count'],
-                    is_directory=True,
+                    is_directory=row.get('is_directory', True),  # Use value from query
                     children=[],  # No further children at max depth
                     percentage=(row['total_size'] / total_size * 100) if total_size > 0 else 0
                 )

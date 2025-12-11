@@ -47,7 +47,15 @@ function TreeNode({
 }: TreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const hasChildren = node.is_directory && (node.children?.length ?? 0) > 0
-  const percentage = (node.size / maxSize) * 100
+
+  // Calculate percentage relative to the root size (maxSize)
+  // This ensures percentages never exceed 100% and are consistent across all levels
+  const percentage = Math.min((node.size / maxSize) * 100, 100)
+
+  // Debug: Log if percentage exceeds 100 before clamping
+  if ((node.size / maxSize) * 100 > 100) {
+    console.warn(`[DiskUsageTree] Node "${node.name}" has size ${node.size} which exceeds maxSize ${maxSize} (${((node.size / maxSize) * 100).toFixed(1)}%)`)
+  }
 
   // Only show if parent is expanded or if we're at root level
   if (!parentExpanded && depth > 0) return null

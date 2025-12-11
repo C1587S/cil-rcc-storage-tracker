@@ -66,8 +66,16 @@ function getFileColor(name: string): string {
 // Transform and limit to 2 hierarchical levels for performance
 function transformData(data: any, maxDepth: number = 2): Node {
   const transform = (node: any, currentDepth: number = 0): Node => {
-    const hasChildren = node.children && Array.isArray(node.children) && node.children.length > 0
-    const isDirectory = hasChildren || node.isDirectory || node.is_directory
+    // Trust the is_directory flag from the backend first
+    const isDirectory = node.is_directory ?? node.isDirectory ?? false
+
+    // Debug logging for first two levels
+    if (currentDepth <= 1) {
+      console.log(`[Voronoi Transform] depth=${currentDepth}, name="${node.name}", is_directory=${node.is_directory}, computed=${isDirectory}, children=${node.children?.length || 0}`)
+    }
+
+    // Only check for actual children if it's marked as a directory
+    const hasChildren = isDirectory && node.children && Array.isArray(node.children) && node.children.length > 0
 
     const transformed: Node = {
       name: node.name || 'root',
@@ -78,8 +86,8 @@ function transformData(data: any, maxDepth: number = 2): Node {
       depth: currentDepth,
     }
 
-    // Only include children up to maxDepth
-    if (hasChildren && currentDepth < maxDepth) {
+    // Only include children if it's a directory AND has children AND within depth limit
+    if (isDirectory && hasChildren && currentDepth < maxDepth) {
       transformed.children = node.children
         .map((child: any) => transform(child, currentDepth + 1))
         .filter((child: Node) => child.size > 0)
@@ -148,8 +156,19 @@ export function VoronoiTreemapView({ path, snapshot }: VoronoiTreemapViewProps) 
         path: data.path,
         name: data.name,
         size: data.size,
+        is_directory: data.is_directory,
         childrenCount: data.children?.length || 0
       })
+
+      // Log first 5 children to debug is_directory flag
+      if (data.children && data.children.length > 0) {
+        console.log('[VoronoiTreemapView] First 5 children:', data.children.slice(0, 5).map(c => ({
+          name: c.name,
+          is_directory: c.is_directory,
+          size: c.size,
+          childrenCount: c.children?.length || 0
+        })))
+      }
     }
   }, [data])
 
@@ -392,6 +411,10 @@ export function VoronoiTreemapView({ path, snapshot }: VoronoiTreemapViewProps) 
         if (!polygon) return
 
         const nodeData = d.data as Node
+
+        // Debug logging for level 2 rendering
+        console.log(`[Voronoi Render L2] name="${nodeData.name}", isDirectory=${nodeData.isDirectory}, size=${nodeData.size}`)
+
         const parent = d.parent
         const parentIndex = level1.indexOf(parent!)
         const centroid = d3.polygonCentroid(polygon)
