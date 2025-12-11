@@ -3,7 +3,7 @@ import './globals.css'
 import { Providers } from '@/components/providers'
 
 export const metadata: Metadata = {
-  title: 'RCC-Store-Tracker',
+  title: 'RCC-Storage-Tracker',
   description: 'Terminal-style storage tracking and visualization system',
 }
 
