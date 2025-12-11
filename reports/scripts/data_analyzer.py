@@ -111,6 +111,11 @@ class StorageDataAnalyzer:
         """
         Section 2: Hierarchical Weight Analysis.
 
+        Analyzes subdirectories at each level within the base directory.
+        Level 1 = immediate children of base directory
+        Level 2 = children of level 1 directories
+        etc.
+
         Args:
             max_depth: Maximum depth to analyze
 
@@ -120,41 +125,73 @@ class StorageDataAnalyzer:
         logger.info("Performing hierarchical weight analysis")
 
         results = []
-        base_depth = self.target_directory.count('/')
+        base_path = self.target_directory.rstrip('/') if self.target_directory else ''
+        base_parts = len([p for p in base_path.split('/') if p])  # Count non-empty parts
 
-        for depth in range(1, max_depth + 1):
-            target_depth = base_depth + depth
+        for level in range(1, max_depth + 1):
+            # Calculate target depth: base_parts + level
+            # For example, if base is "/project/cil" (2 parts) and level is 1, target_depth is 3
+            target_depth = base_parts + level
 
+            # Build the query to extract folders at this specific depth level
+            # We want to group by the partial path up to target_depth
             query = f"""
-            WITH path_parts AS (
+            WITH split_paths AS (
                 SELECT
                     path,
                     size,
-                    depth as file_depth,
-                    split_part(path, '/', {target_depth + 1}) as folder_at_depth
+                    STRING_SPLIT(path, '/') as path_array,
+                    ARRAY_LENGTH(STRING_SPLIT(path, '/')) as parts_count
                 FROM files
-                WHERE path LIKE '{self.target_directory}%'
-                    AND depth >= {target_depth}
+                WHERE path LIKE '{base_path}/%'
+                    AND path != '{base_path}'
+            ),
+            path_at_level AS (
+                SELECT
+                    ARRAY_TO_STRING(path_array[1:{target_depth + 1}], '/') as folder_path,
+                    size,
+                    parts_count
+                FROM split_paths
+                WHERE parts_count >= {target_depth}
             )
             SELECT
-                folder_at_depth as folder_name,
+                folder_path,
                 SUM(size) as total_size,
                 COUNT(*) as file_count,
-                {depth} as depth_level
-            FROM path_parts
-            WHERE folder_at_depth != ''
-            GROUP BY folder_at_depth
+                {level} as depth_level
+            FROM path_at_level
+            GROUP BY folder_path
             ORDER BY total_size DESC
             LIMIT 20
             """
 
-            depth_data = self.conn.execute(query).pl()
+            try:
+                depth_data = self.conn.execute(query).pl()
 
-            if len(depth_data) > 0:
-                results.append({
-                    'depth': depth,
-                    'folders': depth_data.to_dicts()
-                })
+                if len(depth_data) > 0:
+                    # Extract just the folder name (last component) for display
+                    folders_list = []
+                    for row in depth_data.to_dicts():
+                        folder_path = row['folder_path']
+                        folder_name = folder_path.split('/')[-1] if '/' in folder_path else folder_path
+
+                        folders_list.append({
+                            'folder_name': folder_name,
+                            'full_path': folder_path,
+                            'total_size': row['total_size'],
+                            'file_count': row['file_count'],
+                            'depth_level': row['depth_level']
+                        })
+
+                    results.append({
+                        'depth': level,
+                        'folders': folders_list
+                    })
+
+                    logger.info(f"  Level {level}: Found {len(folders_list)} folders")
+            except Exception as e:
+                logger.warning(f"Error analyzing level {level}: {e}")
+                continue
 
         return results
 
@@ -275,6 +312,8 @@ class StorageDataAnalyzer:
         logger.info("Performing age analysis")
 
         now = datetime.now()
+        current_timestamp = now.timestamp()
+
         age_buckets = [
             ('0-30 days', 0, 30),
             ('31-90 days', 31, 90),
@@ -286,8 +325,9 @@ class StorageDataAnalyzer:
         results = []
 
         for bucket_name, min_days, max_days in age_buckets:
-            min_date = (now - timedelta(days=max_days)).isoformat()
-            max_date = (now - timedelta(days=min_days)).isoformat()
+            # Calculate timestamp ranges (in seconds)
+            min_timestamp = (now - timedelta(days=max_days)).timestamp()
+            max_timestamp = (now - timedelta(days=min_days)).timestamp()
 
             query = f"""
             SELECT
@@ -297,13 +337,16 @@ class StorageDataAnalyzer:
                 LIST(DISTINCT file_type) as file_types
             FROM files
             WHERE path LIKE '{self.target_directory}%'
-                AND TRY_CAST(modified_time AS TIMESTAMP) BETWEEN TRY_CAST('{min_date}' AS TIMESTAMP) AND TRY_CAST('{max_date}' AS TIMESTAMP)
+                AND modified_time IS NOT NULL
+                AND modified_time BETWEEN {min_timestamp} AND {max_timestamp}
             """
 
             bucket_data = self.conn.execute(query).pl().to_dicts()[0]
             results.append(bucket_data)
 
-        # Old files by type
+        # Old files by type (>1 year)
+        old_timestamp = (now - timedelta(days=365)).timestamp()
+
         old_files_query = f"""
         SELECT
             file_type,
@@ -311,7 +354,8 @@ class StorageDataAnalyzer:
             SUM(size) as total_size
         FROM files
         WHERE path LIKE '{self.target_directory}%'
-            AND TRY_CAST(modified_time AS TIMESTAMP) < TRY_CAST('{(now - timedelta(days=365)).isoformat()}' AS TIMESTAMP)
+            AND modified_time IS NOT NULL
+            AND modified_time < {old_timestamp}
         GROUP BY file_type
         ORDER BY total_size DESC
         """
@@ -327,7 +371,8 @@ class StorageDataAnalyzer:
             MAX(modified_time) as most_recent_modification
         FROM files
         WHERE path LIKE '{self.target_directory}%'
-            AND TRY_CAST(modified_time AS TIMESTAMP) < TRY_CAST('{(now - timedelta(days=365)).isoformat()}' AS TIMESTAMP)
+            AND modified_time IS NOT NULL
+            AND modified_time < {old_timestamp}
         GROUP BY parent_path
         ORDER BY total_size DESC
         LIMIT 30

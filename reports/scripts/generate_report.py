@@ -18,6 +18,7 @@ from typing import Dict, Any
 
 from data_analyzer import StorageDataAnalyzer
 from report_generator import ReportGenerator
+from directory_analyzer import DirectoryAnalyzer
 
 # Configure logging
 logging.basicConfig(
@@ -105,11 +106,48 @@ def generate_audit_report(
     logger.info("Step 10: Classifying file types")
     analysis_data['file_classification'] = analyzer.get_file_type_classification()
 
+    # Multi-level directory analysis
+    logger.info("Step 11: Multi-level directory analysis")
+    dir_analyzer = DirectoryAnalyzer(analyzer.conn)
+
+    # Determine root path to analyze
+    root_path = target_directory or ""
+
+    # Analyze parent directory
+    logger.info(f"  Analyzing parent directory: {root_path or 'root'}")
+    analysis_data['parent_directory'] = dir_analyzer.analyze_directory(root_path)
+
+    # Get and analyze 1st level subdirectories
+    logger.info("  Discovering 1st level subdirectories...")
+    first_level_dirs = dir_analyzer.get_subdirectories(root_path, depth=1)
+    logger.info(f"  Found {len(first_level_dirs)} 1st level subdirectories")
+
+    analysis_data['first_level_dirs'] = []
+    for i, subdir in enumerate(first_level_dirs[:50], 1):  # Limit to 50 for performance
+        logger.info(f"    [{i}/{min(len(first_level_dirs), 50)}] Analyzing {subdir}")
+        analysis_data['first_level_dirs'].append(dir_analyzer.analyze_directory(subdir))
+
+    # Get and analyze 2nd level subdirectories
+    logger.info("  Discovering 2nd level subdirectories...")
+    analysis_data['second_level_dirs'] = []
+    second_level_count = 0
+
+    for first_dir in first_level_dirs[:20]:  # Limit first level dirs for 2nd level analysis
+        second_level_dirs = dir_analyzer.get_subdirectories(first_dir, depth=1)
+        second_level_count += len(second_level_dirs)
+
+        for subdir in second_level_dirs[:10]:  # Limit to 10 per parent for performance
+            logger.info(f"    Analyzing 2nd level: {subdir}")
+            analysis_data['second_level_dirs'].append(dir_analyzer.analyze_directory(subdir))
+
+    logger.info(f"  Discovered {second_level_count} 2nd level subdirectories")
+    logger.info(f"  Analyzed {len(analysis_data['second_level_dirs'])} 2nd level subdirectories")
+
     # Close analyzer
     analyzer.close()
 
     logger.info("")
-    logger.info("Step 11: Generating report document")
+    logger.info("Step 12: Generating report document")
 
     # Extract directory name for report
     if target_directory:

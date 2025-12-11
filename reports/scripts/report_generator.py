@@ -98,6 +98,11 @@ class ReportGenerator:
         self._add_large_files_analysis()
         self._add_trash_hidden_analysis()
         self._add_file_type_classification()
+
+        # Add multi-level directory analysis
+        if self.data.get('parent_directory') or self.data.get('first_level_dirs') or self.data.get('second_level_dirs'):
+            self._add_multi_level_directory_analysis()
+
         self._add_footer()
 
         # Write report
@@ -720,6 +725,144 @@ class ReportGenerator:
         self._add("---")
         self._add()
 
+    def _add_multi_level_directory_analysis(self):
+        """Section 11: Multi-Level Directory Analysis with Visualizations."""
+        self._add("## 11. Multi-Level Directory Analysis")
+        self._add()
+        self._add("This section provides detailed analysis of the directory structure at multiple levels.")
+        self._add()
+
+        # Parent Directory Analysis
+        if self.data.get('parent_directory'):
+            self._add("### Parent Directory Analysis")
+            self._add()
+            self._add_directory_section(self.data['parent_directory'], "Parent Directory")
+
+        # First Level Subdirectories
+        if self.data.get('first_level_dirs'):
+            self._add("### First Level Subdirectories")
+            self._add()
+            self._add(f"Found {len(self.data['first_level_dirs'])} first-level subdirectories.")
+            self._add()
+
+            for i, dir_data in enumerate(self.data['first_level_dirs'], 1):
+                self._add(f"#### {i}. {dir_data['path']}")
+                self._add()
+                self._add_directory_section(dir_data, f"1st Level Dir {i}")
+
+        # Second Level Subdirectories
+        if self.data.get('second_level_dirs'):
+            self._add("### Second Level Subdirectories")
+            self._add()
+            self._add(f"Found {len(self.data['second_level_dirs'])} second-level subdirectories (sampled).")
+            self._add()
+
+            for i, dir_data in enumerate(self.data['second_level_dirs'], 1):
+                self._add(f"#### {i}. {dir_data['path']}")
+                self._add()
+                self._add_directory_section(dir_data, f"2nd Level Dir {i}")
+
+        self._add("---")
+        self._add()
+
+    def _add_directory_section(self, dir_data: Dict[str, Any], label: str):
+        """Add detailed analysis for a single directory."""
+        stats = dir_data.get('basic_stats', {})
+        largest_files = dir_data.get('largest_files', [])
+        largest_subfolders = dir_data.get('largest_subfolders', [])
+        file_types = dir_data.get('file_type_distribution', [])
+        timestamps = dir_data.get('timestamps', {})
+        age_buckets = dir_data.get('age_buckets', [])
+        visualizations = dir_data.get('visualizations', {})
+
+        # Basic Statistics
+        self._add("**Basic Statistics:**")
+        self._add()
+        self._add(f"- Total Files: {format_number(stats.get('total_files', 0))}")
+        self._add(f"- Total Size: {format_bytes(stats.get('total_size', 0))}")
+        self._add(f"- Average File Size: {format_bytes(stats.get('avg_size', 0))}")
+        self._add(f"- Largest File: {format_bytes(stats.get('max_size', 0))}")
+        self._add(f"- Unique File Types: {format_number(stats.get('unique_types', 0))}")
+        self._add()
+
+        # Timestamps
+        self._add("**Timestamps:**")
+        self._add()
+        self._add(f"- Last Modified: {format_timestamp(timestamps.get('last_modified'))}")
+        self._add(f"- First Modified: {format_timestamp(timestamps.get('first_modified'))}")
+        self._add(f"- Last Accessed: {format_timestamp(timestamps.get('last_accessed'))}")
+        self._add(f"- First Accessed: {format_timestamp(timestamps.get('first_accessed'))}")
+        self._add()
+
+        # Largest Files
+        if largest_files:
+            self._add("**Largest Files (Top 10):**")
+            self._add()
+            self._add("| File | Size | Type | Last Modified |")
+            self._add("|------|------|------|---------------|")
+            for file in largest_files[:10]:
+                filename = Path(file['path']).name
+                self._add(f"| {filename} | {format_bytes(file['size'])} | "
+                         f"{file.get('file_type', 'unknown')} | {format_timestamp(file.get('modified_time'))} |")
+            self._add()
+
+        # Largest Subfolders
+        if largest_subfolders:
+            self._add("**Largest Subfolders (Top 10):**")
+            self._add()
+            self._add("| Subfolder | Files | Size |")
+            self._add("|-----------|-------|------|")
+            for folder in largest_subfolders[:10]:
+                folder_name = Path(folder['path']).name
+                self._add(f"| {folder_name} | {format_number(folder['file_count'])} | "
+                         f"{format_bytes(folder['total_size'])} |")
+            self._add()
+
+        # File Type Distribution
+        if file_types:
+            self._add("**File Type Distribution (Top 10):**")
+            self._add()
+            self._add("| Type | Count | Total Size | Avg Size |")
+            self._add("|------|-------|------------|----------|")
+            for ft in file_types[:10]:
+                self._add(f"| {ft['type']} | {format_number(ft['count'])} | "
+                         f"{format_bytes(ft['total_size'])} | {format_bytes(ft['avg_size'])} |")
+            self._add()
+
+        # Age Buckets
+        if age_buckets:
+            self._add("**File Age Distribution:**")
+            self._add()
+            self._add("| Age Bucket | Files | Total Size |")
+            self._add("|------------|-------|------------|")
+            for bucket in age_buckets:
+                self._add(f"| {bucket['bucket']} | {format_number(bucket['file_count'])} | "
+                         f"{format_bytes(bucket['total_size'])} |")
+            self._add()
+
+        # Visualizations
+        if visualizations:
+            self._add("**Visualizations:**")
+            self._add()
+
+            if visualizations.get('file_type_chart'):
+                self._add(f"![File Type Distribution]({visualizations['file_type_chart']})")
+                self._add()
+
+            if visualizations.get('size_histogram'):
+                self._add(f"![File Size Distribution]({visualizations['size_histogram']})")
+                self._add()
+
+            if visualizations.get('age_heatmap'):
+                self._add(f"![File Age Heatmap]({visualizations['age_heatmap']})")
+                self._add()
+
+            if visualizations.get('subfolder_bar_chart'):
+                self._add(f"![Largest Subfolders]({visualizations['subfolder_bar_chart']})")
+                self._add()
+
+        self._add()
+
     def _add_footer(self):
         """Add report footer."""
         self._add("## Report Information")
@@ -729,8 +872,6 @@ class ReportGenerator:
         self._add(f"- **Directory Analyzed:** `{self.directory_name}`")
         self._add()
         self._add("---")
-        self._add()
-        self._add("*This report was automatically generated from snapshot data.*")
 
     def _generate_html(self, markdown_path: Path) -> Path:
         """
