@@ -15,7 +15,7 @@ export function Header({ snapshot }: { snapshot: string }) {
       </Button>
       <div className="flex items-center gap-2">
         <Terminal className="h-5 w-5 text-[#ff9900]" />
-        <h1 className="text-xl font-bold font-mono text-[#ff9900]">RCC-Store-Tracker</h1>
+        <h1 className="text-xl font-bold font-mono text-[#ff9900]">RCC-Storage-Tracker</h1>
       </div>
       <div className="ml-auto">
         <SnapshotCalendarSelector currentSnapshot={snapshot} />
