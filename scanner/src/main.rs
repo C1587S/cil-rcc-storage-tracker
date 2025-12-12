@@ -2,7 +2,14 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossbeam_channel::bounded;
 use std::path::PathBuf;
-use storage_scanner::{models::ScanOptions, scanner::Scanner, utils, writer::write_to_parquet};
+use std::time::Duration;
+use storage_scanner::{
+    models::ScanOptions,
+    scanner::Scanner,
+    utils,
+    writer::write_to_parquet,
+    rotating_writer::{RotatingParquetWriter, RotatingWriterConfig},
+};
 use tracing::{error, info};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -49,6 +56,22 @@ enum Commands {
         /// Log file path (optional)
         #[arg(short, long)]
         log_file: Option<PathBuf>,
+
+        /// Enable incremental output mode (creates multiple readable files during scan)
+        #[arg(long)]
+        incremental: bool,
+
+        /// Rows per chunk when using incremental mode
+        #[arg(long, default_value = "500000")]
+        rows_per_chunk: usize,
+
+        /// Time interval in seconds between chunks (used alongside rows_per_chunk)
+        #[arg(long, default_value = "300")]
+        chunk_interval_secs: u64,
+
+        /// Resume an interrupted scan (only works with --incremental mode)
+        #[arg(long)]
+        resume: bool,
     },
 
     /// Display version information
@@ -70,8 +93,23 @@ fn main() -> Result<()> {
             follow_symlinks,
             max_depth,
             log_file: _,
+            incremental,
+            rows_per_chunk,
+            chunk_interval_secs,
+            resume,
         } => {
-            run_scan(path, output, threads, batch_size, follow_symlinks, max_depth)?;
+            run_scan(
+                path,
+                output,
+                threads,
+                batch_size,
+                follow_symlinks,
+                max_depth,
+                incremental,
+                rows_per_chunk,
+                chunk_interval_secs,
+                resume,
+            )?;
         }
         Commands::Version => {
             println!("storage-scanner v{}", env!("CARGO_PKG_VERSION"));
@@ -104,6 +142,10 @@ fn run_scan(
     batch_size: usize,
     follow_symlinks: bool,
     max_depth: Option<usize>,
+    incremental: bool,
+    rows_per_chunk: usize,
+    chunk_interval_secs: u64,
+    resume: bool,
 ) -> Result<()> {
     info!("Storage Scanner v{}", env!("CARGO_PKG_VERSION"));
     info!("Starting scan operation");
@@ -136,27 +178,92 @@ fn run_scan(
         info!("  Max depth: {}", depth);
     }
 
+    // Validate resume mode
+    if resume && !incremental {
+        error!("Resume mode requires --incremental flag");
+        return Err(anyhow::anyhow!("--resume requires --incremental"));
+    }
+
+    if incremental {
+        info!("  Incremental mode: ENABLED");
+        info!("  Rows per chunk: {}", utils::format_number(rows_per_chunk as u64));
+        info!("  Chunk interval: {} seconds", chunk_interval_secs);
+        if resume {
+            info!("  Resume mode: ENABLED");
+        }
+        info!("");
+        info!("Note: Each chunk will be a complete, readable Parquet file.");
+        info!("      You can read chunks while the scan is still running.");
+    }
+
     // Create channels for communication
     let (tx, rx) = bounded(batch_size * 2);
 
     // Create scanner
     let scanner = Scanner::new(options);
 
-    // Spawn writer thread
+    // Spawn writer thread based on mode
     let output_clone = output.clone();
-    let writer_handle = std::thread::spawn(move || {
-        write_to_parquet(&output_clone, rx)
-    });
+    let path_str = path.to_string_lossy().to_string();
 
-    // Run scanner
-    let stats = scanner.scan(&path, tx)
-        .context("Scan failed")?;
+    // Run scanner and writer based on mode
+    let (stats, rows_written) = if incremental {
+        // Use rotating writer for incremental mode
+        let config = RotatingWriterConfig {
+            base_output_path: output_clone.clone(),
+            rows_per_chunk,
+            time_interval: Duration::from_secs(chunk_interval_secs),
+        };
 
-    // Wait for writer to finish
-    let rows_written = writer_handle
-        .join()
-        .map_err(|_| anyhow::anyhow!("Writer thread panicked"))?
-        .context("Failed to write Parquet file")?;
+        // Create or resume writer
+        let (writer, skip_dirs) = if resume {
+            let writer = RotatingParquetWriter::resume(config, path_str.clone())?;
+            let skip_dirs = Some(writer.manifest.completed_top_level_dirs.clone());
+            (writer, skip_dirs)
+        } else {
+            let writer = RotatingParquetWriter::new(config, path_str.clone())?;
+            (writer, None)
+        };
+
+        let writer_handle = std::thread::spawn(move || {
+            let manifest = writer.consume_batches(rx)?;
+            Ok::<u64, anyhow::Error>(manifest.total_rows)
+        });
+
+        // Run scanner with optional directory filter
+        let stats = if let Some(skip_dirs) = skip_dirs {
+            scanner.scan_with_filter(&path, tx, Some(skip_dirs))
+                .context("Scan failed")?
+        } else {
+            scanner.scan(&path, tx)
+                .context("Scan failed")?
+        };
+
+        // Wait for writer to finish
+        let rows = writer_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("Writer thread panicked"))?
+            .context("Failed to write Parquet files")?;
+
+        (stats, rows)
+    } else {
+        // Use regular single-file writer
+        let writer_handle = std::thread::spawn(move || {
+            write_to_parquet(&output_clone, rx)
+        });
+
+        // Run scanner
+        let stats = scanner.scan(&path, tx)
+            .context("Scan failed")?;
+
+        // Wait for writer to finish
+        let rows = writer_handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("Writer thread panicked"))?
+            .context("Failed to write Parquet file")?;
+
+        (stats, rows)
+    };
 
     // Print final statistics
     println!();
@@ -175,7 +282,19 @@ fn run_scan(
     }
 
     println!();
-    println!("Output written to: {}", output.display());
+    if incremental {
+        println!("Output written to chunk files:");
+        println!("  Base name: {}", output.display());
+        println!("  Pattern: {}_chunk_*.parquet", output.file_stem().unwrap().to_string_lossy());
+        println!("  Manifest: {}_manifest.json", output.file_stem().unwrap().to_string_lossy());
+        println!();
+        println!("To read all chunks in Python:");
+        println!("  import polars as pl");
+        println!("  df = pl.read_parquet('{}_chunk_*.parquet')",
+                 output.file_stem().unwrap().to_string_lossy());
+    } else {
+        println!("Output written to: {}", output.display());
+    }
 
     Ok(())
 }

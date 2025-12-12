@@ -4,6 +4,7 @@ use crossbeam_channel::{bounded, Sender};
 use indicatif::{ProgressBar, ProgressStyle};
 use jwalk::WalkDir;
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -29,12 +30,34 @@ impl Scanner {
         root_path: P,
         tx: Sender<Vec<FileEntry>>,
     ) -> Result<ScanStats> {
+        self.scan_with_filter(root_path, tx, None)
+    }
+
+    /// Scan a directory with optional filter for skipping completed directories
+    pub fn scan_with_filter<P: AsRef<Path>>(
+        &self,
+        root_path: P,
+        tx: Sender<Vec<FileEntry>>,
+        skip_dirs: Option<HashSet<String>>,
+    ) -> Result<ScanStats> {
         let root_path = root_path.as_ref().canonicalize()
             .context("Failed to canonicalize root path")?;
 
         info!("Starting scan of: {}", root_path.display());
         info!("Scan configuration: threads={}, batch_size={}",
               self.options.num_threads, self.options.batch_size);
+
+        if let Some(ref dirs) = skip_dirs {
+            if !dirs.is_empty() {
+                info!("Skipping {} already-completed directories:", dirs.len());
+                for dir in dirs.iter().take(10) {
+                    info!("  - {}", dir);
+                }
+                if dirs.len() > 10 {
+                    info!("  ... and {} more", dirs.len() - 10);
+                }
+            }
+        }
 
         // Setup progress bar
         let progress = ProgressBar::new_spinner();
@@ -49,6 +72,7 @@ impl Scanner {
         let dirs_counter = Arc::new(AtomicU64::new(0));
         let size_counter = Arc::new(AtomicU64::new(0));
         let errors_counter = Arc::new(AtomicU64::new(0));
+        let skipped_counter = Arc::new(AtomicU64::new(0));
 
         // Configure rayon thread pool
         rayon::ThreadPoolBuilder::new()
@@ -64,6 +88,8 @@ impl Scanner {
                     dirs_counter.clone(),
                     size_counter.clone(),
                     errors_counter.clone(),
+                    skipped_counter.clone(),
+                    skip_dirs,
                 )
             })?;
 
@@ -77,10 +103,17 @@ impl Scanner {
         final_stats.errors_encountered = errors_counter.load(Ordering::Relaxed);
         final_stats.finish();
 
+        let skipped = skipped_counter.load(Ordering::Relaxed);
+
         info!("Scan completed: {} files, {} directories, {:.2} GB total",
               final_stats.files_scanned,
               final_stats.directories_scanned,
               final_stats.total_size as f64 / 1_073_741_824.0);
+
+        if skipped > 0 {
+            info!("Skipped {} files from already-completed directories", skipped);
+        }
+
         info!("Performance: {:.2} files/second, duration: {:.2}s",
               final_stats.files_per_second(),
               final_stats.duration_secs);
@@ -101,6 +134,8 @@ impl Scanner {
         dirs_counter: Arc<AtomicU64>,
         size_counter: Arc<AtomicU64>,
         errors_counter: Arc<AtomicU64>,
+        skipped_counter: Arc<AtomicU64>,
+        skip_dirs: Option<HashSet<String>>,
     ) -> Result<()> {
         let batch_size = self.options.batch_size;
         let follow_symlinks = self.options.follow_symlinks;
@@ -150,29 +185,50 @@ impl Scanner {
 
                         match std::fs::metadata(&path) {
                             Ok(metadata) => {
-                                // Update counters
-                                if metadata.is_dir() {
-                                    dirs_counter.fetch_add(1, Ordering::Relaxed);
-                                } else {
-                                    files_counter.fetch_add(1, Ordering::Relaxed);
-                                    size_counter.fetch_add(metadata.len(), Ordering::Relaxed);
-                                }
-
-                                // Update progress
-                                let total = files_counter.load(Ordering::Relaxed)
-                                          + dirs_counter.load(Ordering::Relaxed);
-                                if total % 10000 == 0 {
-                                    progress.set_message(format!(
-                                        "Scanned: {} files, {} dirs, {:.2} GB",
-                                        files_counter.load(Ordering::Relaxed),
-                                        dirs_counter.load(Ordering::Relaxed),
-                                        size_counter.load(Ordering::Relaxed) as f64 / 1_073_741_824.0
-                                    ));
-                                }
-
-                                // Create FileEntry
+                                // Create FileEntry first to check top_level_dir
                                 match FileEntry::from_path(&path, &metadata, root_path) {
                                     Ok(file_entry) => {
+                                        // Skip if this top-level directory is already completed
+                                        if let Some(ref skip_set) = skip_dirs {
+                                            if skip_set.contains(&file_entry.top_level_dir) {
+                                                skipped_counter.fetch_add(1, Ordering::Relaxed);
+                                                return; // Skip this entry
+                                            }
+                                        }
+
+                                        // Update counters
+                                        if metadata.is_dir() {
+                                            dirs_counter.fetch_add(1, Ordering::Relaxed);
+                                        } else {
+                                            files_counter.fetch_add(1, Ordering::Relaxed);
+                                            size_counter.fetch_add(metadata.len(), Ordering::Relaxed);
+                                        }
+
+                                        // Update progress
+                                        let total = files_counter.load(Ordering::Relaxed)
+                                                  + dirs_counter.load(Ordering::Relaxed);
+                                        if total % 10000 == 0 {
+                                            let skipped = skipped_counter.load(Ordering::Relaxed);
+                                            let msg = if skipped > 0 {
+                                                format!(
+                                                    "Scanned: {} files, {} dirs, {:.2} GB (skipped: {})",
+                                                    files_counter.load(Ordering::Relaxed),
+                                                    dirs_counter.load(Ordering::Relaxed),
+                                                    size_counter.load(Ordering::Relaxed) as f64 / 1_073_741_824.0,
+                                                    skipped
+                                                )
+                                            } else {
+                                                format!(
+                                                    "Scanned: {} files, {} dirs, {:.2} GB",
+                                                    files_counter.load(Ordering::Relaxed),
+                                                    dirs_counter.load(Ordering::Relaxed),
+                                                    size_counter.load(Ordering::Relaxed) as f64 / 1_073_741_824.0
+                                                )
+                                            };
+                                            progress.set_message(msg);
+                                        }
+
+                                        // Send the entry
                                         if batch_tx.send(file_entry).is_err() {
                                             debug!("Batch channel closed, stopping scan");
                                         }

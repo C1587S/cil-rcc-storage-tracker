@@ -32,7 +32,7 @@ impl ParquetFileWriter {
             .set_compression(Compression::SNAPPY)
             .set_encoding(Encoding::PLAIN)
             .set_dictionary_enabled(true)
-            .set_max_row_group_size(1_000_000)
+            .set_max_row_group_size(100_000)  // Smaller row groups for faster visibility
             .build();
 
         let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
@@ -81,7 +81,7 @@ impl ParquetFileWriter {
 
     /// Convert FileEntry records to Arrow RecordBatch
     fn entries_to_record_batch(&self, entries: &[FileEntry]) -> Result<RecordBatch> {
-        let len = entries.len();
+        let _len = entries.len();
 
         // Build arrays
         let paths: StringArray = entries.iter().map(|e| Some(e.path.as_str())).collect();
