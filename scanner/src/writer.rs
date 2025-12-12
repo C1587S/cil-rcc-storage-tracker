@@ -58,6 +58,10 @@ impl ParquetFileWriter {
             Field::new("file_type", DataType::Utf8, false),
             Field::new("inode", DataType::UInt64, false),
             Field::new("permissions", DataType::UInt32, false),
+            Field::new("uid", DataType::UInt32, false),
+            Field::new("gid", DataType::UInt32, false),
+            Field::new("owner", DataType::Utf8, true),
+            Field::new("group", DataType::Utf8, true),
             Field::new("parent_path", DataType::Utf8, false),
             Field::new("depth", DataType::UInt32, false),
             Field::new("top_level_dir", DataType::Utf8, false),
@@ -92,6 +96,10 @@ impl ParquetFileWriter {
         let file_types: StringArray = entries.iter().map(|e| Some(e.file_type.as_str())).collect();
         let inodes: UInt64Array = entries.iter().map(|e| Some(e.inode)).collect();
         let permissions: UInt32Array = entries.iter().map(|e| Some(e.permissions)).collect();
+        let uids: UInt32Array = entries.iter().map(|e| Some(e.uid)).collect();
+        let gids: UInt32Array = entries.iter().map(|e| Some(e.gid)).collect();
+        let owners: StringArray = entries.iter().map(|e| e.owner.as_deref()).collect();
+        let groups: StringArray = entries.iter().map(|e| e.group.as_deref()).collect();
         let parent_paths: StringArray = entries.iter().map(|e| Some(e.parent_path.as_str())).collect();
         let depths: UInt32Array = entries.iter().map(|e| Some(e.depth)).collect();
         let top_level_dirs: StringArray = entries.iter().map(|e| Some(e.top_level_dir.as_str())).collect();
@@ -106,6 +114,10 @@ impl ParquetFileWriter {
             Arc::new(file_types),
             Arc::new(inodes),
             Arc::new(permissions),
+            Arc::new(uids),
+            Arc::new(gids),
+            Arc::new(owners),
+            Arc::new(groups),
             Arc::new(parent_paths),
             Arc::new(depths),
             Arc::new(top_level_dirs),
@@ -176,6 +188,10 @@ mod tests {
             file_type: "txt".to_string(),
             inode: 12345,
             permissions: 0o644,
+            uid: 1000,
+            gid: 1000,
+            owner: Some("testuser".to_string()),
+            group: Some("testgroup".to_string()),
             parent_path: "/parent".to_string(),
             depth: 1,
             top_level_dir: "root".to_string(),
@@ -265,10 +281,14 @@ mod tests {
         let schema = ParquetFileWriter::create_schema();
 
         // Verify all expected fields exist
-        assert_eq!(schema.fields().len(), 11);
+        assert_eq!(schema.fields().len(), 15);
         assert!(schema.field_with_name("path").is_ok());
         assert!(schema.field_with_name("size").is_ok());
         assert!(schema.field_with_name("modified_time").is_ok());
         assert!(schema.field_with_name("file_type").is_ok());
+        assert!(schema.field_with_name("uid").is_ok());
+        assert!(schema.field_with_name("gid").is_ok());
+        assert!(schema.field_with_name("owner").is_ok());
+        assert!(schema.field_with_name("group").is_ok());
     }
 }

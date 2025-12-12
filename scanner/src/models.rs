@@ -1,6 +1,52 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Get username from UID (Unix-specific)
+#[cfg(unix)]
+fn get_username(uid: u32) -> Option<String> {
+    use std::ffi::CStr;
+    unsafe {
+        let passwd = libc::getpwuid(uid);
+        if passwd.is_null() {
+            None
+        } else {
+            CStr::from_ptr((*passwd).pw_name)
+                .to_str()
+                .ok()
+                .map(|s| s.to_string())
+        }
+    }
+}
+
+/// Get group name from GID (Unix-specific)
+#[cfg(unix)]
+fn get_groupname(gid: u32) -> Option<String> {
+    use std::ffi::CStr;
+    unsafe {
+        let group = libc::getgrgid(gid);
+        if group.is_null() {
+            None
+        } else {
+            CStr::from_ptr((*group).gr_name)
+                .to_str()
+                .ok()
+                .map(|s| s.to_string())
+        }
+    }
+}
+
+/// Stub for non-Unix systems
+#[cfg(not(unix))]
+fn get_username(_uid: u32) -> Option<String> {
+    None
+}
+
+/// Stub for non-Unix systems
+#[cfg(not(unix))]
+fn get_groupname(_gid: u32) -> Option<String> {
+    None
+}
+
 /// Represents a single file entry in the filesystem scan
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileEntry {
@@ -27,6 +73,18 @@ pub struct FileEntry {
 
     /// Unix permissions (octal representation)
     pub permissions: u32,
+
+    /// User ID (owner)
+    pub uid: u32,
+
+    /// Group ID
+    pub gid: u32,
+
+    /// Username (owner name, if resolvable)
+    pub owner: Option<String>,
+
+    /// Group name (if resolvable)
+    pub group: Option<String>,
 
     /// Parent directory path
     pub parent_path: String,
@@ -98,6 +156,14 @@ impl FileEntry {
             .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64);
 
+        // Get owner and group IDs
+        let uid = metadata.uid();
+        let gid = metadata.gid();
+
+        // Try to resolve uid/gid to names (may fail on some systems)
+        let owner = get_username(uid);
+        let group = get_groupname(gid);
+
         Ok(FileEntry {
             path: path_str,
             size: metadata.len(),
@@ -107,6 +173,10 @@ impl FileEntry {
             file_type,
             inode: metadata.ino(),
             permissions: metadata.mode(),
+            uid,
+            gid,
+            owner,
+            group,
             parent_path,
             depth,
             top_level_dir,
