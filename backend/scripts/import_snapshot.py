@@ -107,7 +107,14 @@ def import_snapshot(source_dir: str, snapshot_date: str, data_root: str = None):
     # Check if destination already exists
     if dest_path.exists():
         print(f"\nWARNING: Destination already exists: {dest_path}")
-        response = input("Overwrite existing snapshot? (yes/no): ")
+
+        # Check if running in non-interactive mode (automation script)
+        import sys
+        if not sys.stdin.isatty():
+            print("Running in non-interactive mode - automatically overwriting")
+            response = 'yes'
+        else:
+            response = input("Overwrite existing snapshot? (yes/no): ")
 
         if response.lower() != 'yes':
             print("Import cancelled")

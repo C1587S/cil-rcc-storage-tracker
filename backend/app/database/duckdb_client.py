@@ -29,9 +29,10 @@ class DuckDBClient:
         # Create database connection
         self.conn = duckdb.connect(str(self.db_path) if self.db_path != ":memory:" else ":memory:")
 
-        # Configure DuckDB for optimal performance
-        self.conn.execute("SET threads TO 4")
-        self.conn.execute("SET memory_limit = '4GB'")
+        # Configure DuckDB for optimal performance (tuned for large datasets)
+        self.conn.execute("SET threads TO 8")
+        self.conn.execute("SET memory_limit = '8GB'")
+        self.conn.execute("SET max_memory = '8GB'")
 
         logger.info(f"DuckDB client initialized with database: {self.db_path}")
         logger.info(f"Snapshots path: {self.snapshots_path}")
@@ -82,19 +83,59 @@ class DuckDBClient:
             List of snapshot information dictionaries
         """
         try:
+            import time
+            start = time.time()
+
+            # Try materialized summary table first (instant for large datasets)
+            try:
+                query = """
+                    SELECT
+                        date,
+                        file_count,
+                        total_size,
+                        top_level_dirs
+                    FROM snapshot_summary
+                    ORDER BY date DESC
+                """
+                result = self.conn.execute(query).pl()
+                snapshots = result.to_dicts()
+
+                if len(snapshots) > 0:
+                    duration = time.time() - start
+                    logger.info(f"list_snapshots (materialized) completed in {duration:.3f}s")
+                    return snapshots
+            except Exception:
+                logger.warning("Materialized snapshot_summary table not found, using full scan")
+
+            # Fallback: Full scan (slow for 1M+ files)
             query = """
                 SELECT
                     CAST(snapshot_date AS VARCHAR) as date,
                     COUNT(*) as file_count,
-                    SUM(size) as total_size,
-                    LIST(DISTINCT top_level_dir) as top_level_dirs
+                    SUM(size) as total_size
                 FROM file_snapshots
                 GROUP BY snapshot_date
                 ORDER BY snapshot_date DESC
             """
 
             result = self.conn.execute(query).pl()
-            return result.to_dicts()
+            snapshots = result.to_dicts()
+
+            # Get top_level_dirs separately
+            for snapshot in snapshots:
+                dirs_query = f"""
+                    SELECT DISTINCT top_level_dir
+                    FROM file_snapshots
+                    WHERE CAST(snapshot_date AS VARCHAR) = '{snapshot['date']}'
+                    LIMIT 100
+                """
+                dirs_result = self.conn.execute(dirs_query).pl()
+                snapshot['top_level_dirs'] = dirs_result['top_level_dir'].to_list()
+
+            duration = time.time() - start
+            logger.warning(f"list_snapshots (full scan) took {duration:.2f}s - run optimize_snapshot.py for better performance")
+            return snapshots
+
         except Exception as e:
             logger.error(f"Error listing snapshots: {e}")
             return []
