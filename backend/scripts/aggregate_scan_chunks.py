@@ -10,10 +10,10 @@ This script merges all chunks for each scanned directory into one consolidated f
 
 Usage:
     # Process all subdirectories in scan output
-    python aggregate_scan_chunks.py /Volumes/cil/.../cil_scans /Volumes/cil/.../cil_scans_aggregated 2025-12-12
+    python aggregate_scan_chunks.py /porject/cil/.../cil_scans /porject/cil/.../cil_scans_aggregated 2025-12-12
 
     # Process a single subdirectory
-    python aggregate_scan_chunks.py /Volumes/cil/.../cil_scans/beagle /tmp/aggregated/beagle.parquet
+    python aggregate_scan_chunks.py /porject/cil/.../cil_scans/beagle /tmp/aggregated/beagle.parquet
 
 Directory Structure:
     Input:  cil_scans/beagle/chunk_0001.parquet, chunk_0002.parquet, ...
@@ -296,12 +296,12 @@ def main():
         print("\nExamples:")
         print("  # Process all CIL scan directories")
         print("  python aggregate_scan_chunks.py \\")
-        print("    /Volumes/cil/.../cil_scans \\")
-        print("    /Volumes/cil/.../cil_scans_aggregated \\")
+        print("    /porject/cil/.../cil_scans \\")
+        print("    /porject/cil/.../cil_scans_aggregated \\")
         print("    2025-12-12")
         print("\n  # Process single directory")
         print("  python aggregate_scan_chunks.py \\")
-        print("    /Volumes/cil/.../cil_scans/beagle \\")
+        print("    /porject/cil/.../cil_scans/beagle \\")
         print("    /tmp/beagle.parquet")
         sys.exit(1)
 
