@@ -57,11 +57,23 @@ def generate_audit_report(
     logger.info(f"Output Directory: {output_dir}")
     logger.info("")
 
-    # Validate inputs
-    snapshot_file = Path(snapshot_path)
-    if not snapshot_file.exists():
-        logger.error(f"Snapshot file not found: {snapshot_path}")
-        sys.exit(1)
+    # Validate inputs - handle both single files and glob patterns
+    import glob as glob_module
+
+    # Check if it's a glob pattern
+    if '*' in snapshot_path or '?' in snapshot_path:
+        # Expand glob pattern
+        matched_files = glob_module.glob(snapshot_path)
+        if not matched_files:
+            logger.error(f"No files found matching pattern: {snapshot_path}")
+            sys.exit(1)
+        logger.info(f"Found {len(matched_files)} file(s) matching pattern")
+    else:
+        # Single file path
+        snapshot_file = Path(snapshot_path)
+        if not snapshot_file.exists():
+            logger.error(f"Snapshot file not found: {snapshot_path}")
+            sys.exit(1)
 
     logger.info("Step 1: Initializing data analyzer")
     analyzer = StorageDataAnalyzer(snapshot_path, target_directory)
