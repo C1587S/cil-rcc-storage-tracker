@@ -21,6 +21,37 @@ High-performance storage analytics for scanning, indexing, and visualizing file 
 
 Wait 10-15 seconds, then open **http://localhost:3000** in incognito mode.
 
+## RCC HPC Environment Setup
+
+For deployment on the RCC HPC cluster, create the conda environment:
+
+```bash
+# Navigate to project directory
+cd /project/cil/home_dirs/scadavidsanchez/projects/scanner-scc
+
+# Load Python module
+module load python
+
+# Activate mamba base environment
+source activate /project/cil/home_dirs/scadavidsanchez/envs/mamba_base
+
+# Create the storage scanner environment
+mamba env create -f environment.yml
+
+# Activate the new environment
+source activate /project/cil/home_dirs/rcc/envs/storage_scanner
+
+# Build the Rust scanner
+cd scanner
+cargo build --release
+cd ..
+```
+
+The environment includes all dependencies for:
+- Rust scanner compilation
+- Python backend (FastAPI, DuckDB, Polars)
+- Report generation (matplotlib, seaborn)
+
 ## Manual Steps
 
 See [COMPLETE_GUIDE.md](COMPLETE_GUIDE.md) for detailed instructions.
