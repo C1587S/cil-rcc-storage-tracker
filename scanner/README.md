@@ -80,7 +80,29 @@ If a scan is interrupted, simply run the same command again with `--resume`:
 
 The scanner will skip already-completed directories and continue from where it left off.
 
-## Options
+### Aggregate Chunk Files
+
+After an incremental scan completes, you can consolidate all chunk files into a single Parquet file:
+
+```bash
+./target/release/storage-scanner aggregate \
+    --input /path/to/chunks/ \
+    --output aggregated_scan.parquet \
+    --delete-chunks
+```
+
+Options:
+- `--input, -i`: Directory containing chunk files, or a specific chunk file pattern
+- `--output, -o`: Output aggregated Parquet file
+- `--delete-chunks, -d`: Delete chunk files after successful aggregation (optional)
+
+This command:
+- Combines all chunk files into a single Parquet file
+- Maintains data integrity and schema consistency
+- Optionally cleans up intermediate chunk files
+- Shows progress and statistics
+
+## Scan Command Options
 
 - `--path, -p`: Path to scan (required)
 - `--output, -o`: Output Parquet file path (required)

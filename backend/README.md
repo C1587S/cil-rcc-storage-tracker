@@ -47,7 +47,6 @@ backend/
 │   ├── routers/               # API endpoints
 │   └── services/              # Business logic
 ├── scripts/                   # Data processing scripts
-│   ├── aggregate_scan_chunks.py
 │   ├── import_snapshot.py
 │   ├── create_test_snapshot.py
 │   ├── optimize_snapshot.py
@@ -120,17 +119,13 @@ backend/data/
 
 ### Import a snapshot
 
-```bash
-python scripts/import_snapshot.py <source_path> <snapshot_date>
-```
-
-### Aggregate scan chunks
-
-If you have incremental scan output with multiple chunks:
+Import aggregated Parquet files from the scanner:
 
 ```bash
-python scripts/aggregate_scan_chunks.py <input_dir> <output_dir>
+python scripts/import_snapshot.py <source_directory> <snapshot_date>
 ```
+
+Note: The source directory should contain the aggregated Parquet file(s). Use the scanner's `aggregate` command to consolidate chunk files before importing.
 
 ### Create test data
 

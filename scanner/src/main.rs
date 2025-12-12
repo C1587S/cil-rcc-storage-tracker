@@ -74,6 +74,21 @@ enum Commands {
         resume: bool,
     },
 
+    /// Aggregate multiple Parquet chunk files into a single file
+    Aggregate {
+        /// Input pattern or directory containing chunk files (e.g., scan_chunk_*.parquet or /path/to/chunks/)
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output Parquet file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Delete chunk files after successful aggregation
+        #[arg(short, long)]
+        delete_chunks: bool,
+    },
+
     /// Display version information
     Version,
 }
@@ -110,6 +125,13 @@ fn main() -> Result<()> {
                 chunk_interval_secs,
                 resume,
             )?;
+        }
+        Commands::Aggregate {
+            input,
+            output,
+            delete_chunks,
+        } => {
+            run_aggregate(input, output, delete_chunks)?;
         }
         Commands::Version => {
             println!("storage-scanner v{}", env!("CARGO_PKG_VERSION"));
@@ -297,6 +319,200 @@ fn run_scan(
     }
 
     Ok(())
+}
+
+fn run_aggregate(input: PathBuf, output: PathBuf, delete_chunks: bool) -> Result<()> {
+    use arrow::datatypes::SchemaRef;
+    use parquet::arrow::ArrowWriter;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+    use std::fs;
+    use std::sync::Arc;
+
+    info!("Storage Scanner v{}", env!("CARGO_PKG_VERSION"));
+    info!("Starting aggregation operation");
+
+    // Find chunk files
+    let chunk_files = find_chunk_files(&input)?;
+
+    if chunk_files.is_empty() {
+        error!("No Parquet chunk files found");
+        return Err(anyhow::anyhow!("No chunk files found in: {}", input.display()));
+    }
+
+    info!("Found {} chunk file(s) to aggregate", chunk_files.len());
+    info!("Output file: {}", output.display());
+
+    // Ensure output directory exists
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .context("Failed to create output directory")?;
+    }
+
+    // Read schema from first file
+    let first_file = fs::File::open(&chunk_files[0])?;
+    let first_reader = SerializedFileReader::new(first_file)?;
+    let schema = first_reader.metadata().file_metadata().schema_descr();
+
+    // Convert to Arrow schema
+    let arrow_schema: SchemaRef = Arc::new(
+        parquet::arrow::parquet_to_arrow_schema(&schema, None)?
+    );
+
+    info!("Creating aggregated file...");
+
+    // Create writer
+    let output_file = fs::File::create(&output)
+        .context("Failed to create output file")?;
+
+    let mut writer = ArrowWriter::try_new(
+        output_file,
+        arrow_schema.clone(),
+        None,
+    )?;
+
+    let mut total_rows = 0u64;
+    let start_time = std::time::Instant::now();
+
+    // Process each chunk file
+    for (i, chunk_path) in chunk_files.iter().enumerate() {
+        info!("  [{}/{}] Processing: {}", i + 1, chunk_files.len(), chunk_path.display());
+
+        // Read chunk as Arrow batches
+        let file = fs::File::open(chunk_path)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        let mut reader = builder.with_batch_size(100000).build()?;
+
+        while let Some(batch_result) = reader.next() {
+            let batch = batch_result?;
+            total_rows += batch.num_rows() as u64;
+            writer.write(&batch)?;
+        }
+    }
+
+    // Finalize writer
+    writer.close()?;
+
+    let duration = start_time.elapsed();
+
+    info!("Aggregation completed successfully");
+    println!();
+    println!("Aggregation Summary");
+    println!("---");
+    println!("Chunk files processed: {}", chunk_files.len());
+    println!("Total rows:            {}", utils::format_number(total_rows));
+    println!("Duration:              {:.2}s", duration.as_secs_f64());
+    println!("Output file:           {}", output.display());
+    println!("Output size:           {}", utils::format_bytes(fs::metadata(&output)?.len()));
+
+    // Delete chunk files if requested
+    if delete_chunks {
+        info!("Deleting chunk files...");
+        let mut deleted = 0;
+        for chunk_path in &chunk_files {
+            match fs::remove_file(chunk_path) {
+                Ok(_) => {
+                    deleted += 1;
+                    info!("  Deleted: {}", chunk_path.display());
+                }
+                Err(e) => {
+                    error!("  Failed to delete {}: {}", chunk_path.display(), e);
+                }
+            }
+        }
+
+        // Also try to delete manifest file if it exists
+        let manifest_path = get_manifest_path(&input);
+        if manifest_path.exists() {
+            if let Err(e) = fs::remove_file(&manifest_path) {
+                error!("Failed to delete manifest file: {}", e);
+            } else {
+                info!("  Deleted manifest: {}", manifest_path.display());
+            }
+        }
+
+        println!();
+        println!("Deleted {} chunk file(s)", deleted);
+    }
+
+    Ok(())
+}
+
+fn find_chunk_files(input: &PathBuf) -> Result<Vec<PathBuf>> {
+    use std::fs;
+
+    let mut chunk_files = Vec::new();
+
+    if input.is_dir() {
+        // Input is a directory, find all chunk files
+        for entry in fs::read_dir(input)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_file() {
+                if let Some(name) = path.file_name() {
+                    let name_str = name.to_string_lossy();
+                    // Match chunk files but exclude manifest
+                    if name_str.ends_with(".parquet") &&
+                       (name_str.contains("chunk") || name_str.contains("_")) &&
+                       !name_str.contains("manifest") {
+                        chunk_files.push(path);
+                    }
+                }
+            }
+        }
+    } else if input.is_file() {
+        // Input is a single file
+        chunk_files.push(input.clone());
+    } else {
+        // Try glob pattern
+        let pattern = input.to_string_lossy();
+        let parent = input.parent()
+            .ok_or_else(|| anyhow::anyhow!("Invalid input path"))?;
+
+        for entry in fs::read_dir(parent)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_file() {
+                if let Some(name) = path.file_name() {
+                    let name_str = name.to_string_lossy();
+                    if name_str.ends_with(".parquet") &&
+                       !name_str.contains("manifest") &&
+                       (pattern.contains('*') || name_str.contains("chunk")) {
+                        chunk_files.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort files for consistent ordering
+    chunk_files.sort();
+
+    Ok(chunk_files)
+}
+
+fn get_manifest_path(input: &PathBuf) -> PathBuf {
+    if input.is_dir() {
+        // Look for any manifest file in the directory
+        if let Ok(entries) = std::fs::read_dir(input) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name() {
+                    if name.to_string_lossy().contains("manifest") {
+                        return path;
+                    }
+                }
+            }
+        }
+    }
+
+    // Default: assume manifest is next to the input
+    let stem = input.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("scan");
+    input.with_file_name(format!("{}_manifest.json", stem))
 }
 
 #[cfg(test)]
