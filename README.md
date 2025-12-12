@@ -52,9 +52,32 @@ The frontend will be available at http://localhost:3001
 
 ## Complete Pipeline
 
-### 1. Scan Filesystem on Cluster
+### RCC Cluster Workflow
 
-Use the scanner to generate Parquet files from filesystem snapshots:
+For complete instructions on scanning on the UChicago RCC cluster, see the **[RCC Workflows Guide](rcc-workflows/README.md)**.
+
+The workflow includes:
+- Parallel scanning of multiple directories using Slurm job arrays
+- Automatic aggregation of chunk files
+- Data transfer and backend import instructions
+- Troubleshooting and best practices
+
+Quick start:
+```bash
+# On RCC cluster
+cd /project/cil/home_dirs/username/projects/cil-rcc-storage-tracker
+mkdir -p rcc-workflows/scripts/slurm_logs
+
+# Submit scan jobs
+sbatch rcc-workflows/scripts/01_scan_cil.sh
+
+# After scans complete, aggregate chunks
+sbatch rcc-workflows/scripts/02_aggregate_chunks.sh
+```
+
+### Manual Scan (Single Directory)
+
+For testing or scanning individual directories:
 
 ```bash
 # On the RCC cluster
@@ -63,14 +86,12 @@ cargo build --release
 
 # Run a scan
 ./target/release/storage-scanner scan \
-    --path /project/cil \
+    --path /project/cil/gcp \
     --output /scratch/midway3/$USER/scan_output.parquet \
     --incremental \
     --resume \
     --threads 16
 ```
-
-For large scans with multiple directories, use the Slurm job array scripts provided in `scanner/scripts/`. See [scanner/README.md](scanner/README.md) for detailed instructions.
 
 ### 2. Aggregate and Import Data
 
@@ -80,12 +101,16 @@ After scanning, aggregate the Parquet chunks and import them to the backend:
 # Copy scan results from cluster to local machine
 scp -r username@midway3.rcc.uchicago.edu:/scratch/midway3/username/scans/2025-12-15 ./
 
-# Aggregate chunks if using incremental mode
-cd backend
-python scripts/aggregate_scan_chunks.py ./2025-12-15 ./aggregated_2025-12-15
+# Aggregate chunks using scanner (recommended)
+cd scanner
+./target/release/storage-scanner aggregate \
+    --input ../2025-12-15 \
+    --output ../2025-12-15-aggregated/scan.parquet \
+    --delete-chunks
 
 # Import to backend data directory
-python scripts/import_snapshot.py ./aggregated_2025-12-15 2025-12-15
+cd ../backend
+python scripts/import_snapshot.py ../2025-12-15-aggregated 2025-12-15
 ```
 
 ### 3. Analyze Data
@@ -108,10 +133,12 @@ Open your browser and navigate to the dashboard to explore the data.
 
 ```
 cil-rcc-storage-tracker/
-├── scanner/            # Rust-based filesystem scanner
-│   ├── src/           # Scanner source code
-│   ├── scripts/       # Slurm job scripts for cluster scanning
-│   └── README.md      # Scanner documentation and usage
+├── rcc-workflows/     # RCC cluster workflows and scripts
+│   ├── scripts/      # Slurm job scripts (scan, aggregate)
+│   └── README.md     # Complete RCC workflow guide
+├── scanner/           # Rust-based filesystem scanner
+│   ├── src/          # Scanner source code
+│   └── README.md     # Scanner documentation and usage
 ├── backend/           # FastAPI backend with DuckDB
 │   ├── app/          # Application code (API routes, database, models)
 │   ├── scripts/      # Data processing and import scripts
