@@ -6,7 +6,7 @@ export function useSnapshots(): UseQueryResult<SnapshotListResponse> {
   return useQuery({
     queryKey: ['snapshots'],
     queryFn: () => snapshotsApi.list(),
-    staleTime: 24 * 60 * 60 * 1000, // 24 hours
+    staleTime: process.env.NODE_ENV === 'development' ? 0 : 24 * 60 * 60 * 1000, // No cache in dev, 24 hours in prod
     gcTime: 24 * 60 * 60 * 1000,
   })
 }
@@ -16,7 +16,7 @@ export function useSnapshot(date: string): UseQueryResult<Snapshot> {
     queryKey: ['snapshot', date],
     queryFn: () => snapshotsApi.get(date),
     enabled: !!date,
-    staleTime: 24 * 60 * 60 * 1000,
+    staleTime: process.env.NODE_ENV === 'development' ? 0 : 24 * 60 * 60 * 1000,
   })
 }
 
@@ -24,7 +24,7 @@ export function useLatestSnapshot(): UseQueryResult<Snapshot> {
   return useQuery({
     queryKey: ['snapshot', 'latest'],
     queryFn: () => snapshotsApi.latest(),
-    staleTime: 24 * 60 * 60 * 1000,
+    staleTime: process.env.NODE_ENV === 'development' ? 0 : 24 * 60 * 60 * 1000,
   })
 }
 

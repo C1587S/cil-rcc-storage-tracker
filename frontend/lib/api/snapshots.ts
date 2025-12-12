@@ -10,7 +10,7 @@ interface SnapshotInfo {
 
 export const snapshotsApi = {
   list: (): Promise<SnapshotListResponse> => {
-    return apiClient.get<SnapshotListResponse>('/api/snapshots')
+    return apiClient.get<SnapshotListResponse>('/api/snapshots/')
   },
 
   get: async (date: string): Promise<Snapshot> => {
@@ -23,7 +23,7 @@ export const snapshotsApi = {
   },
 
   compare: (from: string, to: string): Promise<SnapshotComparison> => {
-    return apiClient.get<SnapshotComparison>('/api/snapshots/compare', {
+    return apiClient.get<SnapshotComparison>('/api/snapshots/compare/', {
       from,
       to,
     })

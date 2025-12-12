@@ -36,7 +36,7 @@ export function SnapshotCalendarSelector({ currentSnapshot }: SnapshotCalendarSe
         <DialogHeader>
           <DialogTitle className="font-mono text-[#ffffff]">Select Snapshot</DialogTitle>
           <p className="text-sm text-[#c0c0c0] font-mono">
-            Click on any orange date to view that snapshot
+            Click on any date to view that snapshot
           </p>
         </DialogHeader>
 
