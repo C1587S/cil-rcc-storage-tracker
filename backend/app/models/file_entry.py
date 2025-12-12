@@ -14,10 +14,10 @@ class FileEntry(BaseModel):
     accessed_time: datetime = Field(..., description="Last accessed timestamp")
     created_time: Optional[datetime] = Field(None, description="Creation timestamp")
     file_type: str = Field(..., description="File extension or 'directory'")
-    inode: int = Field(..., description="Inode number")
-    permissions: int = Field(..., description="Unix permissions")
+    inode: Optional[int] = Field(None, description="Inode number")
+    permissions: Optional[int] = Field(None, description="Unix permissions")
     parent_path: str = Field(..., description="Parent directory path")
-    depth: int = Field(..., description="Depth from scan root", ge=0)
+    depth: Optional[int] = Field(None, description="Depth from scan root", ge=0)
     top_level_dir: str = Field(..., description="Top-level directory name")
     snapshot_date: Optional[str] = Field(None, description="Snapshot date if applicable")
 

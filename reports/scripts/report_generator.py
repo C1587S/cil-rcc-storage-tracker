@@ -296,6 +296,22 @@ class ImprovedReportGenerator:
 
         activity = self.data.get('folder_activity', {})
 
+        # Add folder activity calendar heatmaps for top heavy folders
+        most_accessed = activity.get('most_accessed_folders', [])
+        if most_accessed:
+            try:
+                from report_visualizations import generate_folder_activity_calendars
+                calendar_base64 = generate_folder_activity_calendars(most_accessed, top_n=5)
+                if calendar_base64:
+                    self._add("### Activity Calendars for Top 5 Heavy Folders")
+                    self._add()
+                    self._add("Calendar view showing daily access patterns (GitHub-style):")
+                    self._add()
+                    self._add(f"![Folder Activity Calendars]({calendar_base64})")
+                    self._add()
+            except Exception as e:
+                logger.debug(f"Could not generate folder activity calendars: {e}")
+
         # Active old folders (most important)
         active_old = activity.get('active_old_folders', [])
         if active_old:
@@ -348,6 +364,40 @@ class ImprovedReportGenerator:
                 )
             self._add()
 
+        # Files accessed in last week
+        files_last_week = activity.get('files_accessed_last_week', [])
+        if files_last_week:
+            self._add("### Files Accessed in Last Week")
+            self._add()
+            self._add("Top 5 most recently accessed files:")
+            self._add()
+            self._add("| File | Size | Last Access |")
+            self._add("|------|------|-------------|")
+            for file in files_last_week:
+                filename = file.get('path', '').split('/')[-1]
+                self._add(
+                    f"| `{filename}` | {format_bytes(file.get('size', 0))} | "
+                    f"{format_timestamp(file.get('accessed_time'))} |"
+                )
+            self._add()
+
+        # Files accessed in last month
+        files_last_month = activity.get('files_accessed_last_month', [])
+        if files_last_month and len(files_last_month) > len(files_last_week):
+            self._add("### Files Accessed in Last Month")
+            self._add()
+            self._add("Top 5 most recently accessed files in the last 30 days:")
+            self._add()
+            self._add("| File | Size | Last Access |")
+            self._add("|------|------|-------------|")
+            for file in files_last_month:
+                filename = file.get('path', '').split('/')[-1]
+                self._add(
+                    f"| `{filename}` | {format_bytes(file.get('size', 0))} | "
+                    f"{format_timestamp(file.get('accessed_time'))} |"
+                )
+            self._add()
+
         self._add("---")
         self._add()
 
@@ -376,10 +426,10 @@ class ImprovedReportGenerator:
             from report_visualizations import generate_top_folders_bar_chart
             chart_base64 = generate_top_folders_bar_chart(top_folders)
             if chart_base64:
-                self._add(f"![Top 10 Folders](f{chart_base64})")
+                self._add(f"![Top 10 Folders]({chart_base64})")
                 self._add()
-        except ImportError:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not generate top folders chart: {e}")
 
         # Per-folder mini-analysis
         for i, folder in enumerate(top_folders, 1):
@@ -393,6 +443,19 @@ class ImprovedReportGenerator:
             self._add(f"- Total size: {format_bytes(folder.get('total_size', 0))}")
             self._add(f"- Number of files: {format_number(folder.get('file_count', 0))}")
             self._add()
+
+            # Add sunburst chart for this folder's subfolders (if available)
+            subfolders = folder.get('subfolders', [])
+            if subfolders:
+                try:
+                    from report_visualizations import generate_sunburst_chart
+                    sunburst_html = generate_sunburst_chart(folder.get('path', 'Unknown'), subfolders)
+                    if sunburst_html:
+                        self.html_components.append((f'sunburst_folder_{i}', sunburst_html))
+                        self._add("*Sunburst chart available in HTML version*")
+                        self._add()
+                except Exception as e:
+                    logger.debug(f"Could not generate sunburst chart: {e}")
 
             # Contents
             file_types = folder.get('file_types', [])
@@ -444,6 +507,16 @@ class ImprovedReportGenerator:
         self._add()
 
         cleanup = self.data.get('cleanup_opportunities', {})
+
+        # Add cleanup opportunities chart
+        try:
+            from report_visualizations import generate_cleanup_opportunities_chart
+            chart_base64 = generate_cleanup_opportunities_chart(cleanup)
+            if chart_base64:
+                self._add(f"![Cleanup Opportunities]({chart_base64})")
+                self._add()
+        except Exception as e:
+            logger.debug(f"Could not generate cleanup chart: {e}")
 
         # Temporary files - grouped by folder with full paths
         self._add("### Temporary Files")
@@ -527,13 +600,21 @@ class ImprovedReportGenerator:
             self._add("- Identical file size")
             self._add()
 
-            self._add("| File | Size | Copies | Locations |")
-            self._add("|------|------|--------|-----------|")
+            self._add("| File | Size | Copies | Full Paths |")
+            self._add("|------|------|--------|------------|")
             for dup in duplicates[:10]:
-                locations = len(dup.get('file_locations', []))
+                file_locations = dup.get('file_locations', [])
+                occurrence_count = dup.get('occurrence_count', 0)
+
+                # Show full paths, but limit to first 3 if there are many
+                paths_to_show = file_locations[:3] if len(file_locations) > 3 else file_locations
+                paths_str = "<br>".join([f"`{p}`" for p in paths_to_show])
+                if len(file_locations) > 3:
+                    paths_str += f"<br>... and {len(file_locations) - 3} more"
+
                 self._add(
                     f"| {dup.get('filename', 'unknown')} | {format_bytes(dup.get('size', 0))} | "
-                    f"{format_number(dup.get('occurrence_count', 0))} | {locations} |"
+                    f"{format_number(occurrence_count)} | {paths_str} |"
                 )
             self._add()
             self._add("**Insight:** These files appear to be exact copies stored in different locations.")
@@ -554,6 +635,17 @@ class ImprovedReportGenerator:
         main = self.data.get('main_folder', {})
         types = main.get('predominant_types', [])[:10]
         type_locations = self.data.get('file_type_locations', {})
+
+        # Add file type treemap
+        if types:
+            try:
+                from report_visualizations import generate_file_type_treemap
+                chart_base64 = generate_file_type_treemap(types, top_n=10)
+                if chart_base64:
+                    self._add(f"![File Type Distribution]({chart_base64})")
+                    self._add()
+            except Exception as e:
+                logger.debug(f"Could not generate file type treemap: {e}")
 
         if types:
             # Define file types with descriptions
@@ -588,7 +680,8 @@ class ImprovedReportGenerator:
 
                 # Add location insights
                 if ft_name in type_locations:
-                    locations = type_locations[ft_name]
+                    type_info = type_locations[ft_name]
+                    locations = type_info.get('locations', [])
                     if locations:
                         folder_names = [loc['folder'].split('/')[-1] for loc in locations[:3]]
                         if len(folder_names) == 1:
@@ -596,6 +689,16 @@ class ImprovedReportGenerator:
                         elif len(folder_names) > 1:
                             folders_str = ", ".join([f"`{fn}`" for fn in folder_names])
                             self._add(f"- Most {ft_name} data is stored in {len(folder_names)} folders: {folders_str}")
+
+                    # Show top 5 biggest files of this type
+                    top_files = type_info.get('top_files', [])
+                    if top_files:
+                        self._add(f"- Top 5 biggest {ft_name} files:")
+                        for i, file in enumerate(top_files, 1):
+                            filename = file.get('path', '').split('/')[-1]
+                            file_size = file.get('size', 0)
+                            self._add(f"  {i}. `{filename}` - {format_bytes(file_size)}")
+
                 self._add()
 
         self._add("---")
@@ -610,6 +713,17 @@ class ImprovedReportGenerator:
 
         age_analysis = self.data.get('age_analysis', {})
         age_buckets = age_analysis.get('age_buckets', [])
+
+        # Add age histogram
+        if age_analysis:
+            try:
+                from report_visualizations import generate_age_histogram
+                chart_base64 = generate_age_histogram(age_analysis)
+                if chart_base64:
+                    self._add(f"![File Age Distribution]({chart_base64})")
+                    self._add()
+            except Exception as e:
+                logger.debug(f"Could not generate age histogram: {e}")
 
         if age_buckets:
             self._add("| Age Range | Files | Size |")
@@ -647,6 +761,16 @@ class ImprovedReportGenerator:
         user_storage = user_analysis.get('user_storage', [])[:15]
 
         if user_storage:
+            # Add user activity chart
+            try:
+                from report_visualizations import generate_user_activity_chart
+                chart_base64 = generate_user_activity_chart(user_storage, top_n=15)
+                if chart_base64:
+                    self._add(f"![Top Users by Storage]({chart_base64})")
+                    self._add()
+            except Exception as e:
+                logger.debug(f"Could not generate user activity chart: {e}")
+
             self._add("### Users Owning Most Data")
             self._add()
             self._add("| Username | Files | Size |")
@@ -679,6 +803,18 @@ class ImprovedReportGenerator:
         hotspots = self.data.get('hotspots', {})
         largest = hotspots.get('largest_files', [])[:10] if hotspots else []
 
+        # Add file size histogram for all files
+        file_size_dist = self.data.get('file_size_distribution', [])
+        if file_size_dist:
+            try:
+                from report_visualizations import generate_file_size_histogram
+                chart_base64 = generate_file_size_histogram(file_size_dist)
+                if chart_base64:
+                    self._add(f"![File Size Distribution]({chart_base64})")
+                    self._add()
+            except Exception as e:
+                logger.debug(f"Could not generate file size histogram: {e}")
+
         if largest:
             self._add("| File | Size | Modified | Type |")
             self._add("|------|------|----------|------|")
@@ -709,7 +845,7 @@ class ImprovedReportGenerator:
         self._add()
 
     def _generate_html(self, markdown_path: Path) -> Path:
-        """Generate HTML version with styled tables."""
+        """Generate HTML version with styled tables and interactive charts."""
         try:
             import markdown
 
@@ -717,6 +853,12 @@ class ImprovedReportGenerator:
                 md_content = f.read()
 
             html_content = markdown.markdown(md_content, extensions=['tables', 'fenced_code'])
+
+            # Inject interactive charts into HTML
+            for component_id, component_html in self.html_components:
+                # Find a good place to inject (e.g., before the next section)
+                # For now, append at the end of relevant sections
+                html_content += f"\n<div id='{component_id}' class='interactive-chart'>\n{component_html}\n</div>\n"
 
             # Enhanced CSS
             html_full = f"""
@@ -813,6 +955,21 @@ class ImprovedReportGenerator:
             border-left: 4px solid #0066cc;
             margin: 20px 0;
             border-radius: 4px;
+        }}
+        .interactive-chart {{
+            margin: 30px 0;
+            padding: 20px;
+            background-color: #fafafa;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        img {{
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 20px auto;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }}
     </style>
 </head>

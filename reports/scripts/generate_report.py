@@ -139,6 +139,9 @@ def generate_improved_report(
     logger.info("Step 13: Analyzing file type locations")
     analysis_data['file_type_locations'] = analyzer.get_file_type_locations()
 
+    logger.info("Step 14: Getting file size distribution")
+    analysis_data['file_size_distribution'] = analyzer.get_file_size_distribution(sample_size=10000)
+
     # Close analyzer
     analyzer.close()
 

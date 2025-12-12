@@ -133,15 +133,38 @@ class DuckDBClient:
             snapshots = result.to_dicts()
 
             # Get top_level_dirs separately
+            # Use the top_level_dir column from scanner data and construct full paths
             for snapshot in snapshots:
                 dirs_query = f"""
                     SELECT DISTINCT top_level_dir
                     FROM file_snapshots
                     WHERE CAST(snapshot_date AS VARCHAR) = '{snapshot['date']}'
+                    ORDER BY top_level_dir
                     LIMIT 100
                 """
                 dirs_result = self.conn.execute(dirs_query).pl()
-                snapshot['top_level_dirs'] = dirs_result['top_level_dir'].to_list()
+                # Convert top_level_dir names to full paths by finding an example path for each
+                top_dirs = dirs_result['top_level_dir'].to_list() if len(dirs_result) > 0 else []
+                full_paths = []
+                for top_dir in top_dirs:
+                    # Get one example path for this top_level_dir to extract the full directory path
+                    path_query = f"""
+                        SELECT path
+                        FROM file_snapshots
+                        WHERE CAST(snapshot_date AS VARCHAR) = '{snapshot['date']}'
+                        AND top_level_dir = '{top_dir}'
+                        LIMIT 1
+                    """
+                    path_result = self.conn.execute(path_query).pl()
+                    if len(path_result) > 0:
+                        example_path = path_result['path'][0]
+                        # Extract first-level directory: /project/cil/gcp or /project/cil/battuta_shares etc
+                        parts = example_path.split('/')
+                        if len(parts) >= 4:
+                            full_path = '/' + '/'.join(parts[1:4])  # /project/cil/xxx
+                            if full_path not in full_paths:
+                                full_paths.append(full_path)
+                snapshot['top_level_dirs'] = sorted(full_paths)
 
             duration = time.time() - start
             logger.warning(f"list_snapshots (full scan) took {duration:.2f}s - run optimize_snapshot.py for better performance")
@@ -167,7 +190,6 @@ class DuckDBClient:
                     CAST(snapshot_date AS VARCHAR) as date,
                     COUNT(*) as file_count,
                     SUM(size) as total_size,
-                    LIST(DISTINCT top_level_dir) as top_level_dirs,
                     MAX(modified_time) as last_modified
                 FROM file_snapshots
                 WHERE CAST(snapshot_date AS VARCHAR) = ?
@@ -179,7 +201,39 @@ class DuckDBClient:
             if len(result) == 0:
                 return None
 
-            return result.to_dicts()[0]
+            snapshot_info = result.to_dicts()[0]
+
+            # Get top_level_dirs by extracting from actual paths
+            dirs_query = """
+                SELECT DISTINCT top_level_dir
+                FROM file_snapshots
+                WHERE CAST(snapshot_date AS VARCHAR) = ?
+                ORDER BY top_level_dir
+            """
+            dirs_result = self.conn.execute(dirs_query, [snapshot_date]).pl()
+            top_dirs = dirs_result['top_level_dir'].to_list() if len(dirs_result) > 0 else []
+
+            # Convert to full paths
+            full_paths = []
+            for top_dir in top_dirs:
+                path_query = """
+                    SELECT path
+                    FROM file_snapshots
+                    WHERE CAST(snapshot_date AS VARCHAR) = ?
+                    AND top_level_dir = ?
+                    LIMIT 1
+                """
+                path_result = self.conn.execute(path_query, [snapshot_date, top_dir]).pl()
+                if len(path_result) > 0:
+                    example_path = path_result['path'][0]
+                    parts = example_path.split('/')
+                    if len(parts) >= 4:
+                        full_path = '/' + '/'.join(parts[1:4])
+                        if full_path not in full_paths:
+                            full_paths.append(full_path)
+
+            snapshot_info['top_level_dirs'] = sorted(full_paths)
+            return snapshot_info
         except Exception as e:
             logger.error(f"Error getting snapshot info: {e}")
             return None

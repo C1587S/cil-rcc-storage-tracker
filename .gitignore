@@ -5,19 +5,21 @@ scanner/Cargo.lock
 scanner/**/*.pdb
 
 # Python
-backend/__pycache__/
-backend/**/*.py[cod]
-backend/**/*$py.class
-backend/**/*.so
-backend/.pytest_cache/
-backend/.coverage
-backend/htmlcov/
-backend/.env
-backend/venv/
-backend/env/
-backend/**/*.egg-info/
-backend/dist/
-backend/build/
+__pycache__/
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/*.so
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+**/htmlcov/
+.env
+**/venv/
+**/env/
+**/*.egg-info/
+**/dist/
+**/build/
 
 # Node/Frontend
 frontend/node_modules/
@@ -49,9 +51,20 @@ logs/
 
 # Snapshots and data
 snapshots/
+backend/data/
+**/data/snapshots/
 **/*.parquet
 **/*.duckdb
 **/*.db
+
+# Reports output
+reports/output/
+reports/reports/
+**/reports/output/
+
+# Scan examples and test data
+scan_examples/
+OUTPUTS/
 
 # Temporary files
 tmp/
@@ -61,6 +74,14 @@ temp/
 # OS
 .DS_Store
 Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+**/*.ipynb
+
+# Package locks (optional - uncomment if you want to ignore)
+# package-lock.json
 
 # Benchmarks
 scanner/target/criterion/

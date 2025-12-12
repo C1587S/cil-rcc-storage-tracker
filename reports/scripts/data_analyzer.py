@@ -404,19 +404,29 @@ class StorageDataAnalyzer:
         opportunities = []
 
         # Find potential duplicates by size and name
+        # Only include files with same name in DIFFERENT directories
         duplicates_query = f"""
-        WITH file_groups AS (
-            SELECT
+        WITH unique_files AS (
+            SELECT DISTINCT
                 split_part(path, '/', length(regexp_split_to_array(path, '/'))) as filename,
-                size,
-                COUNT(*) as occurrence_count,
-                SUM(size) as total_wasted,
-                LIST(path) as file_locations
+                parent_path,
+                path,
+                size
             FROM files
             WHERE path LIKE '{self.target_directory}%'
                 AND size > 1024 * 1024  -- Only files > 1MB
+        ),
+        file_groups AS (
+            SELECT
+                filename,
+                size,
+                COUNT(DISTINCT parent_path) as unique_directories,
+                COUNT(DISTINCT path) as occurrence_count,
+                (COUNT(DISTINCT path) - 1) * MAX(size) as total_wasted,  -- Wasted = (copies - 1) * size
+                LIST(DISTINCT path ORDER BY path) as file_locations
+            FROM unique_files
             GROUP BY filename, size
-            HAVING COUNT(*) > 1
+            HAVING COUNT(DISTINCT parent_path) > 1  -- Must be in different directories
         )
         SELECT * FROM file_groups
         ORDER BY total_wasted DESC
@@ -801,15 +811,15 @@ class StorageDataAnalyzer:
 
         return results
 
-    def get_file_type_locations(self) -> Dict[str, List[Dict[str, Any]]]:
+    def get_file_type_locations(self) -> Dict[str, Any]:
         """
-        Get location breakdown for each significant file type.
+        Get location breakdown and top files for each significant file type.
 
         This helps answer: "Where are the nc4 files stored?"
-        instead of just "How many nc4 files are there?"
+        and "What are the biggest nc4 files?"
 
         Returns:
-            Dictionary mapping file types to their top folder locations
+            Dictionary with 'locations' and 'top_files' for each file type
         """
         logger.info("Analyzing file type locations")
 
@@ -827,7 +837,7 @@ class StorageDataAnalyzer:
 
         top_types = self.conn.execute(top_types_query).pl().to_dicts()
 
-        type_locations = {}
+        type_info = {}
 
         for ft in top_types:
             file_type = ft['file_type']
@@ -847,9 +857,29 @@ class StorageDataAnalyzer:
             """
 
             locations = self.conn.execute(location_query).pl().to_dicts()
-            type_locations[file_type] = locations
 
-        return type_locations
+            # Get top 5 biggest files of this type
+            top_files_query = f"""
+            SELECT
+                path,
+                size,
+                modified_time,
+                accessed_time
+            FROM files
+            WHERE path LIKE '{self.target_directory}%'
+                AND file_type = '{file_type}'
+            ORDER BY size DESC
+            LIMIT 5
+            """
+
+            top_files = self.conn.execute(top_files_query).pl().to_dicts()
+
+            type_info[file_type] = {
+                'locations': locations,
+                'top_files': top_files
+            }
+
+        return type_info
 
     def get_top_n_folders(self, n: int = 10) -> List[Dict[str, Any]]:
         """
@@ -1058,10 +1088,50 @@ class StorageDataAnalyzer:
 
         cold_folders = self.conn.execute(cold_query).pl().to_dicts()
 
+        # Top 5 files accessed in last week
+        week_ago = (now - timedelta(days=7)).timestamp()
+        recent_week_files_query = f"""
+        SELECT
+            path,
+            size,
+            accessed_time,
+            modified_time,
+            file_type
+        FROM files
+        WHERE path LIKE '{self.target_directory}%'
+            AND accessed_time IS NOT NULL
+            AND accessed_time > {week_ago}
+        ORDER BY accessed_time DESC
+        LIMIT 5
+        """
+
+        files_accessed_last_week = self.conn.execute(recent_week_files_query).pl().to_dicts()
+
+        # Top 5 files accessed in last month
+        month_ago = (now - timedelta(days=30)).timestamp()
+        recent_month_files_query = f"""
+        SELECT
+            path,
+            size,
+            accessed_time,
+            modified_time,
+            file_type
+        FROM files
+        WHERE path LIKE '{self.target_directory}%'
+            AND accessed_time IS NOT NULL
+            AND accessed_time > {month_ago}
+        ORDER BY accessed_time DESC
+        LIMIT 5
+        """
+
+        files_accessed_last_month = self.conn.execute(recent_month_files_query).pl().to_dicts()
+
         return {
             'most_accessed_folders': most_accessed,
             'active_old_folders': active_old_folders,
-            'cold_folders': cold_folders
+            'cold_folders': cold_folders,
+            'files_accessed_last_week': files_accessed_last_week,
+            'files_accessed_last_month': files_accessed_last_month
         }
 
     def get_snapshot_metadata(self) -> Dict[str, Any]:
@@ -1097,6 +1167,31 @@ class StorageDataAnalyzer:
             'earliest_file_accessed': data_metadata.get('earliest_accessed'),
             'latest_file_accessed': data_metadata.get('latest_accessed')
         }
+
+    def get_file_size_distribution(self, sample_size: int = 10000) -> List[Dict[str, Any]]:
+        """
+        Get a sample of file sizes for distribution analysis.
+
+        Args:
+            sample_size: Number of files to sample
+
+        Returns:
+            List of file dictionaries with size information
+        """
+        logger.info("Getting file size distribution sample")
+
+        # Sample files across the size spectrum
+        sample_query = f"""
+        SELECT size, file_type
+        FROM files
+        WHERE path LIKE '{self.target_directory}%'
+            AND size > 0
+        ORDER BY RANDOM()
+        LIMIT {sample_size}
+        """
+
+        result = self.conn.execute(sample_query).pl().to_dicts()
+        return result
 
     def close(self):
         """Close database connection."""
