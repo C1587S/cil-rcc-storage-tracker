@@ -1,23 +1,28 @@
-"""Report generator for storage audit and data cleaning reports.
+"""Improved report generator following REPORT_REQUIREMENTS.md guidelines.
 
-This module generates professional Markdown/HTML reports from analyzed storage data.
-Reports are simple, clear, and actionable for server administrators.
+This module generates storage audit reports with:
+- Simple, clear language
+- Executive summary with actionable insights
+- Top 10 folders analysis (not hierarchical depth)
+- Storage efficiency and hygiene review
+- Activity-based analysis
+- Styled tables using pandas Styler
+- Professional visualizations
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import json
+import time
 
 logger = logging.getLogger(__name__)
 
 
 def format_bytes(size: float) -> str:
     """Format bytes to human-readable string."""
-    # Convert to float to handle Decimal and other numeric types
     if size is None:
-        return "0.00 B"
+        return "0 B"
     size = float(size)
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
         if size < 1024.0:
@@ -31,16 +36,6 @@ def format_number(num: int) -> str:
     return f"{num:,}"
 
 
-def format_percentage(value: float, total: float) -> str:
-    """Calculate and format percentage."""
-    if total == 0 or total is None or value is None:
-        return "0.00%"
-    # Convert to float to handle Decimal and other numeric types
-    value = float(value)
-    total = float(total)
-    return f"{(value / total * 100):.2f}%"
-
-
 def format_timestamp(timestamp) -> str:
     """Format timestamp to string date."""
     if timestamp is None:
@@ -48,7 +43,6 @@ def format_timestamp(timestamp) -> str:
     if isinstance(timestamp, str):
         return timestamp[:10] if len(timestamp) >= 10 else timestamp
     if isinstance(timestamp, (int, float)):
-        from datetime import datetime
         try:
             return datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d')
         except:
@@ -56,17 +50,48 @@ def format_timestamp(timestamp) -> str:
     return str(timestamp)
 
 
-class ReportGenerator:
-    """Generates comprehensive storage audit reports in Markdown + HTML format."""
+def format_duration(seconds: float) -> str:
+    """Format duration in seconds to readable string."""
+    if seconds < 60:
+        return f"{seconds:.0f} seconds"
+    elif seconds < 3600:
+        minutes = seconds / 60
+        secs = seconds % 60
+        return f"{int(minutes)} minutes {int(secs)} seconds"
+    else:
+        hours = seconds / 3600
+        minutes = (seconds % 3600) / 60
+        return f"{int(hours)} hours {int(minutes)} minutes"
 
-    def __init__(self, directory_name: str, analysis_data: Dict[str, Any], output_dir: str):
+
+class ImprovedReportGenerator:
+    """
+    Generates storage audit reports following REPORT_REQUIREMENTS.md.
+
+    Key principles:
+    - Simple English, short sentences
+    - Focus on insights and actions
+    - Top folders (not hierarchical depth analysis)
+    - Activity-based recommendations
+    """
+
+    def __init__(
+        self,
+        directory_name: str,
+        analysis_data: Dict[str, Any],
+        output_dir: str,
+        snapshot_date: Optional[datetime] = None,
+        compute_start_time: Optional[float] = None
+    ):
         """
-        Initialize report generator.
+        Initialize improved report generator.
 
         Args:
-            directory_name: Name of the directory being analyzed
+            directory_name: Name of directory being analyzed
             analysis_data: Complete analysis data from StorageDataAnalyzer
             output_dir: Directory to save the report
+            snapshot_date: Date when snapshot was created
+            compute_start_time: Time when analysis started (for compute time tracking)
         """
         self.directory_name = directory_name
         self.data = analysis_data
@@ -74,39 +99,41 @@ class ReportGenerator:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.report_lines = []
+        self.html_components = []  # For styled tables and charts
         self.generation_time = datetime.now()
+        self.snapshot_date = snapshot_date or self.generation_time
+        self.compute_start_time = compute_start_time or time.time()
 
     def generate(self) -> Path:
         """
-        Generate complete report.
+        Generate complete report following REPORT_REQUIREMENTS.md structure.
 
         Returns:
             Path to generated report file
         """
-        logger.info(f"Generating report for {self.directory_name}")
+        logger.info(f"Generating improved report for {self.directory_name}")
 
-        self._add_header()
-        self._add_main_folder_analysis()
-        self._add_hierarchical_analysis()
-        self._add_hotspots_analysis()
-        self._add_age_analysis()
-        self._add_cleanup_opportunities()
+        # Calculate compute time
+        compute_time = time.time() - self.compute_start_time
+
+        # Required sections in order
+        self._add_metadata(compute_time)
+        self._add_executive_summary()
+        self._add_storage_overview()
+        self._add_folder_activity_analysis()
+        self._add_top_10_folders()
+        self._add_storage_efficiency_hygiene()
+        self._add_file_type_overview()
+        self._add_file_age_analysis()
 
         if self.data.get('user_analysis'):
-            self._add_user_analysis()
+            self._add_user_ownership_usage()
 
-        self._add_large_files_analysis()
-        self._add_trash_hidden_analysis()
-        self._add_file_type_classification()
-
-        # Add multi-level directory analysis
-        if self.data.get('parent_directory') or self.data.get('first_level_dirs') or self.data.get('second_level_dirs'):
-            self._add_multi_level_directory_analysis()
-
-        self._add_footer()
+        self._add_large_files()
+        self._add_notes_and_limits()
 
         # Write report
-        report_filename = f"audit_report_{self.directory_name.replace('/', '_')}_{self.generation_time.strftime('%Y%m%d')}.md"
+        report_filename = f"storage_audit_{self.directory_name.replace('/', '_')}_{self.generation_time.strftime('%Y%m%d')}.md"
         report_path = self.output_dir / report_filename
 
         with open(report_path, 'w') as f:
@@ -123,766 +150,566 @@ class ReportGenerator:
         """Add line to report."""
         self.report_lines.append(line)
 
-    def _add_header(self):
-        """Add report header."""
-        self._add("# Data Audit and Data Cleaning Report")
+    def _add_metadata(self, compute_time: float):
+        """Add report metadata (REQUIRED)."""
+        self._add("# Storage Audit Report")
         self._add()
-        self._add(f"**Directory:** `{self.directory_name}`  ")
-        self._add(f"**Generated:** {self.generation_time.strftime('%Y-%m-%d %H:%M:%S')}  ")
-        self._add(f"**Report Type:** Storage Audit and Data Analysis")
+        self._add(f"**Directory:** `{self.directory_name}`")
+        self._add()
+
+        # Required metadata
+        self._add("## Report Metadata")
+        self._add()
+        self._add(f"- **Report generated on:** {self.generation_time.strftime('%Y-%m-%d %H:%M')} UTC")
+        self._add(f"- **Report compute time:** {format_duration(compute_time)}")
+        self._add(f"- **Data snapshot date:** {self.snapshot_date.strftime('%Y-%m-%d')}")
         self._add()
         self._add("---")
         self._add()
 
     def _add_executive_summary(self):
-        """Add executive summary section."""
+        """
+        Add Executive Summary (Most Important Section).
+
+        Maximum 6 bullet points.
+        Each bullet: What was found + Why it matters + What to do
+        """
         self._add("## Executive Summary")
         self._add()
-
-        main = self.data['main_folder']
-        total_size = main['total_size']
-        total_files = main['total_files']
-
-        self._add(f"This report provides a comprehensive analysis of storage usage for `{self.directory_name}`. ")
-        self._add(f"The directory currently contains **{format_number(total_files)} files** ")
-        self._add(f"consuming **{format_bytes(total_size)}** of storage space.")
+        self._add("This is the most important section of the report.")
         self._add()
 
-        # Key findings
-        self._add("### Key Findings")
-        self._add()
+        insights = []
+        main = self.data.get('main_folder', {})
+        total_size = main.get('total_size', 0)
+        total_files = main.get('total_files', 0)
 
-        hotspots = self.data['hotspots']
-        if hotspots['heavy_directories']:
-            heaviest = hotspots['heavy_directories'][0]
-            self._add(f"- **Largest subdirectory:** `{heaviest['directory']}` ({format_bytes(heaviest['total_size'])})")
+        # Insight 1: Storage concentration
+        top_folders = self.data.get('top_folders', [])
+        if top_folders and len(top_folders) >= 10:
+            top_10_size = sum(f.get('total_size') or 0 for f in top_folders[:10])
+            top_10_pct = (top_10_size / total_size * 100) if total_size > 0 else 0
+            if top_10_pct > 50:
+                insights.append(
+                    f"**{top_10_pct:.0f}% of storage is in just 10 folders**  \n"
+                    f"Storage is highly concentrated  \n"
+                    f"→ Focus cleanup efforts on these folders"
+                )
 
-        if hotspots['largest_files']:
-            largest_file = hotspots['largest_files'][0]
-            self._add(f"- **Largest single file:** `{largest_file['path']}` ({format_bytes(largest_file['size'])})")
+        # Insight 2: Old data analysis
+        age_analysis = self.data.get('age_analysis', {})
+        age_buckets = age_analysis.get('age_buckets', [])
+        old_bucket = next((b for b in age_buckets if 'Over 1 year' in b.get('age_bucket', '')), None)
+        if old_bucket:
+            old_pct = ((old_bucket.get('total_size') or 0) / total_size * 100) if total_size > 0 else 0
+            if old_pct > 60:
+                insights.append(
+                    f"**Most data has not changed in over one year ({old_pct:.0f}%)**  \n"
+                    f"This means the data is likely inactive  \n"
+                    f"→ Consider archive or cold storage"
+                )
 
-        cleanup = self.data['cleanup_opportunities']
-        if cleanup['checkpoints']['checkpoint_count'] > 0:
-            self._add(f"- **Checkpoint files:** {format_number(cleanup['checkpoints']['checkpoint_count'])} "
-                     f"files using {format_bytes(cleanup['checkpoints']['total_size'])}")
+        # Insight 3: Active old folders (critical insight)
+        activity = self.data.get('folder_activity', {})
+        active_old = activity.get('active_old_folders', [])
+        if active_old:
+            insights.append(
+                f"**{len(active_old)} folders contain old data but are accessed frequently**  \n"
+                f"This means old data is still in use  \n"
+                f"→ Do not archive without checking usage"
+            )
 
-        if cleanup['temporary_files']['temp_file_count'] > 0:
-            self._add(f"- **Temporary files:** {format_number(cleanup['temporary_files']['temp_file_count'])} "
-                     f"files using {format_bytes(cleanup['temporary_files']['total_size'])}")
+        # Insight 4: User concentration
+        user_analysis = self.data.get('user_analysis', {})
+        if user_analysis:
+            user_storage = user_analysis.get('user_storage', [])
+            if len(user_storage) >= 3:
+                top_3_size = sum(u.get('total_size') or 0 for u in user_storage[:3])
+                top_3_pct = (top_3_size / total_size * 100) if total_size > 0 else 0
+                if top_3_pct > 50:
+                    insights.append(
+                        f"**{len(user_storage[:3])} users own {top_3_pct:.0f}% of the data**  \n"
+                        f"Cleanup and storage decisions should involve these users"
+                    )
 
-        self._add()
-        self._add("---")
-        self._add()
+        # Insight 5: Cleanup opportunities
+        cleanup = self.data.get('cleanup_opportunities', {})
+        temp_size = cleanup.get('temporary_files', {}).get('total_size', 0)
+        if temp_size > 1024**3:  # > 1GB
+            insights.append(
+                f"**{format_bytes(temp_size)} in temporary files**  \n"
+                f"These files are safe to delete  \n"
+                f"→ Immediate space recovery possible"
+            )
 
-    def _add_main_folder_analysis(self):
-        """Section 1: Analysis of the Main Folder."""
-        self._add("## 1. Analysis of the Main Folder")
-        self._add()
-
-        main = self.data['main_folder']
-
-        self._add("### Storage Overview")
-        self._add()
-        self._add(f"- **Total Size:** {format_bytes(main['total_size'])}")
-        self._add(f"- **Total Files:** {format_number(main['total_files'])}")
-        self._add(f"- **Subdirectories:** {format_number(main['subdirectory_count'])}")
-        self._add(f"- **Unique File Types:** {format_number(main['unique_file_types'])}")
-        self._add()
-
-        # Predominant file types
-        self._add("### Predominant File Types")
-        self._add()
-        self._add("| File Type | Count | Total Size | Percentage |")
-        self._add("|-----------|-------|------------|------------|")
-
-        for file_type in main['predominant_types'][:10]:
-            pct = format_percentage(file_type['total_size'], main['total_size'])
-            self._add(f"| {file_type['file_type']} | {format_number(file_type['count'])} | "
-                     f"{format_bytes(file_type['total_size'])} | {pct} |")
-
-        self._add()
-
-        # Heaviest subdirectory
-        if main['heaviest_subdirectory']:
-            heaviest = main['heaviest_subdirectory']
-            self._add("### Heaviest Subdirectory")
-            self._add()
-            self._add(f"**Directory:** `{heaviest['directory']}`")
-            self._add()
-            self._add(f"- **Size:** {format_bytes(heaviest['total_size'])}")
-            self._add(f"- **Files:** {format_number(heaviest['file_count'])}")
-            self._add(f"- **Percentage of total:** {format_percentage(heaviest['total_size'], main['total_size'])}")
-            self._add()
-
-        self._add("---")
-        self._add()
-
-    def _add_hierarchical_analysis(self):
-        """Section 2: Hierarchical Weight Analysis."""
-        self._add("## 2. Hierarchical Weight Analysis")
-        self._add()
-        self._add("This section shows how storage is distributed across the directory hierarchy, ")
-        self._add("identifying the heaviest folders at each level.")
-        self._add()
-
-        hierarchical = self.data['hierarchical']
-
-        for level_data in hierarchical[:5]:  # Show first 5 levels
-            depth = level_data['depth']
-            folders = level_data['folders']
-
-            self._add(f"### Level {depth}")
-            self._add()
-            self._add("| Folder | File Count | Total Size | Percentage |")
-            self._add("|--------|------------|------------|------------|")
-
-            total_at_level = sum(f['total_size'] for f in folders)
-
-            for folder in folders[:15]:  # Top 15 per level
-                pct = format_percentage(folder['total_size'], total_at_level)
-                self._add(f"| `{folder['folder_name']}` | {format_number(folder['file_count'])} | "
-                         f"{format_bytes(folder['total_size'])} | {pct} |")
-
-            self._add()
-
-        self._add("### Structural Observations")
-        self._add()
-
-        # Analyze structure
-        if len(hierarchical) > 3:
-            self._add("- Directory structure has significant depth (>3 levels)")
-            deep_folders = [f for level in hierarchical for f in level['folders'] if f.get('depth_level', 0) > 3]
-            if deep_folders:
-                self._add("- Deep nested structures may impact performance and management")
-
-        self._add()
-        self._add("---")
-        self._add()
-
-    def _add_hotspots_analysis(self):
-        """Section 3: Hotspots (Critical Points)."""
-        self._add("## 3. Hotspots (Critical Points)")
-        self._add()
-        self._add("This section identifies critical storage consumption points that require immediate attention.")
-        self._add()
-
-        hotspots = self.data['hotspots']
-
-        # Heaviest directories
-        self._add("### Heaviest Subdirectories (Top 20)")
-        self._add()
-        self._add("| Directory | File Count | Total Size | Largest File |")
-        self._add("|-----------|------------|------------|--------------|")
-
-        for dir_info in hotspots['heavy_directories'][:20]:
-            self._add(f"| `{dir_info['directory']}` | {format_number(dir_info['file_count'])} | "
-                     f"{format_bytes(dir_info['total_size'])} | {format_bytes(dir_info['largest_file'])} |")
-
-        self._add()
-
-        # Largest files
-        self._add("### Largest Individual Files (Top 30)")
-        self._add()
-        self._add("| File Path | Size | Type | Last Modified |")
-        self._add("|-----------|------|------|---------------|")
-
-        for file_info in hotspots['largest_files'][:30]:
-            mod_time = format_timestamp(file_info['modified_time'])
-            self._add(f"| `{file_info['path']}` | {format_bytes(file_info['size'])} | "
-                     f"{file_info['file_type'] or 'N/A'} | {mod_time} |")
-
-        self._add()
-
-        # Size threshold analysis
-        self._add("### Files by Size Threshold")
-        self._add()
-
-        threshold_analysis = hotspots['size_threshold_analysis']
-
-        for threshold_name, data in threshold_analysis.items():
-            self._add(f"**{threshold_name.replace('_', ' ').title()}:**")
-            self._add()
-            self._add(f"- Count: {format_number(data['count'])}")
-            self._add(f"- Total Size: {format_bytes(data['total_size'])}")
-            self._add()
-
-        # File types consuming most space
-        self._add("### File Types Consuming Most Space")
-        self._add()
-        self._add("| File Type | File Count | Total Size | Average Size | Max Size |")
-        self._add("|-----------|------------|------------|--------------|----------|")
-
-        for type_info in hotspots['type_consumption'][:15]:
-            self._add(f"| {type_info['file_type']} | {format_number(type_info['file_count'])} | "
-                     f"{format_bytes(type_info['total_size'])} | {format_bytes(type_info['avg_size'])} | "
-                     f"{format_bytes(type_info['max_size'])} |")
-
-        self._add()
-        self._add("---")
-        self._add()
-
-    def _add_age_analysis(self):
-        """Section 4: Age (Temporal) Analysis."""
-        self._add("## 4. Age (Temporal) Analysis")
-        self._add()
-        self._add("Analysis of files based on last modification time, identifying old or unused data.")
-        self._add()
-
-        age = self.data['age_analysis']
-
-        # Age buckets
-        self._add("### Files by Age")
-        self._add()
-        self._add("| Age Range | File Count | Total Size |")
-        self._add("|-----------|------------|------------|")
-
-        total_size = sum(bucket['total_size'] or 0 for bucket in age['age_buckets'])
-
-        for bucket in age['age_buckets']:
-            bucket_size = bucket['total_size'] or 0
-            pct = format_percentage(bucket_size, total_size) if total_size > 0 else "0%"
-            self._add(f"| {bucket['age_bucket']} | {format_number(bucket['file_count'])} | "
-                     f"{format_bytes(bucket_size)} ({pct}) |")
-
-        self._add()
-
-        # Old files by type
-        self._add("### Old Files (>1 year) by Type")
-        self._add()
-        self._add("| File Type | File Count | Total Size |")
-        self._add("|-----------|------------|------------|")
-
-        for type_info in age['old_files_by_type'][:15]:
-            self._add(f"| {type_info['file_type']} | {format_number(type_info['file_count'])} | "
-                     f"{format_bytes(type_info['total_size'])} |")
-
-        self._add()
-
-        # Directories with old content
-        self._add("### Directories with High Amounts of Old Content")
-        self._add()
-        self._add("| Directory | Old Files | Total Size | Most Recent Modification |")
-        self._add("|-----------|-----------|------------|--------------------------|")
-
-        for dir_info in age['directories_with_old_content'][:15]:
-            recent = format_timestamp(dir_info['most_recent_modification'])
-            self._add(f"| `{dir_info['directory']}` | {format_number(dir_info['old_file_count'])} | "
-                     f"{format_bytes(dir_info['total_size'])} | {recent} |")
-
-        self._add()
-        self._add("---")
-        self._add()
-
-    def _add_cleanup_opportunities(self):
-        """Section 5: Cleanup / Reduction Opportunities."""
-        self._add("## 5. Cleanup and Reduction Opportunities")
-        self._add()
-        self._add("This section identifies potential cleanup and reduction opportunities.")
-        self._add()
-
-        cleanup = self.data['cleanup_opportunities']
-
-        # Potential duplicates
-        self._add("### Potential Duplicate Files")
-        self._add()
-
-        duplicates = cleanup['potential_duplicates']
+        # Insight 6: Duplicates
+        duplicates = cleanup.get('potential_duplicates', [])
         if duplicates:
-            total_wasted = sum(d['total_wasted'] for d in duplicates)
-            self._add(f"**Total potential space wasted by duplicates:** {format_bytes(total_wasted)}")
-            self._add()
-            self._add("| Filename | Size | Occurrences | Wasted Space |")
-            self._add("|----------|------|-------------|--------------|")
+            dup_size = sum(d.get('total_wasted') or 0 for d in duplicates[:10])
+            if dup_size > 1024**3:  # > 1GB
+                insights.append(
+                    f"**{format_bytes(dup_size)} in potential duplicate files**  \n"
+                    f"Same files stored in multiple locations  \n"
+                    f"→ Review and consolidate"
+                )
 
-            for dup in duplicates[:20]:
-                self._add(f"| {dup['filename']} | {format_bytes(dup['size'])} | "
-                         f"{format_number(dup['occurrence_count'])} | {format_bytes(dup['total_wasted'])} |")
-            self._add()
-        else:
-            self._add("No significant duplicate files detected (based on name and size matching).")
-            self._add()
-
-        # Checkpoints
-        self._add("### Checkpoint Files")
-        self._add()
-
-        ckpt = cleanup['checkpoints']
-        if ckpt['checkpoint_count'] > 0:
-            self._add(f"**Total checkpoint files:** {format_number(ckpt['checkpoint_count'])}  ")
-            self._add(f"**Total size:** {format_bytes(ckpt['total_size'])}")
-            self._add()
-        else:
-            self._add("No checkpoint files detected.")
+        # Add up to 6 insights
+        for i, insight in enumerate(insights[:6], 1):
+            self._add(f"{i}. {insight}")
             self._add()
 
-        # Temporary files
-        self._add("### Temporary and Intermediate Files")
-        self._add()
-
-        temp = cleanup['temporary_files']
-        if temp['temp_file_count'] > 0:
-            self._add(f"**Total temporary files:** {format_number(temp['temp_file_count'])}  ")
-            self._add(f"**Total size:** {format_bytes(temp['total_size'])}")
+        if not insights:
+            self._add("- Storage appears well-managed")
+            self._add("- No major cleanup opportunities identified")
             self._add()
-        else:
-            self._add("No temporary files detected.")
-            self._add()
-
-        # Compressible files
-        self._add("### Compression Opportunities")
-        self._add()
-
-        compressible = cleanup['compressible_files']
-        if compressible:
-            total_savings = sum(c['estimated_savings'] for c in compressible)
-            self._add(f"**Estimated space savings through compression:** {format_bytes(total_savings)}")
-            self._add()
-            self._add("| File Type | File Count | Current Size | Estimated Savings |")
-            self._add("|-----------|------------|--------------|-------------------|")
-
-            for comp in compressible:
-                self._add(f"| {comp['file_type']} | {format_number(comp['file_count'])} | "
-                         f"{format_bytes(comp['total_size'])} | {format_bytes(comp['estimated_savings'])} |")
-
-            self._add()
-        else:
-            self._add("No significant compression opportunities identified.")
-            self._add()
-
-        # Priority recommendations
-        self._add("### Priority Cleanup Actions")
-        self._add()
-        self._add("**High Priority:**")
-        self._add()
-
-        if temp['temp_file_count'] > 0:
-            self._add(f"1. Delete temporary files: {format_bytes(temp['total_size'])} recoverable")
-
-        if ckpt['checkpoint_count'] > 10:
-            self._add(f"2. Review and clean checkpoint files: potentially {format_bytes(ckpt['total_size'] * 0.5)} "
-                     f"recoverable by removing old checkpoints")
-
-        self._add()
-        self._add("**Medium Priority:**")
-        self._add()
-
-        if compressible:
-            self._add(f"1. Compress eligible files: {format_bytes(total_savings)} estimated savings")
-
-        if duplicates:
-            self._add(f"2. Investigate and remove duplicate files: {format_bytes(total_wasted)} potential savings")
-
-        self._add()
-        self._add("**Low Priority:**")
-        self._add()
-        self._add("1. Archive old data (>1 year) to cheaper storage tiers")
-        self._add("2. Review rarely accessed files for archival or deletion")
-        self._add()
-        self._add("---")
-        self._add()
-
-    def _add_user_analysis(self):
-        """Section 6: User / Homedir Analysis."""
-        self._add("## 6. User and Home Directory Analysis")
-        self._add()
-
-        user = self.data['user_analysis']
-
-        # User storage
-        self._add("### Storage Usage by User")
-        self._add()
-        self._add("| Username | File Count | Total Size | Last Access |")
-        self._add("|----------|------------|------------|-------------|")
-
-        for user_info in user['user_storage'][:30]:
-            last_access = format_timestamp(user_info['last_access'])
-            self._add(f"| {user_info['username']} | {format_number(user_info['file_count'])} | "
-                     f"{format_bytes(user_info['total_size'])} | {last_access} |")
-
-        self._add()
-
-        # Inactive users
-        self._add("### Inactive Users (>6 months since last access)")
-        self._add()
-
-        if user['inactive_users']:
-            self._add("| Username | Total Size | Last Access |")
-            self._add("|----------|------------|-------------|")
-
-            for inactive in user['inactive_users']:
-                last_access = format_timestamp(inactive['last_access'])
-                self._add(f"| {inactive['username']} | {format_bytes(inactive['total_size'])} | {last_access} |")
-
-            self._add()
-        else:
-            self._add("No inactive users detected.")
-
-        self._add()
-        self._add("---")
-        self._add()
-
-    def _add_large_files_analysis(self):
-        """Section 7: Analysis of Critically Large Files."""
-        self._add("## 7. Analysis of Critically Large Files")
-        self._add()
-        self._add("Files larger than 10GB require special attention due to their significant storage impact.")
-        self._add()
-
-        large_files = self.data['large_files']
-
-        for threshold in ['10GB', '50GB', '100GB']:
-            files = large_files.get(threshold, [])
-
-            if files:
-                self._add(f"### Files Larger Than {threshold}")
-                self._add()
-                self._add(f"**Count:** {format_number(len(files))}  ")
-                total = sum(f['size'] for f in files)
-                self._add(f"**Total Size:** {format_bytes(total)}")
-                self._add()
-                self._add("| File Path | Size | Type | Modified |")
-                self._add("|-----------|------|------|----------|")
-
-                for file_info in files[:20]:
-                    mod_time = format_timestamp(file_info['modified_time'])
-                    self._add(f"| `{file_info['path']}` | {format_bytes(file_info['size'])} | "
-                             f"{file_info['file_type'] or 'N/A'} | {mod_time} |")
-
-                self._add()
 
         self._add("---")
         self._add()
 
-    def _add_trash_hidden_analysis(self):
-        """Section 8: Trash, Hidden, and Residual Files Analysis."""
-        self._add("## 8. Trash, Hidden, and Residual Files Analysis")
+    def _add_storage_overview(self):
+        """Add Storage Overview section."""
+        self._add("## Storage Overview")
         self._add()
 
-        trash = self.data['trash_hidden']
+        main = self.data.get('main_folder', {})
 
-        # Hidden files
-        self._add("### Hidden Files (starting with .)")
-        self._add()
-        hidden = trash['hidden_files']
-        self._add(f"- **Count:** {format_number(hidden['hidden_file_count'])}")
-        self._add(f"- **Total Size:** {format_bytes(hidden['total_size'])}")
+        self._add(f"- **Total size:** {format_bytes(main.get('total_size', 0))}")
+        self._add(f"- **Total files:** {format_number(main.get('total_files', 0))}")
+        self._add(f"- **Total folders:** {format_number(main.get('subdirectory_count', 0))}")
         self._add()
 
-        # Cache files
-        self._add("### Cache and Application Directories")
+        # Simple statement
+        top_folders = self.data.get('top_folders', [])
+        if top_folders:
+            self._add("Most storage is concentrated in a few locations.")
         self._add()
-        cache = trash['cache_files']
-        if cache['cache_file_count'] > 0:
-            self._add(f"- **Count:** {format_number(cache['cache_file_count'])}")
-            self._add(f"- **Total Size:** {format_bytes(cache['total_size'])}")
+        self._add("---")
+        self._add()
+
+    def _add_folder_activity_analysis(self):
+        """Add Folder Usage and Activity section."""
+        self._add("## Folder Usage and Activity")
+        self._add()
+        self._add("This section shows how often folders are used.")
+        self._add("Old files can still be used often.")
+        self._add()
+
+        activity = self.data.get('folder_activity', {})
+
+        # Active old folders (most important)
+        active_old = activity.get('active_old_folders', [])
+        if active_old:
+            self._add("### Folders with Old Data but Recent Access")
             self._add()
-            self._add("Includes: `.cache/`, `__pycache__/`, `.ipynb_checkpoints/`, `node_modules/`")
+            self._add("These folders are active and should not be archived:")
             self._add()
+
+            # Create styled table using report_styling
+            try:
+                from report_styling import style_top_folders_table
+                table_html = style_top_folders_table(active_old[:10])
+                self.html_components.append(('active_old_folders', table_html))
+
+                # Markdown table for .md version
+                self._add("| Folder | Size | Files | Last Access |")
+                self._add("|--------|------|-------|-------------|")
+                for folder in active_old[:10]:
+                    folder_name = folder.get('folder', '').split('/')[-1]
+                    self._add(
+                        f"| `{folder_name}` | {format_bytes(folder.get('total_size', 0))} | "
+                        f"{format_number(folder.get('file_count', 0))} | "
+                        f"{format_timestamp(folder.get('last_access'))} |"
+                    )
+            except ImportError:
+                logger.warning("report_styling not available")
+                # Fallback to simple table
+                for folder in active_old[:10]:
+                    self._add(f"- `{folder.get('folder')}` - {format_bytes(folder.get('total_size', 0))}")
+
+            self._add()
+
+        # Cold folders (archive candidates)
+        cold = activity.get('cold_folders', [])
+        if cold:
+            self._add("### Folders with Little Recent Activity")
+            self._add()
+            self._add("These folders are large and rarely accessed.")
+            self._add("These folders are good archive candidates:")
+            self._add()
+
+            self._add("| Folder | Size | Files | Last Access |")
+            self._add("|--------|------|-------|-------------|")
+            for folder in cold[:10]:
+                folder_name = folder.get('folder', '').split('/')[-1]
+                self._add(
+                    f"| `{folder_name}` | {format_bytes(folder.get('total_size', 0))} | "
+                    f"{format_number(folder.get('file_count', 0))} | "
+                    f"{format_timestamp(folder.get('last_access'))} |"
+                )
+            self._add()
+
+        self._add("---")
+        self._add()
+
+    def _add_top_10_folders(self):
+        """
+        Add Top 10 Biggest Folders section.
+
+        IMPORTANT: No hierarchical depth analysis.
+        Just the 10 heaviest folders with mini-analysis for each.
+        """
+        self._add("## Top 10 Biggest Folders")
+        self._add()
+        self._add("This section focuses on the 10 heaviest folders.")
+        self._add("These folders matter the most.")
+        self._add()
+
+        top_folders = self.data.get('top_folders', [])[:10]
+
+        if not top_folders:
+            self._add("No folder data available.")
+            self._add()
+            return
+
+        # Overview chart
+        try:
+            from report_visualizations import generate_top_folders_bar_chart
+            chart_base64 = generate_top_folders_bar_chart(top_folders)
+            if chart_base64:
+                self._add(f"![Top 10 Folders](f{chart_base64})")
+                self._add()
+        except ImportError:
+            pass
+
+        # Per-folder mini-analysis
+        for i, folder in enumerate(top_folders, 1):
+            self._add(f"### {i}. {folder.get('path', 'Unknown').split('/')[-1]}")
+            self._add()
+
+            # Folder summary
+            self._add("**Summary:**")
+            self._add()
+            self._add(f"- Path: `{folder.get('path', 'Unknown')}`")
+            self._add(f"- Total size: {format_bytes(folder.get('total_size', 0))}")
+            self._add(f"- Number of files: {format_number(folder.get('file_count', 0))}")
+            self._add()
+
+            # Contents
+            file_types = folder.get('file_types', [])
+            if file_types:
+                self._add("**Main file types:**")
+                self._add()
+                for ft in file_types[:3]:
+                    self._add(f"- {ft.get('file_type', 'unknown')}: {format_bytes(ft.get('total_size', 0))}")
+                self._add()
+
+            # Activity
+            access_stats = folder.get('access_stats', {})
+            if access_stats:
+                self._add("**Activity:**")
+                self._add()
+                accessed_last_week = access_stats.get('accessed_last_week', 0)
+                accessed_last_month = access_stats.get('accessed_last_month', 0)
+                if accessed_last_week > 0:
+                    self._add(f"- Files accessed in last week: {format_number(accessed_last_week)}")
+                if accessed_last_month > 0:
+                    self._add(f"- Files accessed in last month: {format_number(accessed_last_month)}")
+                self._add()
+
+            # Time
+            age_dist = folder.get('age_distribution', [])
+            if age_dist:
+                self._add("**File age:**")
+                self._add()
+                for age in age_dist:
+                    self._add(f"- {age.get('age_bucket')}: {format_bytes(age.get('total_size', 0))}")
+                self._add()
+
+            # Insight (one or two sentences)
+            insight = folder.get('insight', '')
+            if insight:
+                self._add("**Insight:**")
+                self._add()
+                self._add(insight)
+                self._add()
+
+        self._add("---")
+        self._add()
+
+    def _add_storage_efficiency_hygiene(self):
+        """Add Storage Efficiency and Data Hygiene Review section."""
+        self._add("## Storage Efficiency and Data Hygiene Review")
+        self._add()
+        self._add("This section focuses on low-risk cleanup opportunities.")
+        self._add()
+
+        cleanup = self.data.get('cleanup_opportunities', {})
+
+        # Temporary files - grouped by folder with full paths
+        self._add("### Temporary Files")
+        self._add()
+        self._add("Temporary files grouped by folder.")
+        self._add()
+        temp = cleanup.get('temporary_files', {})
+        temp_count = temp.get('temp_file_count', 0)
+        temp_size = temp.get('total_size', 0)
+        temp_by_folder = temp.get('by_folder', [])
+
+        if temp_count > 0:
+            self._add(f"**Total:** {format_number(temp_count)} files, {format_bytes(temp_size)}")
+            self._add()
+
+            if temp_by_folder:
+                self._add("| Folder | Count | Size | Example Paths |")
+                self._add("|--------|-------|------|---------------|")
+                for folder_data in temp_by_folder[:10]:
+                    folder = folder_data.get('folder', 'Unknown')
+                    count = folder_data.get('file_count', 0)
+                    size = folder_data.get('total_size', 0)
+                    examples = folder_data.get('example_paths', [])
+                    example_str = "<br>".join([f"`{p}`" for p in examples[:3]]) if examples else "-"
+
+                    self._add(
+                        f"| `{folder}` | {format_number(count)} | "
+                        f"{format_bytes(size)} | {example_str} |"
+                    )
+                self._add()
+
+            self._add("**Insight:** Most temporary files come from output folders.")
+            self._add("This suggests missing cleanup in jobs or scripts.")
         else:
-            self._add("No significant cache directories detected.")
+            self._add("No significant temporary files detected.")
         self._add()
 
-        # Empty files
-        self._add("### Empty Files (0 bytes)")
+        # Empty files - grouped by folder with examples
+        self._add("### Empty Files")
         self._add()
-        empty = trash['empty_files']
-        if empty['empty_file_count'] > 0:
-            self._add(f"- **Count:** {format_number(empty['empty_file_count'])}")
+        self._add("Folders with the most empty files.")
+        self._add()
+        trash = self.data.get('trash_hidden', {})
+        empty = trash.get('empty_files', {}) if trash else {}
+        empty_count = empty.get('empty_file_count', 0)
+        empty_by_folder = empty.get('by_folder', [])
+
+        if empty_count > 0:
+            self._add(f"**Total:** {format_number(empty_count)} empty files")
             self._add()
+
+            if empty_by_folder:
+                self._add("| Folder | Count | Example Files |")
+                self._add("|--------|-------|---------------|")
+                for folder_data in empty_by_folder[:10]:
+                    folder = folder_data.get('folder', 'Unknown')
+                    count = folder_data.get('file_count', 0)
+                    examples = folder_data.get('example_paths', [])
+                    # Show just filenames, not full paths, and limit to 3-5
+                    filenames = [p.split('/')[-1] for p in examples[:5]] if examples else []
+                    example_str = "<br>".join([f"`{fn}`" for fn in filenames]) if filenames else "-"
+
+                    self._add(
+                        f"| `{folder}` | {format_number(count)} | {example_str} |"
+                    )
+                self._add()
+
+            self._add("**Insight:** Empty files often indicate failed jobs or broken scripts.")
         else:
             self._add("No empty files detected.")
         self._add()
 
-        # Trash folders
-        self._add("### Trash Folders")
+        # Duplicates
+        self._add("### Duplicate Files")
         self._add()
-        trash_files = trash['trash_files']
-        if trash_files['trash_file_count'] > 0:
-            self._add(f"- **Count:** {format_number(trash_files['trash_file_count'])}")
-            self._add(f"- **Total Size:** {format_bytes(trash_files['total_size'])}")
+        duplicates = cleanup.get('potential_duplicates', [])
+
+        if duplicates:
+            self._add("Files marked as duplicates have:")
+            self._add("- Identical file name")
+            self._add("- Identical file size")
             self._add()
+
+            self._add("| File | Size | Copies | Locations |")
+            self._add("|------|------|--------|-----------|")
+            for dup in duplicates[:10]:
+                locations = len(dup.get('file_locations', []))
+                self._add(
+                    f"| {dup.get('filename', 'unknown')} | {format_bytes(dup.get('size', 0))} | "
+                    f"{format_number(dup.get('occurrence_count', 0))} | {locations} |"
+                )
+            self._add()
+            self._add("**Insight:** These files appear to be exact copies stored in different locations.")
         else:
-            self._add("No files in trash folders detected.")
+            self._add("No significant duplicate files detected.")
         self._add()
 
         self._add("---")
         self._add()
 
-    def _add_file_type_classification(self):
-        """Section 11: File Type Classification."""
-        self._add("## 11. File Type Classification")
+    def _add_file_type_overview(self):
+        """Add File Type Overview section with location insights."""
+        self._add("## File Type Overview")
         self._add()
-        self._add("Breakdown of storage usage by data category.")
+        self._add("This section explains what types of files are stored and WHERE they are located.")
         self._add()
 
-        classification = self.data['file_classification']
+        main = self.data.get('main_folder', {})
+        types = main.get('predominant_types', [])[:10]
+        type_locations = self.data.get('file_type_locations', {})
 
-        if classification:
-            total_classified = sum(c['total_size'] for c in classification)
+        if types:
+            # Define file types with descriptions
+            type_descriptions = {
+                'nc': 'scientific data files (NetCDF format)',
+                'nc4': 'scientific data files (NetCDF4 format)',
+                'h5': 'HDF5 data files',
+                'hdf5': 'HDF5 data files',
+                'csv': 'table data',
+                'tar': 'archive files',
+                'gz': 'compressed archive files',
+                'tmp': 'temporary files',
+                'log': 'log files',
+                'json': 'configuration or data files',
+                'py': 'Python source code',
+                'js': 'JavaScript code',
+                'pkl': 'Python pickle data files',
+                'zarr': 'Zarr array storage'
+            }
 
-            self._add("| Category | File Count | Total Size | Avg Size | Max Size | Percentage |")
-            self._add("|----------|------------|------------|----------|----------|------------|")
-
-            for category in classification:
-                pct = format_percentage(category['total_size'], total_classified)
-                self._add(f"| {category['category'].title()} | {format_number(category['file_count'])} | "
-                         f"{format_bytes(category['total_size'])} | {format_bytes(category['avg_size'])} | "
-                         f"{format_bytes(category['max_size'])} | {pct} |")
-
+            self._add("### File Types and Locations")
             self._add()
 
-            # Analysis
-            self._add("### Category Analysis")
-            self._add()
+            for ft in types:
+                ft_name = ft.get('file_type', '')
+                count = ft.get('count', 0)
+                size = ft.get('total_size', 0)
+                desc = type_descriptions.get(ft_name, 'data files')
 
-            for category in sorted(classification, key=lambda x: x['total_size'], reverse=True)[:3]:
-                cat_name = category['category'].title()
-                self._add(f"**{cat_name}:** {format_bytes(category['total_size'])} "
-                         f"({format_percentage(category['total_size'], total_classified)} of classified data)")
+                self._add(f"**{ft_name}** ({desc})")
+                self._add(f"- Total: {format_number(count)} files, {format_bytes(size)}")
 
-                if category['category'] == 'logs':
-                    self._add("  - Consider implementing log rotation or archival policies")
-                elif category['category'] == 'checkpoints':
-                    self._add("  - Review and remove outdated model checkpoints")
-                elif category['category'] == 'temporary':
-                    self._add("  - Temporary files should be reviewed and cleaned regularly")
-                elif category['category'] == 'datasets':
-                    self._add("  - Verify all datasets are actively used; archive completed experiments")
-
+                # Add location insights
+                if ft_name in type_locations:
+                    locations = type_locations[ft_name]
+                    if locations:
+                        folder_names = [loc['folder'].split('/')[-1] for loc in locations[:3]]
+                        if len(folder_names) == 1:
+                            self._add(f"- Most {ft_name} data is stored in `{folder_names[0]}`")
+                        elif len(folder_names) > 1:
+                            folders_str = ", ".join([f"`{fn}`" for fn in folder_names])
+                            self._add(f"- Most {ft_name} data is stored in {len(folder_names)} folders: {folders_str}")
                 self._add()
 
-        else:
-            self._add("No file type classification available.")
-            self._add()
-
         self._add("---")
         self._add()
 
-    def _add_recommendations(self):
-        """Add overall recommendations section."""
-        self._add("## Summary and Recommendations")
+    def _add_file_age_analysis(self):
+        """Add File Age and Time Analysis section."""
+        self._add("## File Age and Time Analysis")
+        self._add()
+        self._add("This section shows how old the data is.")
         self._add()
 
-        self._add("### Immediate Actions (High Impact)")
-        self._add()
-        self._add("1. **Remove temporary files** to reclaim space quickly and safely")
-        self._add("2. **Empty trash folders** permanently")
-        self._add("3. **Delete cache directories** (applications will regenerate as needed)")
-        self._add("4. **Review and remove old checkpoints** keeping only necessary model versions")
-        self._add()
+        age_analysis = self.data.get('age_analysis', {})
+        age_buckets = age_analysis.get('age_buckets', [])
 
-        self._add("### Short-term Actions (Medium Impact)")
-        self._add()
-        self._add("1. **Compress eligible files** (logs, text files, CSVs) to reduce storage footprint")
-        self._add("2. **Investigate duplicate files** and remove unnecessary copies")
-        self._add("3. **Contact inactive users** to archive or delete their data")
-        self._add("4. **Review large files** (>10GB) for archival or deletion")
-        self._add()
-
-        self._add("### Long-term Actions (Preventive)")
-        self._add()
-        self._add("1. **Implement automated cleanup policies** for temporary and log files")
-        self._add("2. **Set up storage quotas** per user or project to prevent unchecked growth")
-        self._add("3. **Establish data archival procedures** for completed projects")
-        self._add("4. **Regular storage audits** (monthly or quarterly) to identify issues early")
-        self._add("5. **Educate users** on storage best practices and cleanup procedures")
-        self._add()
-
-        self._add("### Risk Assessment")
-        self._add()
-
-        main = self.data['main_folder']
-        total_size = main['total_size']
-
-        # Calculate potential recovery
-        cleanup = self.data['cleanup_opportunities']
-        trash = self.data['trash_hidden']
-
-        potential_recovery = 0
-        potential_recovery += float(cleanup['temporary_files']['total_size'] or 0)
-        potential_recovery += float(cleanup['checkpoints']['total_size'] or 0) * 0.5  # Assume 50% can be cleaned
-        potential_recovery += float(trash['cache_files']['total_size'] or 0)
-        potential_recovery += float(trash['trash_files']['total_size'] or 0)
-
-        if cleanup['compressible_files']:
-            potential_recovery += sum(float(c['estimated_savings'] or 0) for c in cleanup['compressible_files'])
-
-        self._add(f"**Current Usage:** {format_bytes(total_size)}")
-        self._add(f"**Potential Recovery:** {format_bytes(potential_recovery)} "
-                 f"({format_percentage(potential_recovery, total_size)} of total)")
-        self._add()
-
-        recovery_ratio = potential_recovery / float(total_size) if total_size > 0 else 0
-
-        if recovery_ratio > 0.3:
-            self._add("**Risk Level:** HIGH - Significant storage can be recovered through cleanup")
-        elif recovery_ratio > 0.15:
-            self._add("**Risk Level:** MEDIUM - Moderate cleanup opportunities available")
-        else:
-            self._add("**Risk Level:** LOW - Storage is relatively well-managed")
-
-        self._add()
-        self._add("---")
-        self._add()
-
-    def _add_multi_level_directory_analysis(self):
-        """Section 11: Multi-Level Directory Analysis with Visualizations."""
-        self._add("## 11. Multi-Level Directory Analysis")
-        self._add()
-        self._add("This section provides detailed analysis of the directory structure at multiple levels.")
-        self._add()
-
-        # Parent Directory Analysis
-        if self.data.get('parent_directory'):
-            self._add("### Parent Directory Analysis")
-            self._add()
-            self._add_directory_section(self.data['parent_directory'], "Parent Directory")
-
-        # First Level Subdirectories
-        if self.data.get('first_level_dirs'):
-            self._add("### First Level Subdirectories")
-            self._add()
-            self._add(f"Found {len(self.data['first_level_dirs'])} first-level subdirectories.")
-            self._add()
-
-            for i, dir_data in enumerate(self.data['first_level_dirs'], 1):
-                self._add(f"#### {i}. {dir_data['path']}")
-                self._add()
-                self._add_directory_section(dir_data, f"1st Level Dir {i}")
-
-        # Second Level Subdirectories
-        if self.data.get('second_level_dirs'):
-            self._add("### Second Level Subdirectories")
-            self._add()
-            self._add(f"Found {len(self.data['second_level_dirs'])} second-level subdirectories (sampled).")
-            self._add()
-
-            for i, dir_data in enumerate(self.data['second_level_dirs'], 1):
-                self._add(f"#### {i}. {dir_data['path']}")
-                self._add()
-                self._add_directory_section(dir_data, f"2nd Level Dir {i}")
-
-        self._add("---")
-        self._add()
-
-    def _add_directory_section(self, dir_data: Dict[str, Any], label: str):
-        """Add detailed analysis for a single directory."""
-        stats = dir_data.get('basic_stats', {})
-        largest_files = dir_data.get('largest_files', [])
-        largest_subfolders = dir_data.get('largest_subfolders', [])
-        file_types = dir_data.get('file_type_distribution', [])
-        timestamps = dir_data.get('timestamps', {})
-        age_buckets = dir_data.get('age_buckets', [])
-        visualizations = dir_data.get('visualizations', {})
-
-        # Basic Statistics
-        self._add("**Basic Statistics:**")
-        self._add()
-        self._add(f"- Total Files: {format_number(stats.get('total_files', 0))}")
-        self._add(f"- Total Size: {format_bytes(stats.get('total_size', 0))}")
-        self._add(f"- Average File Size: {format_bytes(stats.get('avg_size', 0))}")
-        self._add(f"- Largest File: {format_bytes(stats.get('max_size', 0))}")
-        self._add(f"- Unique File Types: {format_number(stats.get('unique_types', 0))}")
-        self._add()
-
-        # Timestamps
-        self._add("**Timestamps:**")
-        self._add()
-        self._add(f"- Last Modified: {format_timestamp(timestamps.get('last_modified'))}")
-        self._add(f"- First Modified: {format_timestamp(timestamps.get('first_modified'))}")
-        self._add(f"- Last Accessed: {format_timestamp(timestamps.get('last_accessed'))}")
-        self._add(f"- First Accessed: {format_timestamp(timestamps.get('first_accessed'))}")
-        self._add()
-
-        # Largest Files
-        if largest_files:
-            self._add("**Largest Files (Top 10):**")
-            self._add()
-            self._add("| File | Size | Type | Last Modified |")
-            self._add("|------|------|------|---------------|")
-            for file in largest_files[:10]:
-                filename = Path(file['path']).name
-                self._add(f"| {filename} | {format_bytes(file['size'])} | "
-                         f"{file.get('file_type', 'unknown')} | {format_timestamp(file.get('modified_time'))} |")
-            self._add()
-
-        # Largest Subfolders
-        if largest_subfolders:
-            self._add("**Largest Subfolders (Top 10):**")
-            self._add()
-            self._add("| Subfolder | Files | Size |")
-            self._add("|-----------|-------|------|")
-            for folder in largest_subfolders[:10]:
-                folder_name = Path(folder['path']).name
-                self._add(f"| {folder_name} | {format_number(folder['file_count'])} | "
-                         f"{format_bytes(folder['total_size'])} |")
-            self._add()
-
-        # File Type Distribution
-        if file_types:
-            self._add("**File Type Distribution (Top 10):**")
-            self._add()
-            self._add("| Type | Count | Total Size | Avg Size |")
-            self._add("|------|-------|------------|----------|")
-            for ft in file_types[:10]:
-                self._add(f"| {ft['type']} | {format_number(ft['count'])} | "
-                         f"{format_bytes(ft['total_size'])} | {format_bytes(ft['avg_size'])} |")
-            self._add()
-
-        # Age Buckets
         if age_buckets:
-            self._add("**File Age Distribution:**")
-            self._add()
-            self._add("| Age Bucket | Files | Total Size |")
-            self._add("|------------|-------|------------|")
+            self._add("| Age Range | Files | Size |")
+            self._add("|-----------|-------|------|")
             for bucket in age_buckets:
-                self._add(f"| {bucket['bucket']} | {format_number(bucket['file_count'])} | "
-                         f"{format_bytes(bucket['total_size'])} |")
+                self._add(
+                    f"| {bucket.get('age_bucket')} | {format_number(bucket.get('file_count', 0))} | "
+                    f"{format_bytes(bucket.get('total_size', 0))} |"
+                )
             self._add()
 
-        # Visualizations
-        if visualizations:
-            self._add("**Visualizations:**")
+            # Generate insight
+            old_bucket = next((b for b in age_buckets if 'Over 1 year' in b.get('age_bucket', '')), None)
+            if old_bucket:
+                total_size = sum(b.get('total_size') or 0 for b in age_buckets)
+                old_pct = ((old_bucket.get('total_size') or 0) / total_size * 100) if total_size > 0 else 0
+
+                if old_pct > 80:
+                    self._add(f"**Insight:** Almost all data is older than one year ({old_pct:.0f}%).")
+                    self._add("This storage is mostly archival, but activity must be checked.")
+                elif old_pct > 50:
+                    self._add(f"**Insight:** More than half the data is older than one year ({old_pct:.0f}%).")
+                    self._add("Consider archiving old, unused data.")
+                self._add()
+
+        self._add("---")
+        self._add()
+
+    def _add_user_ownership_usage(self):
+        """Add User Ownership and Usage section."""
+        self._add("## User Ownership and Usage")
+        self._add()
+
+        user_analysis = self.data.get('user_analysis', {})
+        user_storage = user_analysis.get('user_storage', [])[:15]
+
+        if user_storage:
+            self._add("### Users Owning Most Data")
+            self._add()
+            self._add("| Username | Files | Size |")
+            self._add("|----------|-------|------|")
+            for user in user_storage:
+                self._add(
+                    f"| {user.get('username')} | {format_number(user.get('file_count', 0))} | "
+                    f"{format_bytes(user.get('total_size', 0))} |"
+                )
             self._add()
 
-            if visualizations.get('file_type_chart'):
-                self._add(f"![File Type Distribution]({visualizations['file_type_chart']})")
+            # Insight
+            if len(user_storage) >= 3:
+                total_size = sum(u.get('total_size') or 0 for u in user_storage)
+                top_3_size = sum(u.get('total_size') or 0 for u in user_storage[:3])
+                top_3_pct = (top_3_size / total_size * 100) if total_size > 0 else 0
+
+                self._add(f"**Insight:** A small number of users own most of the data ({top_3_pct:.0f}% in top 3).")
+                self._add("Cleanup and storage decisions should involve them.")
                 self._add()
 
-            if visualizations.get('size_histogram'):
-                self._add(f"![File Size Distribution]({visualizations['size_histogram']})")
-                self._add()
-
-            if visualizations.get('age_heatmap'):
-                self._add(f"![File Age Heatmap]({visualizations['age_heatmap']})")
-                self._add()
-
-            if visualizations.get('subfolder_bar_chart'):
-                self._add(f"![Largest Subfolders]({visualizations['subfolder_bar_chart']})")
-                self._add()
-
+        self._add("---")
         self._add()
 
-    def _add_footer(self):
-        """Add report footer."""
-        self._add("## Report Information")
+    def _add_large_files(self):
+        """Add Large Files section."""
+        self._add("## Large Files")
         self._add()
-        self._add(f"- **Generated by:** Storage Analytics Scanner")
-        self._add(f"- **Report Date:** {self.generation_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        self._add(f"- **Directory Analyzed:** `{self.directory_name}`")
+
+        hotspots = self.data.get('hotspots', {})
+        largest = hotspots.get('largest_files', [])[:10] if hotspots else []
+
+        if largest:
+            self._add("| File | Size | Modified | Type |")
+            self._add("|------|------|----------|------|")
+            for f in largest:
+                filename = f.get('path', '').split('/')[-1]
+                self._add(
+                    f"| `{filename}` | {format_bytes(f.get('size', 0))} | "
+                    f"{format_timestamp(f.get('modified_time'))} | {f.get('file_type', 'unknown')} |"
+                )
+            self._add()
+
+            self._add("**Insight:** Large files that are old and rarely accessed are good archive candidates.")
+        else:
+            self._add("No unusually large files detected.")
+
         self._add()
         self._add("---")
+        self._add()
+
+    def _add_notes_and_limits(self):
+        """Add Notes and Limits section."""
+        self._add("## Notes and Limits")
+        self._add()
+        self._add("- This report is based on a snapshot of the filesystem")
+        self._add("- File access times may not be available on all filesystems")
+        self._add("- Duplicate detection is based on filename and size only")
+        self._add("- Manual review is recommended before deleting files")
+        self._add()
 
     def _generate_html(self, markdown_path: Path) -> Path:
-        """
-        Generate HTML version of the report.
-
-        Args:
-            markdown_path: Path to markdown file
-
-        Returns:
-            Path to HTML file
-        """
+        """Generate HTML version with styled tables."""
         try:
             import markdown
 
@@ -891,7 +718,7 @@ class ReportGenerator:
 
             html_content = markdown.markdown(md_content, extensions=['tables', 'fenced_code'])
 
-            # Add CSS styling
+            # Enhanced CSS
             html_full = f"""
 <!DOCTYPE html>
 <html>
@@ -900,59 +727,92 @@ class ReportGenerator:
     <title>Storage Audit Report - {self.directory_name}</title>
     <style>
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
             line-height: 1.6;
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
+            padding: 40px 20px;
+            background-color: #f5f7fa;
+            color: #333;
         }}
-        h1, h2, h3 {{ color: #333; }}
-        h1 {{ border-bottom: 3px solid #0066cc; padding-bottom: 10px; }}
-        h2 {{ border-bottom: 2px solid #0099ff; padding-bottom: 8px; margin-top: 30px; }}
-        h3 {{ color: #0066cc; margin-top: 20px; }}
+        .content {{
+            background-color: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #1a1a1a;
+            border-bottom: 4px solid #0066cc;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+        }}
+        h2 {{
+            color: #0066cc;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+            margin-top: 40px;
+            margin-bottom: 20px;
+        }}
+        h3 {{
+            color: #004080;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }}
         table {{
             width: 100%;
             border-collapse: collapse;
             margin: 20px 0;
             background-color: white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }}
         th {{
-            background-color: #0066cc;
+            background: linear-gradient(to bottom, #0066cc, #0052a3);
             color: white;
-            padding: 12px;
+            padding: 14px;
             text-align: left;
+            font-weight: 600;
+            border: 1px solid #0052a3;
         }}
         td {{
-            padding: 10px;
-            border-bottom: 1px solid #ddd;
+            padding: 12px;
+            border: 1px solid #e0e0e0;
         }}
-        tr:hover {{ background-color: #f0f0f0; }}
+        tr:nth-child(even) {{
+            background-color: #f8f9fa;
+        }}
+        tr:hover {{
+            background-color: #e8f4f8;
+        }}
         code {{
             background-color: #f4f4f4;
-            padding: 2px 6px;
+            padding: 3px 6px;
             border-radius: 3px;
-            font-family: "Courier New", monospace;
+            font-family: "Courier New", Consolas, monospace;
+            font-size: 0.9em;
+            color: #c7254e;
         }}
-        pre {{
-            background-color: #f4f4f4;
-            padding: 15px;
-            border-radius: 5px;
-            overflow-x: auto;
+        ul, ol {{
+            padding-left: 30px;
+            margin: 15px 0;
         }}
-        ul {{ padding-left: 20px; }}
-        li {{ margin: 8px 0; }}
+        li {{
+            margin: 8px 0;
+        }}
         hr {{
             border: none;
-            border-top: 1px solid #ddd;
-            margin: 30px 0;
+            border-top: 1px solid #e0e0e0;
+            margin: 40px 0;
         }}
-        .content {{
-            background-color: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        strong {{
+            color: #0066cc;
+        }}
+        .metadata {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-left: 4px solid #0066cc;
+            margin: 20px 0;
+            border-radius: 4px;
         }}
     </style>
 </head>
@@ -972,7 +832,7 @@ class ReportGenerator:
             return html_path
 
         except ImportError:
-            logger.warning("markdown package not available, skipping HTML generation")
+            logger.warning("markdown package not available")
             return markdown_path
         except Exception as e:
             logger.error(f"Error generating HTML: {e}")

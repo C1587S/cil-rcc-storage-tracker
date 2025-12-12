@@ -2,6 +2,77 @@
 
 Professional storage analysis and reporting system for server directories. Generates comprehensive audit reports with actionable recommendations for cleanup and optimization.
 
+## Generating Reports
+
+To generate a storage audit report:
+
+```bash
+python scripts/generate_report.py <snapshot.parquet> [target_directory] [output_dir]
+```
+
+**Example:**
+```bash
+python scripts/generate_report.py \
+    ../data/snapshots/snapshot_2025-12-11.parquet \
+    /project/cil/gcp \
+    ./output
+```
+
+**Viewing Reports:**
+
+Reports are generated in two formats:
+- `storage_audit_<name>_<date>.md` - Markdown version
+- `storage_audit_<name>_<date>.html` - HTML version (open in browser)
+
+---
+
+## Report Structure
+
+Generated reports include the following sections:
+
+1. **Executive Summary** - 6 bullet points with actionable insights
+2. **Storage Overview** - Total size, files, and folders
+3. **Folder Usage and Activity** - Shows which folders are actively used
+4. **Top 10 Biggest Folders** - Detailed analysis of largest folders
+5. **Storage Efficiency and Hygiene Review** - Cleanup opportunities
+6. **File Type Overview** - File type descriptions and distribution
+7. **File Age and Time Analysis** - Data age patterns
+8. **User Ownership and Usage** - Per-user storage (when applicable)
+9. **Large Files** - Largest files with recommendations
+10. **Notes and Limits** - Report caveats
+
+### Executive Summary Example
+
+```markdown
+## Executive Summary
+
+1. **80% of storage is in just 10 folders**
+   Storage is highly concentrated
+   → Focus cleanup efforts on these folders
+
+2. **Most data has not changed in over one year (75%)**
+   This means the data is likely inactive
+   → Consider archive or cold storage
+
+3. **15 folders contain old data but are accessed frequently**
+   This means old data is still in use
+   → Do not archive without checking usage
+```
+
+### Activity Analysis Example
+
+Reports identify which folders are actively used vs. archive candidates:
+
+**Active Folders** - Old data but frequently accessed:
+- Do not archive these folders
+- Users are actively working with this data
+
+**Cold Folders** - Large but rarely accessed:
+- Good candidates for archival
+- Potential for significant storage recovery
+
+---
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)

@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""Main script to generate storage audit and data cleaning reports.
+"""Improved storage audit report generator following REPORT_REQUIREMENTS.md.
 
-This script analyzes scanner parquet output and generates comprehensive
-audit reports for server storage directories.
+This script generates reports with:
+- Simple, clear language
+- Executive summary with actionable insights
+- Top 10 folders (not hierarchical depth)
+- Activity-based analysis
+- Storage efficiency review
 
 Usage:
-    python generate_report.py <snapshot_parquet> <target_directory> [output_dir]
+    python generate_report_v2.py <snapshot_parquet> <target_directory> [output_dir]
 
 Example:
-    python generate_report.py /scans/snapshot_2025-12-11.parquet /project/cil/gcp ./output
+    python generate_report_v2.py /scans/snapshot.parquet /project/cil/gcp ./output
 """
 
 import sys
 import logging
+import time
 from pathlib import Path
 from typing import Dict, Any
 
 from data_analyzer import StorageDataAnalyzer
-from report_generator import ReportGenerator
-from directory_analyzer import DirectoryAnalyzer
+from report_generator import ImprovedReportGenerator
 
 # Configure logging
 logging.basicConfig(
@@ -30,46 +34,46 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def generate_audit_report(
+def generate_improved_report(
     snapshot_path: str,
     target_directory: str = None,
     output_dir: str = "./reports/output"
 ) -> Path:
     """
-    Generate comprehensive audit report for a directory.
+    Generate improved storage audit report.
 
     Args:
         snapshot_path: Path to parquet snapshot file
-        target_directory: Optional directory to analyze. If None, auto-detects from snapshot.
+        target_directory: Optional directory to analyze
         output_dir: Output directory for reports
 
     Returns:
         Path to generated report
     """
+    # Track compute time
+    start_time = time.time()
+
     logger.info("=" * 80)
-    logger.info("STORAGE AUDIT REPORT GENERATION")
+    logger.info("IMPROVED STORAGE AUDIT REPORT GENERATION")
     logger.info("=" * 80)
     logger.info(f"Snapshot: {snapshot_path}")
     if target_directory:
         logger.info(f"Target Directory: {target_directory}")
     else:
-        logger.info("Target Directory: Auto-detect from snapshot")
+        logger.info("Target Directory: Analyzing entire snapshot")
     logger.info(f"Output Directory: {output_dir}")
     logger.info("")
 
-    # Validate inputs - handle both single files and glob patterns
-    import glob as glob_module
-
-    # Check if it's a glob pattern
-    if '*' in snapshot_path or '?' in snapshot_path:
-        # Expand glob pattern
-        matched_files = glob_module.glob(snapshot_path)
-        if not matched_files:
+    # Validate snapshot path
+    # Support glob patterns
+    if '*' in snapshot_path:
+        import glob
+        matching_files = glob.glob(snapshot_path)
+        if not matching_files:
             logger.error(f"No files found matching pattern: {snapshot_path}")
             sys.exit(1)
-        logger.info(f"Found {len(matched_files)} file(s) matching pattern")
+        logger.info(f"Found {len(matching_files)} files matching pattern")
     else:
-        # Single file path
         snapshot_file = Path(snapshot_path)
         if not snapshot_file.exists():
             logger.error(f"Snapshot file not found: {snapshot_path}")
@@ -78,30 +82,44 @@ def generate_audit_report(
     logger.info("Step 1: Initializing data analyzer")
     analyzer = StorageDataAnalyzer(snapshot_path, target_directory)
 
-    # Collect all analysis data
+    # Collect analysis data
     analysis_data: Dict[str, Any] = {}
 
-    logger.info("Step 2: Analyzing main folder")
+    # Get snapshot metadata first
+    logger.info("Step 2: Getting snapshot metadata")
+    snapshot_metadata = analyzer.get_snapshot_metadata()
+    analysis_data['snapshot_metadata'] = snapshot_metadata
+    logger.info(f"  Snapshot date: {snapshot_metadata['snapshot_file_date']}")
+
+    logger.info("Step 3: Analyzing main folder")
     analysis_data['main_folder'] = analyzer.get_main_folder_analysis()
     logger.info(f"  Total files: {analysis_data['main_folder']['total_files']:,}")
     logger.info(f"  Total size: {analysis_data['main_folder']['total_size']:,} bytes")
 
-    logger.info("Step 3: Performing hierarchical analysis")
-    analysis_data['hierarchical'] = analyzer.get_hierarchical_analysis(max_depth=5)
-    logger.info(f"  Analyzed {len(analysis_data['hierarchical'])} levels")
+    # NEW: Top 10 folders (replaces hierarchical analysis)
+    logger.info("Step 4: Identifying top 10 folders")
+    analysis_data['top_folders'] = analyzer.get_top_n_folders(n=10)
+    logger.info(f"  Found top 10 folders")
 
-    logger.info("Step 4: Identifying hotspots")
+    logger.info("Step 5: Identifying hotspots")
     analysis_data['hotspots'] = analyzer.get_hotspots()
     logger.info(f"  Found {len(analysis_data['hotspots']['heavy_directories'])} heavy directories")
-    logger.info(f"  Found {len(analysis_data['hotspots']['largest_files'])} large files")
 
-    logger.info("Step 5: Analyzing file age")
+    # NEW: Folder activity analysis
+    logger.info("Step 6: Analyzing folder activity")
+    analysis_data['folder_activity'] = analyzer.get_folder_activity_analysis()
+    active_old = analysis_data['folder_activity']['active_old_folders']
+    cold = analysis_data['folder_activity']['cold_folders']
+    logger.info(f"  Active old folders: {len(active_old)}")
+    logger.info(f"  Cold folders: {len(cold)}")
+
+    logger.info("Step 7: Analyzing file age")
     analysis_data['age_analysis'] = analyzer.get_age_analysis()
 
-    logger.info("Step 6: Identifying cleanup opportunities")
+    logger.info("Step 8: Identifying cleanup opportunities")
     analysis_data['cleanup_opportunities'] = analyzer.get_cleanup_opportunities()
 
-    logger.info("Step 7: User analysis")
+    logger.info("Step 9: User analysis")
     user_analysis = analyzer.get_user_analysis()
     if user_analysis:
         analysis_data['user_analysis'] = user_analysis
@@ -109,57 +127,23 @@ def generate_audit_report(
     else:
         logger.info("  Skipped (not a home directory)")
 
-    logger.info("Step 8: Analyzing critically large files")
+    logger.info("Step 10: Analyzing critically large files")
     analysis_data['large_files'] = analyzer.get_large_files_analysis()
 
-    logger.info("Step 9: Analyzing trash and hidden files")
+    logger.info("Step 11: Analyzing trash and hidden files")
     analysis_data['trash_hidden'] = analyzer.get_trash_and_hidden_analysis()
 
-    logger.info("Step 10: Classifying file types")
+    logger.info("Step 12: Classifying file types")
     analysis_data['file_classification'] = analyzer.get_file_type_classification()
 
-    # Multi-level directory analysis
-    logger.info("Step 11: Multi-level directory analysis")
-    dir_analyzer = DirectoryAnalyzer(analyzer.conn)
-
-    # Determine root path to analyze
-    root_path = target_directory or ""
-
-    # Analyze parent directory
-    logger.info(f"  Analyzing parent directory: {root_path or 'root'}")
-    analysis_data['parent_directory'] = dir_analyzer.analyze_directory(root_path)
-
-    # Get and analyze 1st level subdirectories
-    logger.info("  Discovering 1st level subdirectories...")
-    first_level_dirs = dir_analyzer.get_subdirectories(root_path, depth=1)
-    logger.info(f"  Found {len(first_level_dirs)} 1st level subdirectories")
-
-    analysis_data['first_level_dirs'] = []
-    for i, subdir in enumerate(first_level_dirs[:50], 1):  # Limit to 50 for performance
-        logger.info(f"    [{i}/{min(len(first_level_dirs), 50)}] Analyzing {subdir}")
-        analysis_data['first_level_dirs'].append(dir_analyzer.analyze_directory(subdir))
-
-    # Get and analyze 2nd level subdirectories
-    logger.info("  Discovering 2nd level subdirectories...")
-    analysis_data['second_level_dirs'] = []
-    second_level_count = 0
-
-    for first_dir in first_level_dirs[:20]:  # Limit first level dirs for 2nd level analysis
-        second_level_dirs = dir_analyzer.get_subdirectories(first_dir, depth=1)
-        second_level_count += len(second_level_dirs)
-
-        for subdir in second_level_dirs[:10]:  # Limit to 10 per parent for performance
-            logger.info(f"    Analyzing 2nd level: {subdir}")
-            analysis_data['second_level_dirs'].append(dir_analyzer.analyze_directory(subdir))
-
-    logger.info(f"  Discovered {second_level_count} 2nd level subdirectories")
-    logger.info(f"  Analyzed {len(analysis_data['second_level_dirs'])} 2nd level subdirectories")
+    logger.info("Step 13: Analyzing file type locations")
+    analysis_data['file_type_locations'] = analyzer.get_file_type_locations()
 
     # Close analyzer
     analyzer.close()
 
     logger.info("")
-    logger.info("Step 12: Generating report document")
+    logger.info("Step 14: Generating improved report document")
 
     # Extract directory name for report
     if target_directory:
@@ -167,11 +151,17 @@ def generate_audit_report(
         if not dir_name:
             dir_name = "root"
     else:
-        # Use snapshot filename as directory name
         dir_name = Path(snapshot_path).stem
 
-    # Generate report
-    generator = ReportGenerator(target_directory or "snapshot_data", analysis_data, output_dir)
+    # Generate improved report
+    generator = ImprovedReportGenerator(
+        directory_name=target_directory or "snapshot_data",
+        analysis_data=analysis_data,
+        output_dir=output_dir,
+        snapshot_date=snapshot_metadata['snapshot_file_date'],
+        compute_start_time=start_time
+    )
+
     report_path = generator.generate()
 
     logger.info("")
@@ -180,6 +170,10 @@ def generate_audit_report(
     logger.info("=" * 80)
     logger.info(f"Report saved to: {report_path}")
     logger.info(f"HTML version: {report_path.with_suffix('.html')}")
+
+    # Calculate total time
+    total_time = time.time() - start_time
+    logger.info(f"Total compute time: {total_time:.2f} seconds")
     logger.info("")
 
     return report_path
@@ -188,25 +182,26 @@ def generate_audit_report(
 def main():
     """Main entry point."""
     if len(sys.argv) < 2:
-        print("Usage: python generate_report.py <snapshot_parquet> [target_directory] [output_dir]")
+        print("Usage: python generate_report_v2.py <snapshot_parquet> [target_directory] [output_dir]")
         print()
         print("Arguments:")
         print("  snapshot_parquet   Path to parquet snapshot file")
-        print("  target_directory   Optional: Directory to analyze. If omitted, auto-detects from snapshot.")
-        print("  output_dir         Output directory for reports (default: ./reports/output)")
+        print("  target_directory   Optional: Directory to analyze")
+        print("  output_dir         Output directory (default: ./reports/output)")
         print()
         print("Examples:")
-        print("  python generate_report.py /scans/snapshot.parquet")
-        print("  python generate_report.py /scans/snapshot.parquet /project/cil/gcp")
-        print("  python generate_report.py /scans/snapshot.parquet /project/cil/gcp ./output")
+        print("  python generate_report_v2.py /scans/snapshot.parquet")
+        print("  python generate_report_v2.py /scans/snapshot.parquet /project/cil/gcp")
+        print("  python generate_report_v2.py /scans/snapshot.parquet /project/cil/gcp ./output")
         sys.exit(1)
 
     snapshot_path = sys.argv[1]
-    target_directory = sys.argv[2] if len(sys.argv) > 2 else None
+    # Handle empty string as None for target_directory
+    target_directory = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else None
     output_dir = sys.argv[3] if len(sys.argv) > 3 else "./reports/output"
 
     try:
-        report_path = generate_audit_report(snapshot_path, target_directory, output_dir)
+        report_path = generate_improved_report(snapshot_path, target_directory, output_dir)
         logger.info("Report generation successful")
         sys.exit(0)
     except Exception as e:

@@ -22,21 +22,27 @@ class StorageDataAnalyzer:
         Initialize the analyzer.
 
         Args:
-            snapshot_path: Path to parquet snapshot file
-            target_directory: Optional target directory filter. If None, analyzes entire snapshot.
+            snapshot_path: Path to parquet snapshot file or glob pattern (e.g., 'path/to/*.parquet')
+            target_directory: Optional target directory filter. If None or empty string, analyzes entire snapshot.
         """
-        self.snapshot_path = Path(snapshot_path)
+        # Support glob patterns for multiple files
+        if '*' in snapshot_path:
+            self.snapshot_path = Path(snapshot_path).parent
+            logger.info(f"Loading snapshots matching pattern: {snapshot_path}")
+        else:
+            self.snapshot_path = Path(snapshot_path)
+            logger.info(f"Loading snapshot from {snapshot_path}")
+
         self.conn = duckdb.connect(':memory:')
 
-        # Load parquet data
-        logger.info(f"Loading snapshot from {snapshot_path}")
+        # Load parquet data - DuckDB supports glob patterns
         self.conn.execute(f"""
             CREATE VIEW files AS
             SELECT * FROM read_parquet('{snapshot_path}')
         """)
 
         # Auto-detect target directory if not provided
-        if target_directory is None:
+        if target_directory is None or target_directory == "":
             # Use empty string to match all files (no filtering)
             self.target_directory = ""
             logger.info("Analyzing all files in snapshot (no directory filter)")
@@ -99,10 +105,10 @@ class StorageDataAnalyzer:
         heaviest_dir = self.conn.execute(heaviest_dir_query).pl()
 
         return {
-            'total_size': main_stats['total_size'],
-            'total_files': main_stats['total_files'],
-            'subdirectory_count': main_stats['subdirectory_count'],
-            'unique_file_types': main_stats['unique_file_types'],
+            'total_size': main_stats['total_size'] or 0,
+            'total_files': main_stats['total_files'] or 0,
+            'subdirectory_count': main_stats['subdirectory_count'] or 0,
+            'unique_file_types': main_stats['unique_file_types'] or 0,
             'predominant_types': predominant_types.to_dicts(),
             'heaviest_subdirectory': heaviest_dir.to_dicts()[0] if len(heaviest_dir) > 0 else None
         }
@@ -457,23 +463,46 @@ class StorageDataAnalyzer:
                 'largest_checkpoints': []
             }
 
-        # Temporary and intermediate files
-        temp_files_query = f"""
+        # Temporary and intermediate files - grouped by folder with full paths
+        temp_files_by_folder_query = f"""
+        WITH temp_with_rank AS (
+            SELECT
+                parent_path,
+                path,
+                size,
+                ROW_NUMBER() OVER (PARTITION BY parent_path ORDER BY size DESC) as rn
+            FROM files
+            WHERE path LIKE '{self.target_directory}%'
+                AND (
+                    path LIKE '%/tmp/%' OR
+                    path LIKE '%/temp/%' OR
+                    path LIKE '%temporary%' OR
+                    file_type = 'tmp' OR
+                    file_type = 'temp'
+                )
+        )
         SELECT
-            COUNT(*) as temp_file_count,
-            SUM(size) as total_size
-        FROM files
-        WHERE path LIKE '{self.target_directory}%'
-            AND (
-                path LIKE '%/tmp/%' OR
-                path LIKE '%/temp/%' OR
-                path LIKE '%temporary%' OR
-                file_type = 'tmp' OR
-                file_type = 'temp'
-            )
+            parent_path as folder,
+            COUNT(*) as file_count,
+            SUM(size) as total_size,
+            LIST(path) FILTER (WHERE rn <= 5) as example_paths
+        FROM temp_with_rank
+        GROUP BY parent_path
+        ORDER BY total_size DESC
+        LIMIT 20
         """
 
-        temp_files = self.conn.execute(temp_files_query).pl().to_dicts()[0]
+        temp_files_by_folder = self.conn.execute(temp_files_by_folder_query).pl().to_dicts()
+
+        # Also get total summary
+        total_temp_count = sum(f['file_count'] for f in temp_files_by_folder)
+        total_temp_size = sum(f['total_size'] for f in temp_files_by_folder)
+
+        temp_files = {
+            'temp_file_count': total_temp_count,
+            'total_size': total_temp_size,
+            'by_folder': temp_files_by_folder
+        }
 
         # Compressible files
         compressible_query = f"""
@@ -622,7 +651,12 @@ class StorageDataAnalyzer:
             AND split_part(path, '/', length(regexp_split_to_array(path, '/'))) LIKE '.%'
         """
 
-        hidden_files = self.conn.execute(hidden_query).pl().to_dicts()[0]
+        hidden_files_result = self.conn.execute(hidden_query).pl().to_dicts()[0]
+        hidden_files = {
+            'hidden_file_count': hidden_files_result['hidden_file_count'] or 0,
+            'total_size': hidden_files_result['total_size'] or 0,
+            'file_types': hidden_files_result['file_types']
+        }
 
         # Cache directories
         cache_query = f"""
@@ -639,34 +673,40 @@ class StorageDataAnalyzer:
             )
         """
 
-        cache_files = self.conn.execute(cache_query).pl().to_dicts()[0]
+        cache_files_result = self.conn.execute(cache_query).pl().to_dicts()[0]
+        cache_files = {
+            'cache_file_count': cache_files_result['cache_file_count'] or 0,
+            'total_size': cache_files_result['total_size'] or 0
+        }
 
-        # Empty files
-        empty_files_query = f"""
-        WITH empty_sample AS (
-            SELECT path
+        # Empty files - grouped by folder with examples
+        empty_by_folder_query = f"""
+        WITH empty_with_rank AS (
+            SELECT
+                parent_path,
+                path,
+                ROW_NUMBER() OVER (PARTITION BY parent_path ORDER BY path) as rn
             FROM files
             WHERE path LIKE '{self.target_directory}%'
                 AND size = 0
-            LIMIT 100
         )
         SELECT
-            (SELECT COUNT(*) FROM files WHERE path LIKE '{self.target_directory}%' AND size = 0) as empty_file_count,
-            LIST(path) as sample_paths
-        FROM empty_sample
+            parent_path as folder,
+            COUNT(*) as file_count,
+            LIST(path) FILTER (WHERE rn <= 5) as example_paths
+        FROM empty_with_rank
+        GROUP BY parent_path
+        ORDER BY file_count DESC
+        LIMIT 15
         """
 
-        result = self.conn.execute(empty_files_query).pl()
-        if len(result) > 0:
-            empty_files = {
-                'empty_file_count': result['empty_file_count'][0] if result['empty_file_count'][0] is not None else 0,
-                'sample_paths': result['sample_paths'].to_list() if len(result['sample_paths']) > 0 else []
-            }
-        else:
-            empty_files = {
-                'empty_file_count': 0,
-                'sample_paths': []
-            }
+        empty_by_folder = self.conn.execute(empty_by_folder_query).pl().to_dicts()
+        total_empty = sum(f['file_count'] for f in empty_by_folder)
+
+        empty_files = {
+            'empty_file_count': total_empty,
+            'by_folder': empty_by_folder
+        }
 
         # Trash folders
         trash_query = f"""
@@ -682,7 +722,11 @@ class StorageDataAnalyzer:
             )
         """
 
-        trash_files = self.conn.execute(trash_query).pl().to_dicts()[0]
+        trash_files_result = self.conn.execute(trash_query).pl().to_dicts()[0]
+        trash_files = {
+            'trash_file_count': trash_files_result['trash_file_count'] or 0,
+            'total_size': trash_files_result['total_size'] or 0
+        }
 
         return {
             'hidden_files': hidden_files,
@@ -756,6 +800,303 @@ class StorageDataAnalyzer:
             results.append(other_data.to_dicts()[0])
 
         return results
+
+    def get_file_type_locations(self) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get location breakdown for each significant file type.
+
+        This helps answer: "Where are the nc4 files stored?"
+        instead of just "How many nc4 files are there?"
+
+        Returns:
+            Dictionary mapping file types to their top folder locations
+        """
+        logger.info("Analyzing file type locations")
+
+        # Get top file types by size
+        top_types_query = f"""
+        SELECT file_type, SUM(size) as total_size
+        FROM files
+        WHERE path LIKE '{self.target_directory}%'
+            AND file_type IS NOT NULL
+            AND file_type != ''
+        GROUP BY file_type
+        ORDER BY total_size DESC
+        LIMIT 10
+        """
+
+        top_types = self.conn.execute(top_types_query).pl().to_dicts()
+
+        type_locations = {}
+
+        for ft in top_types:
+            file_type = ft['file_type']
+
+            # Get top folders for this file type
+            location_query = f"""
+            SELECT
+                parent_path as folder,
+                COUNT(*) as file_count,
+                SUM(size) as total_size
+            FROM files
+            WHERE path LIKE '{self.target_directory}%'
+                AND file_type = '{file_type}'
+            GROUP BY parent_path
+            ORDER BY total_size DESC
+            LIMIT 3
+            """
+
+            locations = self.conn.execute(location_query).pl().to_dicts()
+            type_locations[file_type] = locations
+
+        return type_locations
+
+    def get_top_n_folders(self, n: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get top N heaviest folders at any depth level.
+
+        This replaces hierarchical analysis with a focused view of the largest folders.
+
+        Args:
+            n: Number of top folders to return
+
+        Returns:
+            List of top N folders with detailed analysis
+        """
+        logger.info(f"Identifying top {n} folders")
+
+        # Get heaviest folders at any level
+        query = f"""
+        SELECT
+            parent_path as path,
+            SUM(size) as total_size,
+            COUNT(*) as file_count,
+            MAX(size) as largest_file,
+            MAX(modified_time) as last_modified,
+            MAX(accessed_time) as last_accessed,
+            MIN(modified_time) as first_modified
+        FROM files
+        WHERE path LIKE '{self.target_directory}%'
+        GROUP BY parent_path
+        ORDER BY total_size DESC
+        LIMIT {n}
+        """
+
+        top_folders = self.conn.execute(query).pl().to_dicts()
+
+        # For each top folder, get detailed breakdown
+        detailed_folders = []
+        for folder in top_folders:
+            folder_path = folder['path']
+
+            # Get file type distribution
+            type_query = f"""
+            SELECT
+                file_type,
+                COUNT(*) as count,
+                SUM(size) as total_size,
+                AVG(size) as avg_size
+            FROM files
+            WHERE parent_path = '{folder_path}'
+                AND file_type IS NOT NULL
+            GROUP BY file_type
+            ORDER BY total_size DESC
+            LIMIT 5
+            """
+
+            file_types = self.conn.execute(type_query).pl().to_dicts()
+
+            # Get age distribution for this folder
+            now = datetime.now()
+            age_query = f"""
+            SELECT
+                CASE
+                    WHEN modified_time > {(now - timedelta(days=30)).timestamp()} THEN 'Last 30 days'
+                    WHEN modified_time > {(now - timedelta(days=365)).timestamp()} THEN 'Last year'
+                    ELSE 'Older than 1 year'
+                END as age_bucket,
+                COUNT(*) as file_count,
+                SUM(size) as total_size
+            FROM files
+            WHERE parent_path = '{folder_path}'
+                AND modified_time IS NOT NULL
+            GROUP BY age_bucket
+            """
+
+            age_dist = self.conn.execute(age_query).pl().to_dicts()
+
+            # Calculate access frequency (if accessed_time available)
+            access_query = f"""
+            SELECT
+                COUNT(*) as total_files,
+                COUNT(CASE WHEN accessed_time > {(now - timedelta(days=7)).timestamp()} THEN 1 END) as accessed_last_week,
+                COUNT(CASE WHEN accessed_time > {(now - timedelta(days=30)).timestamp()} THEN 1 END) as accessed_last_month
+            FROM files
+            WHERE parent_path = '{folder_path}'
+                AND accessed_time IS NOT NULL
+            """
+
+            access_stats = self.conn.execute(access_query).pl().to_dicts()[0]
+
+            # Add detailed info
+            folder['file_types'] = file_types
+            folder['age_distribution'] = age_dist
+            folder['access_stats'] = access_stats
+
+            # Generate insight
+            folder['insight'] = self._generate_folder_insight(folder)
+
+            detailed_folders.append(folder)
+
+        return detailed_folders
+
+    def _generate_folder_insight(self, folder_data: Dict[str, Any]) -> str:
+        """
+        Generate a simple, actionable insight for a folder.
+
+        Args:
+            folder_data: Folder analysis data
+
+        Returns:
+            One or two sentence insight
+        """
+        total_size = folder_data.get('total_size', 0)
+        file_count = folder_data.get('file_count', 0)
+        access_stats = folder_data.get('access_stats', {})
+        age_dist = folder_data.get('age_distribution', [])
+
+        # Check if folder is active
+        accessed_last_week = access_stats.get('accessed_last_week', 0)
+        accessed_last_month = access_stats.get('accessed_last_month', 0)
+
+        # Check if data is old
+        old_data_size = sum(a.get('total_size', 0) for a in age_dist if a.get('age_bucket') == 'Older than 1 year')
+        old_data_pct = (old_data_size / total_size * 100) if total_size > 0 else 0
+
+        # Generate insight
+        if accessed_last_week > file_count * 0.1:
+            return "This folder is actively used. Do not archive."
+        elif old_data_pct > 80 and accessed_last_month < file_count * 0.05:
+            return "This folder contains old data with very little recent activity. Good candidate for archival."
+        elif old_data_pct > 50:
+            return "This folder contains mostly old data. Review usage patterns before archiving."
+        elif total_size > 100 * 1024**3:  # > 100GB
+            return "This is a very large folder. Review contents for cleanup opportunities."
+        else:
+            return "This folder shows normal usage patterns."
+
+    def get_folder_activity_analysis(self) -> Dict[str, Any]:
+        """
+        Analyze folder access patterns and activity.
+
+        This is critical for understanding which folders are actively used
+        vs. which are candidates for archival.
+
+        Returns:
+            Dictionary with activity metrics per folder
+        """
+        logger.info("Analyzing folder access activity")
+
+        # Most accessed folders
+        accessed_query = f"""
+        SELECT
+            parent_path as folder,
+            COUNT(*) as total_files,
+            COUNT(CASE WHEN accessed_time IS NOT NULL THEN 1 END) as files_with_access_time,
+            MAX(accessed_time) as last_access,
+            AVG(accessed_time) as avg_access_time
+        FROM files
+        WHERE path LIKE '{self.target_directory}%'
+        GROUP BY parent_path
+        HAVING COUNT(CASE WHEN accessed_time IS NOT NULL THEN 1 END) > 0
+        ORDER BY last_access DESC
+        LIMIT 30
+        """
+
+        most_accessed = self.conn.execute(accessed_query).pl().to_dicts()
+
+        # Folders with old files but recent access
+        now = datetime.now()
+        old_timestamp = (now - timedelta(days=365)).timestamp()
+        recent_access = (now - timedelta(days=30)).timestamp()
+
+        active_old_query = f"""
+        SELECT
+            parent_path as folder,
+            COUNT(*) as file_count,
+            SUM(size) as total_size,
+            MAX(accessed_time) as last_access,
+            MAX(modified_time) as last_modified
+        FROM files
+        WHERE path LIKE '{self.target_directory}%'
+            AND modified_time < {old_timestamp}
+            AND accessed_time > {recent_access}
+        GROUP BY parent_path
+        ORDER BY total_size DESC
+        LIMIT 20
+        """
+
+        active_old_folders = self.conn.execute(active_old_query).pl().to_dicts()
+
+        # Cold folders (large but rarely accessed)
+        cold_query = f"""
+        SELECT
+            parent_path as folder,
+            SUM(size) as total_size,
+            COUNT(*) as file_count,
+            MAX(accessed_time) as last_access,
+            MAX(modified_time) as last_modified
+        FROM files
+        WHERE path LIKE '{self.target_directory}%'
+            AND (accessed_time < {recent_access} OR accessed_time IS NULL)
+            AND size > 1024 * 1024  -- Only files > 1MB
+        GROUP BY parent_path
+        HAVING SUM(size) > 1024 * 1024 * 1024  -- Folders > 1GB
+        ORDER BY total_size DESC
+        LIMIT 20
+        """
+
+        cold_folders = self.conn.execute(cold_query).pl().to_dicts()
+
+        return {
+            'most_accessed_folders': most_accessed,
+            'active_old_folders': active_old_folders,
+            'cold_folders': cold_folders
+        }
+
+    def get_snapshot_metadata(self) -> Dict[str, Any]:
+        """
+        Get metadata about the snapshot itself.
+
+        Returns:
+            Dictionary with snapshot date and other metadata
+        """
+        # Try to get snapshot date from file modification time
+        snapshot_mtime = self.snapshot_path.stat().st_mtime
+        snapshot_date = datetime.fromtimestamp(snapshot_mtime)
+
+        # Get min/max timestamps from data
+        metadata_query = f"""
+        SELECT
+            MIN(modified_time) as earliest_modified,
+            MAX(modified_time) as latest_modified,
+            MIN(accessed_time) as earliest_accessed,
+            MAX(accessed_time) as latest_accessed
+        FROM files
+        WHERE path LIKE '{self.target_directory}%'
+            AND modified_time IS NOT NULL
+        """
+
+        data_metadata = self.conn.execute(metadata_query).pl().to_dicts()[0]
+
+        return {
+            'snapshot_file_date': snapshot_date,
+            'snapshot_path': str(self.snapshot_path),
+            'earliest_file_modified': data_metadata.get('earliest_modified'),
+            'latest_file_modified': data_metadata.get('latest_modified'),
+            'earliest_file_accessed': data_metadata.get('earliest_accessed'),
+            'latest_file_accessed': data_metadata.get('latest_accessed')
+        }
 
     def close(self):
         """Close database connection."""
