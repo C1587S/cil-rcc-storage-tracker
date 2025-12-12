@@ -36,7 +36,7 @@ module load python
 source activate /project/cil/home_dirs/scadavidsanchez/envs/mamba_base
 
 # Create the storage scanner environment
-mamba env create -f environment.yml
+mamba create  --prefix /project/cil/home_dirs/rcc/envs/storage_scanner -f environment.yml # force prefix
 
 # Activate the new environment
 source activate /project/cil/home_dirs/rcc/envs/storage_scanner

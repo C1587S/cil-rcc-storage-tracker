@@ -11,8 +11,7 @@ dependencies:
   - python=3.11
 
   # Rust toolchain for building the scanner
-  - rust=1.75
-  - cargo
+  - rust=1.81
 
   # Build essentials
   - gcc
@@ -25,7 +24,8 @@ dependencies:
   - python-multipart=0.0.6
 
   # Data processing and database
-  - duckdb=0.10.0
+  # NOTE: duckdb 0.10.0 is not available on conda-forge for linux-64,
+  # so it is installed via pip below
   - polars=0.20.3
   - pyarrow=15.0.0
   - numpy<2.0.0
@@ -61,3 +61,8 @@ dependencies:
   - black
   - ruff
   - mypy
+
+  # Pip-only dependencies
+  - pip
+  - pip:
+      - duckdb==0.10.0
