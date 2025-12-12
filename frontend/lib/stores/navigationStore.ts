@@ -71,13 +71,10 @@ function getParentPath(path: string, scanRoot: string): string {
 export const useNavigationStore = create<NavigationState>()(
   persist(
     (set, get) => ({
-      currentPath: '/Users/sebastiancadavidsanchez/Documents/Github/scs/bulletproof-react',
-      scanRoot: '/Users/sebastiancadavidsanchez/Documents/Github/scs/bulletproof-react',
+      currentPath: '',
+      scanRoot: '',
       snapshot: null,
-      breadcrumbs: generateBreadcrumbs(
-        '/Users/sebastiancadavidsanchez/Documents/Github/scs/bulletproof-react',
-        '/Users/sebastiancadavidsanchez/Documents/Github/scs/bulletproof-react'
-      ),
+      breadcrumbs: [],
 
       setCurrentPath: (path) => {
         const { scanRoot } = get()

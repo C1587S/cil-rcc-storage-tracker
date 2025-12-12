@@ -34,7 +34,19 @@ def optimize_snapshot(snapshot_date: str):
     logger.info(f"Optimizing snapshot: {snapshot_date}")
     logger.info("="  * 60)
 
-    db = DuckDBClient()
+    # Determine backend directory
+    script_dir = Path(__file__).parent
+    backend_dir = script_dir.parent
+
+    # Initialize DuckDB client with explicit paths
+    db_path = backend_dir / "data" / "storage_analytics.duckdb"
+    snapshots_path = backend_dir / "data" / "snapshots"
+
+    logger.info(f"Backend directory: {backend_dir}")
+    logger.info(f"Database path: {db_path}")
+    logger.info(f"Snapshots path: {snapshots_path}")
+
+    db = DuckDBClient(db_path=str(db_path), snapshots_path=str(snapshots_path))
     start_total = time.time()
 
     # 1. Create snapshot summary table

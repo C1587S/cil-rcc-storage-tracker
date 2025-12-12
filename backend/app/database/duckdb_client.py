@@ -23,8 +23,17 @@ class DuckDBClient:
             snapshots_path: Path to parquet snapshots directory
         """
         settings = get_settings()
-        self.db_path = db_path or settings.duckdb_path
-        self.snapshots_path = Path(snapshots_path or settings.snapshots_path)
+
+        # Use provided paths or resolve from settings with environment detection
+        if db_path:
+            self.db_path = db_path
+        else:
+            self.db_path = str(settings.get_absolute_db_path())
+
+        if snapshots_path:
+            self.snapshots_path = Path(snapshots_path)
+        else:
+            self.snapshots_path = settings.get_absolute_snapshots_path()
 
         # Create database connection
         self.conn = duckdb.connect(str(self.db_path) if self.db_path != ":memory:" else ":memory:")
@@ -34,6 +43,8 @@ class DuckDBClient:
         self.conn.execute("SET memory_limit = '8GB'")
         self.conn.execute("SET max_memory = '8GB'")
 
+        logger.info(f"Environment: {settings.get_environment_name()}")
+        logger.info(f"Data root: {settings.get_data_root()}")
         logger.info(f"DuckDB client initialized with database: {self.db_path}")
         logger.info(f"Snapshots path: {self.snapshots_path}")
 
