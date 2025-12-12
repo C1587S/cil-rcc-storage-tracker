@@ -94,3 +94,11 @@ docs/.doctrees/
 .env
 .env.local
 .env.*.local
+
+# Docker
+docker-compose.override.yml
+
+# Testing
+rcc-workflows/testing/test_data/
+rcc-workflows/testing/scan_output/
+rcc-workflows/testing/aggregated/

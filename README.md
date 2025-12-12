@@ -50,6 +50,17 @@ npm run dev
 
 The frontend will be available at http://localhost:3001
 
+### Docker Setup (Recommended)
+
+For a reproducible development environment with both services:
+
+```bash
+cd docker
+docker-compose up --build
+```
+
+This starts both backend and frontend with proper networking and health checks. See the [Docker documentation](docker/README.md) for testing and deployment configurations.
+
 ## Complete Pipeline
 
 ### RCC Cluster Workflow
@@ -133,8 +144,15 @@ Open your browser and navigate to the dashboard to explore the data.
 
 ```
 cil-rcc-storage-tracker/
+├── docker/            # Docker configuration
+│   ├── Dockerfile.backend         # Backend container
+│   ├── Dockerfile.frontend        # Frontend container
+│   ├── docker-compose.yml         # Development setup
+│   ├── docker-compose.testing.yml # Testing configuration
+│   └── README.md                  # Docker documentation
 ├── rcc-workflows/     # RCC cluster workflows and scripts
 │   ├── scripts/      # Slurm job scripts (scan, aggregate)
+│   ├── testing/      # Integration test suite
 │   └── README.md     # Complete RCC workflow guide
 ├── scanner/           # Rust-based filesystem scanner
 │   ├── src/          # Scanner source code
@@ -174,6 +192,9 @@ cil-rcc-storage-tracker/
 
 Each component has detailed documentation in its respective README:
 
+- [Docker Documentation](docker/README.md) - Container setup, development and testing environments
+- [RCC Workflows Guide](rcc-workflows/README.md) - Complete cluster scanning workflow
+- [Testing Guide](rcc-workflows/testing/README.md) - Integration testing with mock data
 - [Scanner Documentation](scanner/README.md) - Building, scanning, Slurm integration, resume capability
 - [Backend Documentation](backend/README.md) - API endpoints, configuration, data processing scripts
 - [Frontend Documentation](frontend/README.md) - Component structure, development workflow, deployment
