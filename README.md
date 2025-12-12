@@ -176,7 +176,7 @@ The **owner and group information** is particularly useful for multi-user storag
 
 ## Part 2: Generating Reports
 
-The `reports/` folder contains Python scripts to generate markdown reports from scan results.
+The `reports/` folder contains Python scripts to generate comprehensive audit reports from scan results.
 
 ### Prerequisites
 
@@ -185,43 +185,117 @@ cd reports
 pip install -r requirements.txt
 ```
 
-### Generate a Report
+### CIL Report Generation Scripts
+
+After scanning CIL directories, use these scripts to generate detailed audit reports.
+
+**The scripts automatically detect available scan dates** from the scan directory structure (`/OUTPUTS/cil_scans/${DIR}/YYYY-MM-DD/`), so you don't need to specify dates manually.
+
+#### Sequential Report Generation
 
 ```bash
-python generate_report.py \
-    --input ../scan_examples/snapshot_2025-12-12.parquet \
-    --output reports/storage_report_2025-12-12.md
+# Generate reports for all available CIL scans
+# Automatically processes all directories and all dates found
+./scripts/generate_cil_reports.sh
+```
+
+#### Parallel Report Generation (Slurm)
+
+For faster report generation using Slurm job arrays:
+
+```bash
+# Create output directory for logs
+mkdir -p /project/cil/home_dirs/scadavidsanchez/projects/cil-rcc-storage-tracker/OUTPUTS/cil_reports/slurm_out
+
+# Submit parallel jobs (7 jobs, one per directory)
+# Each job automatically uses the most recent scan date for that directory
+sbatch scripts/generate_cil_reports_parallel.sh
+```
+
+#### Target Directories
+
+Reports are generated for these CIL directories:
+1. `/project/cil/battuta-shares-S3-archive`
+2. `/project/cil/battuta_shares`
+3. `/project/cil/gcp`
+4. `/project/cil/home_dirs`
+5. `/project/cil/kupe_shares`
+6. `/project/cil/norgay`
+7. `/project/cil/sacagawea_shares`
+
+#### Output Location
+
+```
+/project/cil/home_dirs/scadavidsanchez/projects/cil-rcc-storage-tracker/OUTPUTS/cil_reports/
+├── battuta-shares-S3-archive/2025-12-12/
+│   ├── audit_report_battuta-shares-S3-archive_2025-12-12.md
+│   └── audit_report_battuta-shares-S3-archive_2025-12-12.html
+├── gcp/2025-12-12/
+│   ├── audit_report_gcp_2025-12-12.md
+│   └── audit_report_gcp_2025-12-12.html
+└── ... (one directory per scanned location)
 ```
 
 ### What Reports Include
 
-- **Summary Statistics**: Total files, total size, average file size
-- **File Type Breakdown**: Distribution by extension
-- **Size Distribution**: Histograms and percentiles
-- **Top Directories**: Largest directories by size and file count
-- **Top Files**: Largest individual files
-- **Owner/Group Analysis**: Storage consumption by user and group
-- **Visualizations**: Charts embedded as images
+Each comprehensive audit report contains 11 sections:
 
-### Example Report Output
+1. **Main Folder Analysis** - Total size, file counts, predominant file types, heaviest subdirectories
+2. **Hierarchical Weight Analysis** - Top-down storage distribution, data concentration points
+3. **Hotspots** - Critical space consumers (directories and files by thresholds: >10GB, >50GB, >100GB)
+4. **Age Analysis** - File classification by modification date (0-30 days, 31-90 days, 91-180 days, 6-12 months, >1 year)
+5. **Cleanup Opportunities** - Prioritized recommendations (high/medium/low impact) for deleting or archiving files
+6. **User Analysis** - Storage usage per user, inactive users, cleanup suggestions (for home directories)
+7. **Large Files Analysis** - Files >10GB, >50GB, >100GB with locations and types
+8. **Trash/Hidden Files** - Hidden files, caches, temporary files, empty files, corrupted files
+9. **Duplicate Analysis** - Potential duplicates based on size and name
+10. **Compression Opportunities** - Uncompressed files that would benefit from compression
+11. **File Type Classification** - Breakdown by category (datasets, checkpoints, logs, etc.)
 
-```markdown
-# Storage Report - 2025-12-12
+### Monitoring Progress
 
-## Summary
-- Total Files: 1,234,567
-- Total Size: 5.2 TB
-- Average File Size: 4.3 MB
+**Sequential script:**
+```bash
+./scripts/generate_cil_reports.sh 2025-12-12 | tee report_generation.log
+```
 
-## Top 10 Largest Directories
-1. /project/cil/gcp/dataset_01 - 1.2 TB (234,123 files)
-2. /project/cil/gcp/logs - 856 GB (456,789 files)
-...
+**Parallel script:**
+```bash
+# Check job status
+squeue -u $USER | grep cil_reports
 
-## Top 10 Storage Users
-1. user123 - 850 GB (125,000 files)
-2. user456 - 620 GB (89,000 files)
-...
+# Watch specific job output (replace X with array index 0-6)
+tail -f /project/cil/.../OUTPUTS/cil_reports/slurm_out/report_X.out
+```
+
+### Generate Individual Report
+
+For a single directory:
+
+```bash
+python reports/scripts/generate_report.py \
+    "/path/to/scan/*.parquet" \
+    /project/cil/gcp \
+    ./output_dir
+```
+
+### Example Workflow
+
+Complete scanning and reporting workflow:
+
+```bash
+# 1. Scan CIL directories in parallel
+sbatch scanner/scripts/scan_cil_large.sh
+
+# 2. Wait for scans to complete
+watch 'squeue -u $USER'
+
+# 3. Generate reports in parallel (automatically detects scan dates)
+mkdir -p /project/cil/.../OUTPUTS/cil_reports/slurm_out
+sbatch scripts/generate_cil_reports_parallel.sh
+
+# 4. View generated reports (reports are in same date structure as scans)
+ls -lh /project/cil/.../OUTPUTS/cil_reports/*/*/*.html
 ```
 
 ---
