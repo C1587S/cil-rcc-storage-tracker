@@ -214,7 +214,7 @@ aggregate_chunks() {
         log_info "Aggregating ${DIR} (${CHUNK_COUNT} chunks)..."
 
         ${SCANNER_BIN} aggregate \
-            --input "${SCAN_OUTPUT_DIR}" \
+            --input "${SCAN_OUTPUT_DIR}/${DIR}.parquet" \
             --output "${AGGREGATED_DIR}/${DIR}.parquet" \
             --delete-chunks \
             2>&1 | tail -5

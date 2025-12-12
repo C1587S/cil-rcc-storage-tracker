@@ -1,0 +1,91 @@
+# Git
+.git
+.gitignore
+
+# Documentation (not needed in containers)
+*.md
+CLAUDE.md
+CLEANUP_TASK.md
+DEPLOYMENT.md
+PROJECT_STATUS.md
+LICENSE
+
+# Python
+__pycache__/
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/*.so
+.pytest_cache/
+.coverage
+htmlcov/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+.vercel/
+*.log
+.env*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+scanner/tests/fixtures/test_project/
+backend/tests/fixtures/sample_snapshots/
+coverage/
+rcc-workflows/testing/test_data/
+rcc-workflows/testing/scan_output/
+rcc-workflows/testing/aggregated/
+
+# Data files (will be mounted via volumes)
+backend/data/
+snapshots/
+*.parquet
+*.duckdb
+*.db
+
+# Reports
+reports/output/
+reports/reports/
+
+# Scan examples and outputs
+scan_examples/
+OUTPUTS/
+
+# Scanner build artifacts
+scanner/target/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Docker
+docker-compose.override.yml
+
+# Environment files (will be set via docker-compose)
+.env
+.env.local
+.env.*.local

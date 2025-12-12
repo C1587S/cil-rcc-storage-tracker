@@ -465,10 +465,13 @@ fn find_chunk_files(input: &PathBuf) -> Result<Vec<PathBuf>> {
         // Input is a single file
         chunk_files.push(input.clone());
     } else {
-        // Try glob pattern
-        let pattern = input.to_string_lossy();
+        // Input path doesn't exist - try to find matching chunk files
         let parent = input.parent()
             .ok_or_else(|| anyhow::anyhow!("Invalid input path"))?;
+
+        let base_name = input.file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| anyhow::anyhow!("Invalid base filename"))?;
 
         for entry in fs::read_dir(parent)? {
             let entry = entry?;
@@ -477,9 +480,11 @@ fn find_chunk_files(input: &PathBuf) -> Result<Vec<PathBuf>> {
             if path.is_file() {
                 if let Some(name) = path.file_name() {
                     let name_str = name.to_string_lossy();
-                    if name_str.ends_with(".parquet") &&
-                       !name_str.contains("manifest") &&
-                       (pattern.contains('*') || name_str.contains("chunk")) {
+                    // Match files that start with the base name and are chunks
+                    if name_str.starts_with(base_name) &&
+                       name_str.ends_with(".parquet") &&
+                       name_str.contains("chunk") &&
+                       !name_str.contains("manifest") {
                         chunk_files.push(path);
                     }
                 }

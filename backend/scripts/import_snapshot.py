@@ -17,8 +17,19 @@ REQUIRED_COLS = {"path", "size", "modified_time", "file_type"}
 
 
 def validate_snapshot_date(date_str: str) -> bool:
+    """
+    Validate snapshot date format.
+    Accepts: YYYY-MM-DD or YYYY-MM-DD-suffix (e.g., 2025-12-12-test)
+    """
+    # Check if it starts with a valid date
+    parts = date_str.split('-')
+    if len(parts) < 3:
+        return False
+
+    # Try to parse the first three parts as a date
     try:
-        datetime.strptime(date_str, "%Y-%m-%d")
+        date_part = '-'.join(parts[:3])
+        datetime.strptime(date_part, "%Y-%m-%d")
         return True
     except ValueError:
         return False
@@ -55,7 +66,7 @@ def import_snapshot(source_dir: str, snapshot_date: str, data_root: str = None):
         sys.exit(1)
 
     if not validate_snapshot_date(snapshot_date):
-        print("ERROR: Invalid snapshot date format (YYYY-MM-DD)")
+        print("ERROR: Invalid snapshot date format (expected: YYYY-MM-DD or YYYY-MM-DD-suffix)")
         sys.exit(1)
 
     parquet_files = sorted(source_path.glob("*.parquet"))

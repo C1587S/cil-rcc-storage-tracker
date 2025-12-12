@@ -34,6 +34,17 @@ cargo build --release
 
 The binary will be at `target/release/storage-scanner`
 
+### Installing (Optional)
+
+To install the scanner to your cargo bin directory and make it available system-wide:
+
+```bash
+cd scanner
+cargo install --path .
+```
+
+This installs to `~/.cargo/bin/storage-scanner` (make sure `~/.cargo/bin` is in your PATH)
+
 ## Usage
 
 ### Basic Scan
