@@ -53,39 +53,47 @@ def consolidate_chunks(chunk_files: List[Path], output_file: Path) -> dict:
     if not chunk_files:
         raise ValueError("No chunk files provided")
 
-    print(f"  Reading {len(chunk_files)} chunk file(s)...")
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    tables = []
+    print(f"  Streaming {len(chunk_files)} chunk file(s)...")
+
+    writer = None
     total_rows = 0
+    schema = None
 
     for i, chunk_file in enumerate(chunk_files, 1):
         print(f"    [{i}/{len(chunk_files)}] {chunk_file.name}", end="\r")
+
         table = pq.read_table(chunk_file)
-        tables.append(table)
-        total_rows += len(table)
 
-    print(f"\n  Consolidating {total_rows:,} rows...")
+        if writer is None:
+            schema = table.schema
+            writer = pq.ParquetWriter(
+                output_file,
+                schema,
+                compression="snappy",
+                use_dictionary=True,
+            )
 
-    consolidated = pa.concat_tables(tables)
+        writer.write_table(table)
+        total_rows += table.num_rows
 
-    output_file.parent.mkdir(parents=True, exist_ok=True)
+        # liberar memoria explícitamente
+        del table
 
-    print(f"  Writing {output_file}...")
-    pq.write_table(
-        consolidated,
-        output_file,
-        compression="snappy",
-        use_dictionary=True,
-    )
+    if writer:
+        writer.close()
 
     size_bytes = output_file.stat().st_size
 
+    print(f"\n  Wrote {total_rows:,} rows")
+
     return {
         "input_files": len(chunk_files),
-        "output_rows": len(consolidated),
-        "output_columns": len(consolidated.column_names),
+        "output_rows": total_rows,
+        "output_columns": len(schema.names),
         "output_size_mb": size_bytes / (1024 * 1024),
-        "schema": consolidated.schema,
+        "schema": schema,
     }
 
 
