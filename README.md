@@ -191,16 +191,6 @@ Todo:
 - [ ] Add duplicate file detection
 - [ ] Add growth trend analytics
 
-## Author
-
-Sebastian Cadavid Sanchez - [@scadavidsanchez](https://github.com/scadavidsanchez)
-
-## Acknowledgments
-
-- UChicago Research Computing Center
-- Climate Impact Lab
-- Scanner filesystem tool
-
 ---
 
 Last Updated: 2025-12-12
