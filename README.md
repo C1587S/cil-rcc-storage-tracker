@@ -25,7 +25,7 @@ This project consists of three main components that work together to scan, analy
 
 - Python 3.10+ (for backend)
 - Node.js 18+ (for frontend)
-- Rust 1.70+ (for scanner, if building from source)
+- Rust 1.81+ (for scanner, if building from source)
 - Access to UChicago RCC cluster (for generating scans)
 
 ### Backend Setup
