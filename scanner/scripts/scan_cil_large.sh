@@ -2,21 +2,16 @@
 #SBATCH --job-name=cil_scan_large
 #SBATCH --account=cil
 #SBATCH --partition=caslake
-#SBATCH --cpus-per-task=16
 #SBATCH --ntasks=1
-#SBATCH --mem-per-cpu=4G
-#SBATCH --time=00:10:00
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=16G
+#SBATCH --time=18:00:00
 #SBATCH --array=0-6
 #SBATCH -o /project/cil/home_dirs/scadavidsanchez/projects/cil-rcc-storage-tracker/OUTPUTS/cil_scans/slurm_out/scan_large_%a.out
 #SBATCH -e /project/cil/home_dirs/scadavidsanchez/projects/cil-rcc-storage-tracker/OUTPUTS/cil_scans/slurm_out/scan_large_%a.err
 
+### Total time with this config is 30 minutos to scan /projects/cil fully 
 ################################################################################
-# Optimized Scanner for Large /project/cil directories
-#
-# Use this for very large directories (>1TB, >1M files)
-# - More threads (16 instead of 8)
-# - Larger chunks (1M rows instead of 500K)
-# - Longer time limit (48h instead of 24h)
 #
 # Usage:
 #   mkdir -p /project/cil/home_dirs/scadavidsanchez/projects/cil-rcc-storage-tracker/OUTPUTS/cil_scans/slurm_out
@@ -57,15 +52,15 @@ echo "Full Path: ${BASE_PATH}/${DIR}"
 echo "Output Dir: ${OUTPUT_DIR}"
 echo "Node: $(hostname)"
 echo "CPUs: ${SLURM_CPUS_PER_TASK}"
-echo "Memory: $((${SLURM_CPUS_PER_TASK} * ${SLURM_MEM_PER_CPU}))MB total"
+echo "Memory requested: 16 GB"
 echo "Time Limit: 48 hours"
 echo "Start Time: $(date)"
 echo "================================================"
 echo ""
 
 # Verify scanner binary
-if [ ! -f "${SCANNER_BIN}" ]; then
-    echo "ERROR: Scanner binary not found at ${SCANNER_BIN}"
+if ! command -v ${SCANNER_BIN} >/dev/null 2>&1; then
+    echo "ERROR: Scanner binary not found in PATH"
     exit 1
 fi
 
@@ -74,14 +69,14 @@ mkdir -p ${OUTPUT_DIR}
 
 # Run scanner with optimized parameters for large directories
 echo "Starting optimized scan for large directory..."
-${SCANNER_BIN} scan \
+/usr/bin/time -v ${SCANNER_BIN} scan \
     --path "${BASE_PATH}/${DIR}" \
     --output "${OUTPUT_DIR}/${DIR}_${DATE}.parquet" \
     --threads ${SLURM_CPUS_PER_TASK} \
-    --batch-size 100000 \
+    --batch-size 200000 \
     --incremental \
     --rows-per-chunk 1000000 \
-    --chunk-interval-secs 60 \
+    --chunk-interval-secs 600 \
     --resume \
     --verbose
 
