@@ -125,18 +125,34 @@ Import aggregated Parquet files from the scanner:
 python scripts/import_snapshot.py <source_directory> <snapshot_date>
 ```
 
+This script will:
+1. Copy Parquet files to `data/snapshots/<snapshot_date>/`
+2. Validate schema and file integrity
+3. Automatically run optimization (creates materialized tables for performance)
+
 Note: The source directory should contain the aggregated Parquet file(s). Use the scanner's `aggregate` command to consolidate chunk files before importing.
+
+### Optimize snapshot performance
+
+For existing snapshots or if automatic optimization failed:
+
+```bash
+python scripts/optimize_snapshot.py <snapshot_date>
+```
+
+This creates materialized tables that dramatically improve query performance for large snapshots.
+
+The optimization process:
+- Creates directory hierarchy table (critical for performance)
+- Materializes snapshot summaries, file type breakdowns, heavy files
+- Creates indexes on frequently queried columns
+
+Note: This is CRITICAL for large snapshots (1M+ files). The `import_snapshot.py` script now runs this automatically.
 
 ### Create test data
 
 ```bash
 python scripts/create_test_snapshot.py
-```
-
-### Optimize snapshot performance
-
-```bash
-python scripts/optimize_snapshot.py <snapshot_date>
 ```
 
 ### Check environment

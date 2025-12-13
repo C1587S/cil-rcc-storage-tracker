@@ -201,6 +201,25 @@ Each component has detailed documentation in its respective README:
 
 ## Common Tasks
 
+### Run integration tests
+
+Run the full end-to-end test suite (generates mock data, scans, imports, and verifies):
+
+```bash
+# Run integration tests
+cd rcc-workflows/testing
+./run_integration_test.sh --scale medium
+
+# Start Docker environment
+cd ../../docker
+docker-compose up --build
+
+# Access the frontend at http://localhost:3001
+# Test snapshots will be available in the snapshot selector
+```
+
+Note: Integration tests create 2 snapshots for testing snapshot switching functionality.
+
 ### Create a test snapshot
 
 ```bash
@@ -209,6 +228,8 @@ python scripts/create_test_snapshot.py
 ```
 
 ### Optimize snapshot performance
+
+Note: Optimization now runs automatically during import. Manual optimization is only needed for existing snapshots.
 
 ```bash
 cd backend
@@ -229,8 +250,39 @@ python scripts/check_environment.py
 - Backend API with environment auto-detection: Working
 - Frontend dashboard with analytics: Working
 - Data import pipeline: Working
+- Docker development and testing environments: Working
+- Integration test suite: Working
 
-Todo:
+## Todo List
+
+### Critical (Performance Blockers) - COMPLETED December 2025
+- [x] Pre-compute directory hierarchy during import
+- [x] Create indexed lookup tables for immediate children queries
+- [x] Materialize aggregated sizes at each directory level
+- [x] Add indexes on path, size, and file_type columns
+- [x] Generate multiple test snapshots for snapshot switching tests
+
+Performance improvements: Optimized query performance through materialized tables and indexes.
+
+### Outstanding
+- [ ] Fix test data contamination (Redis cache isolation)
+
+### High Priority (UX Improvements)
+- [ ] Move root folder selector from header to left sidebar panel
+- [ ] Make big folders always visible and clickable in sidebar
+- [ ] Replace heavy files table with query builder panel
+- [ ] Add SQL-like query interface with real examples
+- [ ] Add clickable info button with query documentation and regex examples
+- [ ] Add optional folder scope selection to manual filters
+- [ ] Make filters independent from navigation state
+
+### Medium Priority (Visualizations)
+- [ ] Add fullscreen mode to disk usage tree
+- [ ] Add percentage reference selector (current dir / parent / snapshot)
+- [ ] Implement sunburst chart as alternative to tree view
+- [ ] Add command-style toggle between tree and sunburst views
+
+### Long-term (Deployment)
 - [ ] Deploy backend API to cloud service
 - [ ] Host DuckDB database on Hugging Face
 - [ ] Deploy frontend to Vercel
