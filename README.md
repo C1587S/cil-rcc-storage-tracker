@@ -203,22 +203,27 @@ Each component has detailed documentation in its respective README:
 
 ### Run integration tests
 
-Run the full end-to-end test suite (generates mock data, scans, imports, and verifies):
+Run the full end-to-end test suite with Docker (recommended):
 
 ```bash
-# Run integration tests
+# 1. Generate test data and snapshots
 cd rcc-workflows/testing
-./run_integration_test.sh --scale medium
+./run_integration_test.sh --scale small
 
-# Start Docker environment
+# 2. Start full stack with Docker
 cd ../../docker
 docker-compose up --build
 
-# Access the frontend at http://localhost:3001
-# Test snapshots will be available in the snapshot selector
+# 3. Open browser: http://localhost:3001
+# You'll see 2 test snapshots: 2025-01-01 and 2025-01-08
 ```
 
-Note: Integration tests create 2 snapshots for testing snapshot switching functionality.
+The test automatically:
+- Creates mock filesystem data
+- Scans and aggregates into Parquet files
+- Imports 2 snapshots for testing snapshot switching
+- Clears DuckDB database for clean testing
+- Detects and stops conflicting backend processes
 
 ### Create a test snapshot
 

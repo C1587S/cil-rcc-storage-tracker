@@ -29,7 +29,13 @@ logger = logging.getLogger(__name__)
 
 
 def optimize_snapshot(snapshot_date: str):
-    """Create materialized summary tables for a snapshot."""
+    """
+    Create materialized summary tables for a snapshot.
+
+    This is CRITICAL for performance with large snapshots (1M+ files).
+    Pre-computes expensive queries including directory hierarchies,
+    reducing query times from 55+ minutes to seconds.
+    """
 
     logger.info(f"Optimizing snapshot: {snapshot_date}")
     logger.info("="  * 60)
@@ -50,7 +56,7 @@ def optimize_snapshot(snapshot_date: str):
     start_total = time.time()
 
     # 1. Create snapshot summary table
-    logger.info("[1/4] Creating snapshot_summary table...")
+    logger.info("[1/7] Creating snapshot_summary table...")
     start = time.time()
 
     db.conn.execute("""
@@ -85,7 +91,7 @@ def optimize_snapshot(snapshot_date: str):
     logger.info(f"  ✓ Completed in {time.time() - start:.2f}s")
 
     # 2. Create directory breakdown table
-    logger.info("[2/4] Creating directory_breakdown table...")
+    logger.info("[2/7] Creating directory_breakdown table...")
     start = time.time()
 
     db.conn.execute("""
@@ -121,7 +127,7 @@ def optimize_snapshot(snapshot_date: str):
     logger.info(f"  ✓ Completed in {time.time() - start:.2f}s")
 
     # 3. Create file type breakdown table
-    logger.info("[3/4] Creating filetype_breakdown table...")
+    logger.info("[3/7] Creating filetype_breakdown table...")
     start = time.time()
 
     db.conn.execute("""
@@ -160,7 +166,7 @@ def optimize_snapshot(snapshot_date: str):
     logger.info(f"  ✓ Completed in {time.time() - start:.2f}s")
 
     # 4. Create heavy files table
-    logger.info("[4/4] Creating heavy_files table...")
+    logger.info("[4/7] Creating heavy_files table...")
     start = time.time()
 
     db.conn.execute("""
@@ -198,6 +204,120 @@ def optimize_snapshot(snapshot_date: str):
         ORDER BY size DESC
         LIMIT 1000
     """)
+
+    logger.info(f"  ✓ Completed in {time.time() - start:.2f}s")
+
+    # 5. Create directory hierarchy table (CRITICAL for performance)
+    logger.info("[5/7] Creating directory_hierarchy table...")
+    logger.info("  This may take several minutes for large snapshots...")
+    start = time.time()
+
+    # Create the table schema
+    db.conn.execute("""
+        CREATE TABLE IF NOT EXISTS directory_hierarchy (
+            snapshot_date VARCHAR,
+            parent_path VARCHAR,
+            child_name VARCHAR,
+            child_path VARCHAR,
+            is_directory BOOLEAN,
+            total_size BIGINT,
+            file_count BIGINT,
+            last_modified BIGINT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (snapshot_date, parent_path, child_name)
+        )
+    """)
+
+    # Delete existing entries for this snapshot
+    db.conn.execute(f"""
+        DELETE FROM directory_hierarchy
+        WHERE snapshot_date = '{snapshot_date}'
+    """)
+
+    # Build hierarchy by aggregating immediate children
+    # This pre-computes what get_immediate_children() does on-the-fly
+    logger.info("  Building parent-child relationships...")
+    db.conn.execute(f"""
+        INSERT INTO directory_hierarchy (
+            snapshot_date, parent_path, child_name, child_path,
+            is_directory, total_size, file_count, last_modified
+        )
+        WITH all_items AS (
+            SELECT
+                parent_path,
+                path,
+                size,
+                modified_time,
+                -- Extract child name (last part of path)
+                split_part(path, '/', length(regexp_split_to_array(path, '/'))) as child_name
+            FROM file_snapshots
+            WHERE CAST(snapshot_date AS VARCHAR) = '{snapshot_date}'
+            AND parent_path IS NOT NULL
+            AND parent_path != ''
+        ),
+        -- Pre-compute which paths are directories
+        directory_paths AS (
+            SELECT DISTINCT parent_path as dir_path
+            FROM file_snapshots
+            WHERE CAST(snapshot_date AS VARCHAR) = '{snapshot_date}'
+            AND parent_path IS NOT NULL
+            AND parent_path != ''
+        )
+        SELECT
+            '{snapshot_date}' as snapshot_date,
+            ai.parent_path,
+            ai.child_name,
+            ai.path as child_path,
+            -- Check if this path appears as a parent (i.e., it's a directory)
+            CASE WHEN dp.dir_path IS NOT NULL THEN true ELSE false END as is_directory,
+            SUM(ai.size) as total_size,
+            COUNT(*) as file_count,
+            MAX(ai.modified_time) as last_modified
+        FROM all_items ai
+        LEFT JOIN directory_paths dp ON ai.path = dp.dir_path
+        GROUP BY ai.parent_path, ai.child_name, ai.path, dp.dir_path
+    """)
+
+    row_count = db.conn.execute(f"""
+        SELECT COUNT(*) FROM directory_hierarchy
+        WHERE snapshot_date = '{snapshot_date}'
+    """).fetchone()[0]
+
+    logger.info(f"  ✓ Completed in {time.time() - start:.2f}s ({row_count:,} parent-child relationships)")
+
+    # 6. Create indexes for fast lookups
+    logger.info("[6/7] Creating indexes...")
+    start = time.time()
+
+    # Index on parent_path for fast children lookups
+    db.conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_hierarchy_parent
+        ON directory_hierarchy(snapshot_date, parent_path)
+    """)
+
+    # Index on child_path for navigation
+    db.conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_hierarchy_child
+        ON directory_hierarchy(snapshot_date, child_path)
+    """)
+
+    # Note: Cannot create indexes on file_snapshots because it's a VIEW over Parquet files
+    # DuckDB will use Parquet file metadata and columnar storage for efficient scans
+
+    logger.info(f"  ✓ Completed in {time.time() - start:.2f}s")
+
+    # 7. Run ANALYZE to update statistics
+    logger.info("[7/7] Analyzing tables...")
+    start = time.time()
+
+    # Only analyze base tables, not views
+    db.conn.execute("ANALYZE directory_hierarchy")
+    db.conn.execute("ANALYZE snapshot_summary")
+    db.conn.execute("ANALYZE directory_breakdown")
+    db.conn.execute("ANALYZE filetype_breakdown")
+    db.conn.execute("ANALYZE heavy_files")
+
+    # Note: Cannot ANALYZE file_snapshots because it's a VIEW over Parquet files
 
     logger.info(f"  ✓ Completed in {time.time() - start:.2f}s")
 

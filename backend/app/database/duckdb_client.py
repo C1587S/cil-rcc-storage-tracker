@@ -74,7 +74,7 @@ class DuckDBClient:
                     parent_path,
                     depth,
                     top_level_dir,
-                    regexp_extract(filename, '([0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}})', 1) as snapshot_date
+                    regexp_extract(filename, 'snapshots/([^/]+)/', 1) as snapshot_date
                 FROM read_parquet(
                     '{snapshot_pattern}',
                     union_by_name = true,
@@ -403,7 +403,7 @@ class DuckDBClient:
     ) -> pl.DataFrame:
         """
         Get immediate children of a folder (both files and subdirectories).
-        Does NOT aggregate - returns individual items.
+        Uses pre-computed directory_hierarchy table for O(1) lookup instead of O(n²).
 
         Args:
             path: Parent folder path
@@ -413,11 +413,41 @@ class DuckDBClient:
             Polars DataFrame with immediate children
         """
         try:
+            import time
+            start = time.time()
+
             # Normalize path
             path = path.rstrip("/")
             if not path:
                 path = "/"
 
+            # Try using pre-computed hierarchy table first (instant for large datasets)
+            try:
+                query = f"""
+                    SELECT
+                        child_name as name,
+                        total_size,
+                        file_count,
+                        last_modified,
+                        is_directory
+                    FROM directory_hierarchy
+                    WHERE snapshot_date = '{snapshot}'
+                    AND parent_path = '{path}'
+                    ORDER BY total_size DESC
+                """
+
+                result = self.conn.execute(query).pl()
+
+                if len(result) > 0 or self._hierarchy_table_exists(snapshot):
+                    duration = time.time() - start
+                    logger.info(f"Immediate children for {path} (materialized): {len(result)} items in {duration:.3f}s")
+                    return result
+
+            except Exception as e:
+                logger.warning(f"Could not use materialized hierarchy table: {e}")
+
+            # Fallback to original query (slow for 1M+ files)
+            logger.warning(f"Using fallback query for {path} - run optimize_snapshot.py for better performance")
             query = f"""
                 WITH immediate_items AS (
                     SELECT DISTINCT
@@ -453,12 +483,26 @@ class DuckDBClient:
             """
 
             result = self.conn.execute(query).pl()
-            logger.info(f"Immediate children for {path} returned {len(result)} items")
+            duration = time.time() - start
+            logger.warning(f"Immediate children for {path} (full scan) took {duration:.2f}s")
             return result
 
         except Exception as e:
             logger.error(f"Error getting immediate children: {e}")
             return pl.DataFrame()
+
+    def _hierarchy_table_exists(self, snapshot: str) -> bool:
+        """Check if directory_hierarchy table exists and has data for this snapshot."""
+        try:
+            result = self.conn.execute(f"""
+                SELECT COUNT(*) as count
+                FROM directory_hierarchy
+                WHERE snapshot_date = '{snapshot}'
+                LIMIT 1
+            """).fetchone()
+            return result is not None and result[0] > 0
+        except Exception:
+            return False
 
     def get_heavy_files(
         self,

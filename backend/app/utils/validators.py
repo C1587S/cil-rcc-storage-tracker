@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 def validate_date_format(date_str: str) -> bool:
     """
-    Validate date string format (YYYY-MM-DD or YYYY-MM-DD-suffix).
+    Validate date string format (YYYY-MM-DD).
 
     Args:
         date_str: Date string to validate
@@ -19,23 +19,13 @@ def validate_date_format(date_str: str) -> bool:
     Raises:
         HTTPException: If invalid format
     """
-    # Split by hyphen and check if first 3 parts form a valid date
-    parts = date_str.split('-')
-    if len(parts) < 3:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid date format: {date_str}. Expected YYYY-MM-DD or YYYY-MM-DD-suffix"
-        )
-
     try:
-        # Validate the date portion (first 3 parts)
-        date_part = '-'.join(parts[:3])
-        datetime.strptime(date_part, "%Y-%m-%d")
+        datetime.strptime(date_str, "%Y-%m-%d")
         return True
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid date format: {date_str}. Expected YYYY-MM-DD or YYYY-MM-DD-suffix"
+            detail=f"Invalid date format: {date_str}. Expected YYYY-MM-DD"
         )
 
 

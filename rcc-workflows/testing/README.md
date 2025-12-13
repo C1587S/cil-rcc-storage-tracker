@@ -27,8 +27,10 @@ This will:
 - Generate mock filesystem data
 - Scan all directories
 - Aggregate chunk files
-- Import to backend
+- Import **two snapshots** to backend (2025-01-01 and 2025-01-08)
 - Verify the import
+
+**Important:** The test creates **two snapshots with real dates** (not test suffixes) to verify snapshot switching functionality in the dashboard.
 
 ### Manual Testing
 
@@ -242,24 +244,95 @@ Next steps:
 
 ## Docker Testing
 
-For testing with Docker:
+The integration test creates data that can be used with Docker Compose. This is the **recommended** way to test the full application.
+
+### Quick Start with Docker
 
 ```bash
-# Start services for testing
-cd docker
-docker-compose -f docker-compose.testing.yml up --build
-
-# In another terminal, run integration test
+# 1. Run integration test to create test snapshots
 cd rcc-workflows/testing
-./run_integration_test.sh
+./run_integration_test.sh --scale small
 
-# Access services
-# Backend: http://localhost:8000
+# 2. Stop any running manual dev servers (IMPORTANT!)
+./stop_servers.sh
+# Or manually: pkill -f "uvicorn app.main:app" && pkill -f "next dev"
+
+# 3. Start Docker services (automatically uses test data)
+cd ../../docker
+docker-compose up --build
+
+# 4. Open browser - ONLY use port 3001 for Docker
 # Frontend: http://localhost:3001
+# Backend API: http://localhost:8000
+# API Docs: http://localhost:8000/docs
+```
 
+**IMPORTANT Port Configuration:**
+- **Docker uses port 3001** (mapped from internal port 3000)
+- **Manual `npm run dev` uses port 3000**
+- If both are running, they will show the same data - **NOT a clean test!**
+- Always stop manual servers before using Docker
+
+### Testing in the Dashboard
+
+After starting Docker (`docker-compose up`):
+
+1. Open http://localhost:3001 in your browser
+2. Look for the snapshot calendar in the dashboard
+3. You should see two test snapshots highlighted:
+   - **2025-01-01** (Primary test snapshot)
+   - **2025-01-08** (Secondary snapshot for testing switching)
+4. Click on the dates in the calendar to switch between snapshots
+5. Verify that:
+   - Data loads correctly
+   - Visualizations update
+   - File tree navigation works
+   - All analytics panels display data
+
+### Port Configuration
+
+- **Manual start** (npm run dev): Frontend runs on port **3000**
+- **Docker Compose**: Frontend runs on port **3001** (mapped from internal port 3000)
+
+The integration test script automatically detects and displays the correct port.
+
+### Troubleshooting Docker Testing
+
+**Problem: Old test data appears in dashboard**
+```bash
 # Stop services
-cd docker
-docker-compose -f docker-compose.testing.yml down
+docker-compose down
+
+# Clean up old data
+./run_integration_test.sh --cleanup
+
+# Re-run test and restart Docker
+./run_integration_test.sh --scale small
+cd ../../docker
+docker-compose up --build
+```
+
+**Problem: Backend won't start (database lock)**
+```bash
+# Make sure no other backend process is running
+pkill -f "uvicorn app.main:app"
+
+# Clean database and restart
+rm -f ../backend/data/storage_analytics.duckdb*
+docker-compose up --build
+```
+
+**Problem: Frontend shows "No snapshots available"**
+```bash
+# Verify snapshots were created
+ls -la ../backend/data/snapshots/
+
+# Check backend API
+curl http://localhost:8000/api/snapshots/
+
+# If empty, re-run integration test
+cd ../rcc-workflows/testing
+./run_integration_test.sh
 ```
 
 ## Testing Workflow Components
@@ -423,6 +496,45 @@ rm -rf ../../backend/data/snapshots/*-test
 3. **Use large for stress testing** - Before production deployment
 4. **Run cleanup regularly** - Prevent disk space issues
 5. **Test on fresh backend** - Remove old test snapshots first
+
+## Recent Changes (December 2025)
+
+### Simplified Test Snapshot Dates
+
+The testing infrastructure now uses real date formats (YYYY-MM-DD) instead of suffixed dates.
+
+**What Changed:**
+- Integration test creates two snapshots: `2025-01-01` and `2025-01-08`
+- Removed support for date suffixes like `2025-12-12-test-1`
+- Simplified date validators in backend
+- Updated import script validation
+
+**Rationale:**
+- Real dates work consistently with production validation
+- January 2025 dates are easy to identify as test data
+- No special handling needed for test snapshots
+- Enables testing temporal features (snapshots 7 days apart)
+
+**Migration from Old Test Snapshots:**
+
+If you have snapshots with `-test` suffixes, remove them:
+
+```bash
+# Remove old test snapshots
+rm -rf backend/data/snapshots/*-test*
+
+# Clear database cache
+rm -rf backend/data/storage_analytics.duckdb*
+
+# Generate fresh snapshots with new dates
+cd rcc-workflows/testing
+./run_integration_test.sh
+```
+
+**Files Modified:**
+- `rcc-workflows/testing/run_integration_test.sh` - Fixed test dates
+- `backend/app/utils/validators.py` - Simplified date validation
+- `backend/scripts/import_snapshot.py` - Removed suffix support
 
 ## Related Documentation
 

@@ -1,7 +1,6 @@
 'use client'
 
 import { Menu, Terminal } from 'lucide-react'
-import { SnapshotCalendarSelector } from '@/components/navigation/SnapshotCalendarSelector'
 import { RootSelector } from '@/components/navigation/RootSelector'
 import { Button } from '@/components/ui/button'
 import { usePreferencesStore } from '@/lib/stores/preferencesStore'
@@ -20,7 +19,6 @@ export function Header({ snapshot }: { snapshot: string }) {
       </div>
       <div className="flex items-center gap-4 ml-auto">
         <RootSelector snapshot={snapshot} />
-        <SnapshotCalendarSelector currentSnapshot={snapshot} />
       </div>
     </header>
   )

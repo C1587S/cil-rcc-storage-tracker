@@ -22,7 +22,9 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TEST_DATA_DIR="${SCRIPT_DIR}/test_data"
 SCAN_OUTPUT_DIR="${SCRIPT_DIR}/scan_output"
 AGGREGATED_DIR="${SCRIPT_DIR}/aggregated"
-TEST_DATE=$(date +%Y-%m-%d)
+# Use real dates for two snapshots (7 days apart for testing)
+TEST_DATE_1="2025-01-01"
+TEST_DATE_2="2025-01-08"
 
 # Default options
 SCALE="small"
@@ -84,6 +86,24 @@ log_info() {
 # Check prerequisites
 check_prerequisites() {
     log_step "Checking Prerequisites"
+
+    # Check if backend is running (which would lock the database)
+    BACKEND_PID=$(pgrep -f "uvicorn app.main:app" || true)
+    if [ -n "${BACKEND_PID}" ]; then
+        log_warning "Backend server is running (PID: ${BACKEND_PID})"
+        log_warning "This may cause database lock conflicts during testing"
+        echo -n "Stop the backend server? (y/n) "
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            kill ${BACKEND_PID}
+            sleep 2
+            log_success "Backend server stopped"
+        else
+            log_error "Please stop the backend server manually before running tests"
+            echo "  kill ${BACKEND_PID}"
+            exit 1
+        fi
+    fi
 
     # Check scanner binary
     if command -v storage-scanner &> /dev/null; then
@@ -231,27 +251,53 @@ aggregate_chunks() {
 
 # Import to backend
 import_to_backend() {
-    log_step "Step 4: Importing to Backend"
+    log_step "Step 4: Importing to Backend (2 Snapshots)"
 
     cd "${PROJECT_ROOT}/backend"
     source venv/bin/activate
 
-    # Clean previous test snapshot
-    TEST_SNAPSHOT_DIR="data/snapshots/${TEST_DATE}-test"
-    if [ -d "${TEST_SNAPSHOT_DIR}" ]; then
-        log_info "Removing previous test snapshot..."
-        rm -rf "${TEST_SNAPSHOT_DIR}"
+    # Clear DuckDB database to avoid lock conflicts and stale data
+    if [ -f "data/storage_analytics.duckdb" ]; then
+        log_info "Removing DuckDB database to ensure clean test environment..."
+        rm -f data/storage_analytics.duckdb*
     fi
 
-    # Run import script
+    # Import first snapshot
+    log_info "Importing snapshot 1: ${TEST_DATE_1}"
+    TEST_SNAPSHOT_DIR_1="data/snapshots/${TEST_DATE_1}"
+    if [ -d "${TEST_SNAPSHOT_DIR_1}" ]; then
+        log_info "Removing previous test snapshot 1..."
+        rm -rf "${TEST_SNAPSHOT_DIR_1}"
+    fi
+
     python scripts/import_snapshot.py \
         "${AGGREGATED_DIR}" \
-        "${TEST_DATE}-test"
+        "${TEST_DATE_1}"
 
     if [ $? -eq 0 ]; then
-        log_success "Data imported to backend"
+        log_success "Snapshot 1 imported: ${TEST_DATE_1}"
     else
-        log_error "Failed to import data"
+        log_error "Failed to import snapshot 1"
+        deactivate
+        exit 1
+    fi
+
+    # Import second snapshot (same data but different date for testing snapshot switching)
+    log_info "Importing snapshot 2: ${TEST_DATE_2}"
+    TEST_SNAPSHOT_DIR_2="data/snapshots/${TEST_DATE_2}"
+    if [ -d "${TEST_SNAPSHOT_DIR_2}" ]; then
+        log_info "Removing previous test snapshot 2..."
+        rm -rf "${TEST_SNAPSHOT_DIR_2}"
+    fi
+
+    python scripts/import_snapshot.py \
+        "${AGGREGATED_DIR}" \
+        "${TEST_DATE_2}"
+
+    if [ $? -eq 0 ]; then
+        log_success "Snapshot 2 imported: ${TEST_DATE_2}"
+    else
+        log_error "Failed to import snapshot 2"
         deactivate
         exit 1
     fi
@@ -266,20 +312,44 @@ verify_import() {
     cd "${PROJECT_ROOT}/backend"
     source venv/bin/activate
 
-    # Count files in imported snapshot
-    PARQUET_COUNT=$(ls data/snapshots/${TEST_DATE}-test/*.parquet 2>/dev/null | wc -l)
-    log_info "Parquet files imported: ${PARQUET_COUNT}"
+    # Verify both snapshots
+    for TEST_DATE in "${TEST_DATE_1}" "${TEST_DATE_2}"; do
+        log_info "Verifying snapshot: ${TEST_DATE}"
 
-    # Try to read one file with Python
-    FIRST_FILE=$(ls data/snapshots/${TEST_DATE}-test/*.parquet 2>/dev/null | head -1)
-    if [ -n "${FIRST_FILE}" ]; then
-        ROW_COUNT=$(python3 -c "import polars as pl; df = pl.read_parquet('${FIRST_FILE}'); print(len(df))" 2>/dev/null)
-        if [ -n "${ROW_COUNT}" ]; then
-            log_success "Successfully read parquet file: ${ROW_COUNT} rows"
-        else
-            log_warning "Could not read parquet file with polars"
+        # Count files in imported snapshot
+        PARQUET_COUNT=$(ls data/snapshots/${TEST_DATE}/*.parquet 2>/dev/null | wc -l)
+        log_info "  Parquet files: ${PARQUET_COUNT}"
+
+        # Try to read one file with Python
+        FIRST_FILE=$(ls data/snapshots/${TEST_DATE}/*.parquet 2>/dev/null | head -1)
+        if [ -n "${FIRST_FILE}" ]; then
+            ROW_COUNT=$(python3 -c "import polars as pl; df = pl.read_parquet('${FIRST_FILE}'); print(len(df))" 2>/dev/null)
+            if [ -n "${ROW_COUNT}" ]; then
+                log_success "  Read parquet file: ${ROW_COUNT} rows"
+            else
+                log_warning "  Could not read parquet file with polars"
+            fi
         fi
-    fi
+
+        # Verify hierarchy table was created
+        HIERARCHY_CHECK=$(python3 -c "
+import sys
+sys.path.insert(0, '.')
+from app.database.duckdb_client import DuckDBClient
+db = DuckDBClient()
+try:
+    result = db.conn.execute(\"SELECT COUNT(*) FROM directory_hierarchy WHERE snapshot_date = '${TEST_DATE}'\").fetchone()
+    print(result[0] if result else 0)
+except:
+    print(0)
+" 2>/dev/null)
+
+        if [ -n "${HIERARCHY_CHECK}" ] && [ "${HIERARCHY_CHECK}" -gt 0 ]; then
+            log_success "  Hierarchy table created: ${HIERARCHY_CHECK} entries"
+        else
+            log_warning "  Hierarchy table not found or empty"
+        fi
+    done
 
     deactivate
 }
@@ -288,23 +358,49 @@ verify_import() {
 print_summary() {
     log_step "Test Summary"
 
-    echo "Test Date:         ${TEST_DATE}-test"
+    echo "Test Snapshots:    ${TEST_DATE_1}, ${TEST_DATE_2}"
     echo "Scale:             ${SCALE}"
     echo ""
     echo "Test Data:         ${TEST_DATA_DIR}/project_cil/"
     echo "Scan Output:       ${SCAN_OUTPUT_DIR}/"
     echo "Aggregated Files:  ${AGGREGATED_DIR}/"
-    echo "Backend Snapshot:  ${PROJECT_ROOT}/backend/data/snapshots/${TEST_DATE}-test/"
+    echo "Backend Snapshot 1: ${PROJECT_ROOT}/backend/data/snapshots/${TEST_DATE_1}/"
+    echo "Backend Snapshot 2: ${PROJECT_ROOT}/backend/data/snapshots/${TEST_DATE_2}/"
     echo ""
     echo "Next steps:"
+    echo ""
+    echo "============================================================"
+    echo "RECOMMENDED: Use Docker Compose (Isolated Environment)"
+    echo "============================================================"
+    echo ""
+    echo "  1. Make sure no manual servers are running:"
+    echo "     pkill -f 'uvicorn app.main:app'"
+    echo "     pkill -f 'next dev'"
+    echo ""
+    echo "  2. Start Docker services:"
+    echo "     cd docker && docker-compose up --build"
+    echo ""
+    echo "  3. Open browser at:"
+    echo "     http://localhost:3001/dashboard/${TEST_DATE_1}"
+    echo "     http://localhost:3001/dashboard/${TEST_DATE_2}"
+    echo ""
+    echo "     Note: Docker uses port 3001 (isolated from manual dev)"
+    echo ""
+    echo "============================================================"
+    echo "Alternative: Manual Start (Development)"
+    echo "============================================================"
+    echo ""
     echo "  1. Start backend:"
     echo "     cd backend && source venv/bin/activate && uvicorn app.main:app --reload"
     echo ""
-    echo "  2. Start frontend:"
+    echo "  2. Start frontend (in another terminal):"
     echo "     cd frontend && npm run dev"
     echo ""
-    echo "  3. Open browser:"
-    echo "     http://localhost:3001/dashboard/${TEST_DATE}-test"
+    echo "  3. Open browser at:"
+    echo "     http://localhost:3000/dashboard/${TEST_DATE_1}"
+    echo "     http://localhost:3000/dashboard/${TEST_DATE_2}"
+    echo ""
+    echo "     Note: Manual dev uses port 3000"
     echo ""
 
     if [ "$CLEANUP" = false ]; then
@@ -336,12 +432,20 @@ cleanup_test_files() {
         log_info "Removed aggregated files"
     fi
 
-    # Remove backend snapshot
+    # Remove backend snapshots
     cd "${PROJECT_ROOT}/backend"
-    TEST_SNAPSHOT_DIR="data/snapshots/${TEST_DATE}-test"
-    if [ -d "${TEST_SNAPSHOT_DIR}" ]; then
-        rm -rf "${TEST_SNAPSHOT_DIR}"
-        log_info "Removed backend snapshot"
+    for TEST_DATE in "${TEST_DATE_1}" "${TEST_DATE_2}"; do
+        TEST_SNAPSHOT_DIR="data/snapshots/${TEST_DATE}"
+        if [ -d "${TEST_SNAPSHOT_DIR}" ]; then
+            rm -rf "${TEST_SNAPSHOT_DIR}"
+            log_info "Removed backend snapshot: ${TEST_DATE}"
+        fi
+    done
+
+    # Remove DuckDB database files to clear locks and cached data
+    if [ -f "data/storage_analytics.duckdb" ]; then
+        rm -f data/storage_analytics.duckdb*
+        log_info "Removed DuckDB database files"
     fi
 
     log_success "Cleanup complete"
@@ -350,8 +454,8 @@ cleanup_test_files() {
 # Main execution
 main() {
     log_step "CIL Storage Tracker - Integration Test Suite"
-    echo "Scale: ${SCALE}"
-    echo "Date:  ${TEST_DATE}"
+    echo "Scale:       ${SCALE}"
+    echo "Snapshots:   ${TEST_DATE_1}, ${TEST_DATE_2}"
 
     if [ "$CLEANUP" = true ]; then
         cleanup_test_files
@@ -369,6 +473,7 @@ main() {
 
     log_step "Integration Test Complete"
     log_success "All steps passed successfully"
+    log_success "Created 2 snapshots for testing snapshot switching functionality"
 }
 
 # Run main function

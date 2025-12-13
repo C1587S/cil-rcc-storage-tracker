@@ -19,17 +19,10 @@ REQUIRED_COLS = {"path", "size", "modified_time", "file_type"}
 def validate_snapshot_date(date_str: str) -> bool:
     """
     Validate snapshot date format.
-    Accepts: YYYY-MM-DD or YYYY-MM-DD-suffix (e.g., 2025-12-12-test)
+    Accepts: YYYY-MM-DD
     """
-    # Check if it starts with a valid date
-    parts = date_str.split('-')
-    if len(parts) < 3:
-        return False
-
-    # Try to parse the first three parts as a date
     try:
-        date_part = '-'.join(parts[:3])
-        datetime.strptime(date_part, "%Y-%m-%d")
+        datetime.strptime(date_str, "%Y-%m-%d")
         return True
     except ValueError:
         return False
@@ -66,7 +59,7 @@ def import_snapshot(source_dir: str, snapshot_date: str, data_root: str = None):
         sys.exit(1)
 
     if not validate_snapshot_date(snapshot_date):
-        print("ERROR: Invalid snapshot date format (expected: YYYY-MM-DD or YYYY-MM-DD-suffix)")
+        print("ERROR: Invalid snapshot date format (expected: YYYY-MM-DD)")
         sys.exit(1)
 
     parquet_files = sorted(source_path.glob("*.parquet"))
@@ -143,6 +136,46 @@ def import_snapshot(source_dir: str, snapshot_date: str, data_root: str = None):
     print(f"Total Rows: {verified_rows:,}")
     print(f"Location: {dest_path}")
     print("=" * 60)
+    print()
+
+    # ---- RUN OPTIMIZATION ----
+    print("=" * 60)
+    print("RUNNING SNAPSHOT OPTIMIZATION")
+    print("=" * 60)
+    print()
+    print("Creating materialized tables for fast queries...")
+    print("This is CRITICAL for performance with large snapshots (1M+ files).")
+    print("This may take several minutes but will reduce query times from 55+ minutes to seconds.")
+    print()
+
+    try:
+        # Import and run optimization
+        sys.path.insert(0, str(Path(__file__).parent))
+        from optimize_snapshot import optimize_snapshot
+        optimize_snapshot(snapshot_date)
+
+        print()
+        print("=" * 60)
+        print("SNAPSHOT READY FOR USE")
+        print("=" * 60)
+        print()
+        print("Your snapshot has been imported and optimized!")
+        print(f"Start the backend and navigate to: /dashboard/{snapshot_date}")
+        print()
+
+    except Exception as e:
+        print()
+        print("=" * 60)
+        print("WARNING: Optimization failed")
+        print("=" * 60)
+        print(f"Error: {e}")
+        print()
+        print("The snapshot was imported successfully, but optimization failed.")
+        print("You can manually optimize later by running:")
+        print(f"  python scripts/optimize_snapshot.py {snapshot_date}")
+        print()
+        print("WARNING: Without optimization, queries may be VERY slow (55+ minutes).")
+        print("=" * 60)
 
 
 def list_snapshots(data_root: str = None):

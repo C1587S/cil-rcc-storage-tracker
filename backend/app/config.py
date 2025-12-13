@@ -26,11 +26,11 @@ class Settings(BaseSettings):
     duckdb_path: str = "data/storage_analytics.duckdb"
     snapshots_path: str = "data/snapshots"
 
-    # Redis Settings
+    # Redis Settings (disabled by default - not needed for this application)
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_db: int = 0
-    redis_enabled: bool = True
+    redis_enabled: bool = False  # Disabled - causes test data contamination
     redis_ttl_default: int = 3600  # 1 hour
     redis_ttl_snapshots: int = 86400  # 24 hours
     redis_ttl_search: int = 3600  # 1 hour
