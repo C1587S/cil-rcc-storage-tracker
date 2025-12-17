@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { DashboardLayout } from '@/components/layout/DashboardLayout'
 import { DiskUsageTree } from '@/components/visualizations/DiskUsageTree'
 import { HierarchicalVoronoiView } from '@/components/visualizations/HierarchicalVoronoiView'
-import { HeavyFilesPanel } from '@/components/panels/HeavyFilesPanel'
 import { AdvancedSearchPanel } from '@/components/panels/AdvancedSearchPanel'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -130,9 +129,6 @@ export default function DashboardPage({ params }: DashboardPageProps) {
 
         {/* Advanced Search Panel */}
         <AdvancedSearchPanel snapshot={snapshot} />
-
-        {/* Heavy Files Panel */}
-        <HeavyFilesPanel snapshot={snapshot} />
 
         {/* Disk Usage Tree */}
         <Card>

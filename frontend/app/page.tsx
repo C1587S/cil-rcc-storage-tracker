@@ -1,28 +1,16 @@
 'use client'
 
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { DashboardLayout } from '@/components/layout/DashboardLayout'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useSnapshots } from '@/lib/hooks/useSnapshots'
 
 export default function HomePage() {
-  const router = useRouter()
   const { data: snapshotsData, isLoading } = useSnapshots()
-
-  // Auto-redirect to latest snapshot
-  useEffect(() => {
-    if (!isLoading && snapshotsData && snapshotsData.snapshots.length > 0) {
-      const latestSnapshot = snapshotsData.snapshots[0]
-      router.push(`/dashboard/${latestSnapshot.date}`)
-    }
-  }, [isLoading, snapshotsData, router])
 
   if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold mb-2">Loading Storage Analytics...</h2>
-          <p className="text-muted-foreground">Fetching snapshot data</p>
-        </div>
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
       </div>
     )
   }
@@ -40,13 +28,31 @@ export default function HomePage() {
     )
   }
 
-  // While redirecting, show loading state
+  // Show dashboard with prompt to select snapshot
   return (
-    <div className="flex h-screen items-center justify-center">
-      <div className="text-center">
-        <h2 className="text-2xl font-semibold mb-2">Redirecting to Latest Dashboard...</h2>
-        <p className="text-muted-foreground">Loading your most recent snapshot</p>
+    <DashboardLayout snapshot="">
+      <div className="flex items-center justify-center h-[calc(100vh-200px)]">
+        <Card className="w-full max-w-md mx-4">
+          <CardHeader>
+            <CardTitle>Welcome to Storage Analytics</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground mb-4">
+              Please select a snapshot from the dropdown above to begin exploring your storage data.
+            </p>
+            <div className="text-sm text-muted-foreground">
+              <p className="font-semibold mb-2">Available snapshots:</p>
+              <ul className="list-disc list-inside space-y-1">
+                {snapshotsData.snapshots.map((snapshot) => (
+                  <li key={snapshot.date} className="font-mono">
+                    {snapshot.date}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
       </div>
-    </div>
+    </DashboardLayout>
   )
 }

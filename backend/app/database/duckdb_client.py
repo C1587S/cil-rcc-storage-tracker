@@ -351,40 +351,24 @@ class DuckDBClient:
                                 WHEN depth <= {target_depth} THEN
                                     split_part(path, '/', {target_depth + 1})
                                 ELSE path
-                            END as folder_name
+                            END as folder_name,
+                            -- Use file_type to determine if directory
+                            (file_type = 'directory') as is_directory
                         FROM file_snapshots
                         WHERE path LIKE '{path}%'
                         AND CAST(snapshot_date AS VARCHAR) = '{snapshot}'
-                    ),
-                    -- Determine if each item is a directory by checking if it has direct children
-                    item_types AS (
-                        SELECT DISTINCT
-                            folder_name as name,
-                            -- An item is a directory if files exist with parent_path = full_path
-                            -- Build the full path and check if anything has it as parent
-                            CASE
-                                WHEN EXISTS (
-                                    SELECT 1 FROM file_snapshots fs
-                                    WHERE fs.parent_path = CONCAT('{path}', '/', folder_name)
-                                    AND CAST(fs.snapshot_date AS VARCHAR) = '{snapshot}'
-                                ) THEN true
-                                ELSE false
-                            END as is_directory
-                        FROM folder_paths
-                        WHERE folder_name != ''
                     )
                     SELECT
-                        fp.folder_name as name,
+                        folder_name as name,
                         COUNT(*) as file_count,
-                        SUM(fp.size) as total_size,
-                        MAX(fp.size) as max_size,
-                        MAX(fp.modified_time) as last_modified,
-                        COUNT(DISTINCT fp.file_type) as type_count,
-                        COALESCE(MAX(it.is_directory), false) as is_directory
-                    FROM folder_paths fp
-                    LEFT JOIN item_types it ON fp.folder_name = it.name
-                    WHERE fp.folder_name != ''
-                    GROUP BY fp.folder_name
+                        SUM(size) as total_size,
+                        MAX(size) as max_size,
+                        MAX(modified_time) as last_modified,
+                        COUNT(DISTINCT file_type) as type_count,
+                        BOOL_OR(is_directory) as is_directory
+                    FROM folder_paths
+                    WHERE folder_name != ''
+                    GROUP BY folder_name
                     ORDER BY total_size DESC
                 """
 
@@ -458,15 +442,8 @@ class DuckDBClient:
                         file_type,
                         -- Extract just the name (last part of the path)
                         split_part(path, '/', length(regexp_split_to_array(path, '/'))) as name,
-                        -- Check if this is a directory by seeing if anything has this path as parent
-                        CASE
-                            WHEN EXISTS (
-                                SELECT 1 FROM file_snapshots fs
-                                WHERE fs.parent_path = path
-                                AND CAST(fs.snapshot_date AS VARCHAR) = '{snapshot}'
-                            ) THEN true
-                            ELSE false
-                        END as is_directory
+                        -- Use file_type to determine if directory
+                        (file_type = 'directory') as is_directory
                     FROM file_snapshots
                     WHERE parent_path = '{path}'
                     AND CAST(snapshot_date AS VARCHAR) = '{snapshot}'
