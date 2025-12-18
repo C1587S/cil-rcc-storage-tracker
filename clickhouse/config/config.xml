@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <!-- Performance Settings -->
+    <max_server_memory_usage_to_ram_ratio>0.9</max_server_memory_usage_to_ram_ratio>
+    <max_concurrent_queries>100</max_concurrent_queries>
+    <max_thread_pool_size>10000</max_thread_pool_size>
+
+    <!-- Memory Settings -->
+    <max_memory_usage>32000000000</max_memory_usage> <!-- 32GB -->
+    <max_bytes_before_external_group_by>20000000000</max_bytes_before_external_group_by> <!-- 20GB -->
+    <max_bytes_before_external_sort>20000000000</max_bytes_before_external_sort> <!-- 20GB -->
+
+    <!-- Query Cache -->
+    <query_cache>
+        <max_size_in_bytes>1073741824</max_size_in_bytes> <!-- 1GB -->
+        <max_entries>1024</max_entries>
+        <max_entry_size_in_bytes>1048576</max_entry_size_in_bytes> <!-- 1MB -->
+    </query_cache>
+
+    <!-- Mark Cache (for index lookups) -->
+    <mark_cache_size>5368709120</mark_cache_size> <!-- 5GB -->
+
+    <!-- Uncompressed Cache (for frequently accessed data) -->
+    <uncompressed_cache_size>8589934592</uncompressed_cache_size> <!-- 8GB -->
+
+    <!-- Logging -->
+    <logger>
+        <level>information</level>
+        <log>/var/log/clickhouse-server/clickhouse-server.log</log>
+        <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
+        <size>1000M</size>
+        <count>10</count>
+    </logger>
+
+    <!-- Query Log (for performance monitoring) -->
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <ttl>event_date + INTERVAL 30 DAY</ttl>
+    </query_log>
+
+    <!-- Performance Optimizations -->
+    <merge_tree>
+        <max_suspicious_broken_parts>5</max_suspicious_broken_parts>
+        <parts_to_throw_insert>300</parts_to_throw_insert>
+        <parts_to_delay_insert>150</parts_to_delay_insert>
+    </merge_tree>
+
+    <!-- Network -->
+    <listen_host>::</listen_host>
+    <http_port>8123</http_port>
+    <tcp_port>9000</tcp_port>
+    <interserver_http_port>9009</interserver_http_port>
+
+    <!-- Compression -->
+    <compression>
+        <case>
+            <min_part_size>10485760</min_part_size> <!-- 10MB -->
+            <min_part_size_ratio>0.01</min_part_size_ratio>
+            <method>zstd</method>
+            <level>3</level>
+        </case>
+    </compression>
+</clickhouse>
