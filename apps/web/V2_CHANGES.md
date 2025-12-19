@@ -432,6 +432,186 @@ All 9 points from user feedback:
 8. ✅ Data correctness → Verified and documented
 9. ✅ Fullscreen → Working with ESC
 
+## Session 2: Percentage Fix + Quota Indicators + Context Cards (2025-12-19)
+
+### Critical Fix: Percentage Bar Propagation
+
+**Problem:** When folders were expanded, bars disappeared but percentages weren't redistributed to children.
+
+**Solution:**
+```typescript
+// apps/web/components/disk-usage-explorer-v2.tsx:223-229
+const childReferenceSize = isReferenceRow || (isExpanded && isInsideReference && !isReferenceRow)
+  ? displaySize  // Children are relative to this expanded folder
+  : referenceSize;  // Children inherit the same reference
+```
+
+**Result:** All visible bars now correctly sum to 100% relative to the reference directory.
+
+---
+
+### New Feature: Quota Indicators (Header)
+
+**Added:**
+- Storage quota: 500 TB (hard-coded)
+- File count quota: 77M files (hard-coded)
+- Color-coded progress bars (green → yellow → orange → red)
+- Real-time percentage calculations
+
+**Visual:**
+```
+Storage: [=========>         ] 303.1 / 500 TB (60.6%)
+Files:   [=====>             ] 12.3M / 77M (16.0%)
+```
+
+**Color thresholds:**
+- Green: 0-50% | Yellow: 50-75% | Orange: 75-90% | Red: 90-100%
+
+**Location:** Header section, below snapshot info, above sorting controls
+
+---
+
+### New Feature: Context Cards (Right Panel)
+
+**Layout Change:**
+- Tree: Left side (flex-1, scrollable)
+- Context cards: Right side (320px fixed, scrollable)
+
+**Reference Directory Card:**
+- Green border (matches tree highlighting)
+- Shows: path, size, storage quota %
+- Quota % color-coded (same thresholds)
+- Placeholder for treemap (coming next)
+- Always visible
+
+**Selected Item Card:**
+- Gray border
+- Shows when user clicks tree item
+- Hidden if selected = reference
+- Shows: path, name
+- Updates reactively on click
+
+**State Enhancement:**
+```typescript
+interface DiskUsageState {
+  referencePath: string | null;
+  referenceSize: number | null;
+  sortMode: SortMode;
+  selectedPath: string | null;  // NEW
+}
+```
+
+---
+
+### Dependencies Added
+
+**D3 for Treemap:**
+```bash
+npm install d3 @types/d3
+```
+
+**New Component (Scaffolded):**
+- `apps/web/components/file-type-treemap.tsx` (not yet integrated)
+
+---
+
+### Pending (Next Session)
+
+1. **Treemap visualization:**
+   - Aggregate file types within reference directory
+   - Render D3 treemap in Reference card
+   - Add legend and tooltips
+
+2. **Metadata strip:**
+   - Show detailed info for selected items
+   - Last accessed, creation time, counts, owner
+
+3. **Integration testing:**
+   - Verify all features in browser
+   - Test percentage propagation with real data
+   - Check quota updates when reference changes
+
+---
+
+---
+
+## Session 3: UX Refinements (2025-12-19)
+
+### Layout Improvements
+
+**Info Panels Repositioned:**
+- Moved from right sidebar to above the explorer
+- Side-by-side layout, right-aligned
+- Maximizes vertical space for tree navigation
+- Cards now 280px width each with `rounded-md` (more rounded corners)
+
+**Before:**
+```
+[====== Tree ======] [Reference Card]
+                     [Selected Card ]
+```
+
+**After:**
+```
+                     [Reference] [Item]
+[========== Tree ==========]
+```
+
+---
+
+### Panel Styling Enhancements
+
+**Reference Panel:**
+- Border: `border-2 border-green-500/40` (green accent, matches reference highlighting)
+- Title: "Reference" (shortened from "Reference Directory")
+- Icon: Target (green)
+- Shows: Path, Size, Quota %
+- Quota % color-coded by severity (green/yellow/orange/red)
+
+**Item Panel (formerly "Selected Item"):**
+- Border: `border-2 border-cyan-500/40` (cyan accent)
+- Title: "Item" (shortened)
+- Icon: Dynamic (shows file/folder icon based on selection)
+- Shows: Path, Name
+- Only appears when item is selected
+- Cyan accent differentiates from reference
+
+---
+
+### Selection Behavior
+
+**Cyan Underline:**
+- Selected row gets `border-b-2 border-cyan-500/60`
+- Visually ties selected row to Item panel
+- Does not apply to reference row (green highlighting takes precedence)
+
+**Deselect on Re-click:**
+```typescript
+setState((prev) => ({
+  ...prev,
+  selectedPath: prev.selectedPath === path ? null : path,
+}));
+```
+- Clicking same item again deselects it
+- Item panel disappears on deselection
+- Improves interaction clarity
+
+---
+
+### Visual Consistency
+
+**Color Semantics:**
+- Green: Reference (baseline, 100%)
+- Cyan: Selected item (user focus)
+- Size severity colors: Applied consistently across icons, text, and quota indicators
+
+**Border Radii:**
+- Info panels: `rounded-md` (more rounded, cleaner)
+- Legend: `rounded-sm` (compact, functional)
+- Maintains hierarchy through subtle differences
+
+---
+
 ## Next Session
 
-Ready for user testing. No further changes needed unless user provides feedback after testing in browser.
+Implement treemap visualization and metadata strip, then perform end-to-end testing.
