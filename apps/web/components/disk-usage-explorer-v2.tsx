@@ -52,6 +52,7 @@ interface TreeNodeProps {
   state: DiskUsageState;
   onSetReference?: (path: string, size: number) => void;
   isInsideReference: boolean;  // Whether this node is inside the reference directory
+  parentPath: string;  // Parent directory path
 }
 
 // Get size-based severity color (5-level semaphore scale)
@@ -171,6 +172,7 @@ function TreeNode({
   state,
   onSetReference,
   isInsideReference,
+  parentPath,
 }: TreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const { setSelectedPath } = useAppStore();
@@ -228,8 +230,11 @@ function TreeNode({
 
   const isReferenceRow = state.referencePath === path;
 
-  // Bars should only show if we're inside the reference directory
-  const shouldShowBar = isInsideReference || isReferenceRow;
+  // Bar visibility logic:
+  // Show bars ONLY for direct children of the reference directory
+  // This ensures bars at each level sum to 100%
+  const isDirectChildOfReference = parentPath === state.referencePath;
+  const shouldShowBar = isReferenceRow || isDirectChildOfReference;
 
   return (
     <div>
@@ -375,6 +380,7 @@ function TreeNode({
                 state={state}
                 onSetReference={onSetReference}
                 isInsideReference={isReferenceRow || isInsideReference}
+                parentPath={path}
               />
             ))}
           {isExpanded && !isLoading && !hasChildren && (
@@ -501,104 +507,130 @@ export function DiskUsageExplorerV2() {
         </div>
       </div>
 
-      {/* Controls: Sorting + Legend */}
-      <div className="flex items-center justify-between gap-4 text-xs mb-3 pb-3 border-b border-border/30">
-        {/* Sorting controls */}
-        <div className="flex items-center gap-4">
-          <span className="text-muted-foreground">Sort:</span>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              checked={state.sortMode === "name"}
-              onChange={() => setState((prev) => ({ ...prev, sortMode: "name" }))}
-              className="w-3 h-3"
-            />
-            <span>Name</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              checked={state.sortMode === "size"}
-              onChange={() => setState((prev) => ({ ...prev, sortMode: "size" }))}
-              className="w-3 h-3"
-            />
-            <span>Size</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              checked={state.sortMode === "modified"}
-              onChange={() => setState((prev) => ({ ...prev, sortMode: "modified" }))}
-              className="w-3 h-3"
-            />
-            <span>Modified</span>
-          </label>
-        </div>
+      {/* Sorting controls */}
+      <div className="flex items-center gap-4 text-xs mb-3 pb-2 border-b border-border/20">
+        <span className="text-muted-foreground">Sort:</span>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            checked={state.sortMode === "name"}
+            onChange={() => setState((prev) => ({ ...prev, sortMode: "name" }))}
+            className="w-3 h-3"
+          />
+          <span>Name</span>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            checked={state.sortMode === "size"}
+            onChange={() => setState((prev) => ({ ...prev, sortMode: "size" }))}
+            className="w-3 h-3"
+          />
+          <span>Size</span>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            checked={state.sortMode === "modified"}
+            onChange={() => setState((prev) => ({ ...prev, sortMode: "modified" }))}
+            className="w-3 h-3"
+          />
+          <span>Modified</span>
+        </label>
+      </div>
 
-        {/* Legend */}
-        <div className="flex items-center gap-3 text-[10px] text-muted-foreground/70">
-          <div className="flex items-center gap-1.5">
-            <div className="w-8 h-2.5 bg-foreground/25 rounded-sm"
-                 style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.15) 2px, rgba(255,255,255,0.15) 5px)" }} />
-            <span>Folders</span>
+      {/* Legend - Expanded with sections */}
+      <div className="bg-muted/20 border border-border/40 rounded-sm px-3 py-2 mb-3">
+        <div className="grid grid-cols-3 gap-4 text-[10px]">
+          {/* Section 1: Bar types */}
+          <div>
+            <div className="text-foreground/70 font-medium mb-1.5">Percentage Bars</div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <div className="w-6 h-2 bg-foreground/25 rounded-sm"
+                     style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.15) 2px, rgba(255,255,255,0.15) 5px)" }} />
+                <span className="text-muted-foreground/70">Folders</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-6 h-2 bg-foreground/20 rounded-sm" />
+                <span className="text-muted-foreground/70">Files</span>
+              </div>
+            </div>
+            <div className="mt-1.5 text-[9px] text-muted-foreground/60 leading-tight">
+              Bars show % relative to selected reference (default: /project/cil). Visible bars sum to 100%.
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-8 h-2.5 bg-foreground/20 rounded-sm" />
-            <span>Files</span>
+
+          {/* Section 2: Size colors */}
+          <div>
+            <div className="text-foreground/70 font-medium mb-1.5">Size Severity</div>
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-muted-foreground/40">●</span>
+                <span className="text-muted-foreground/70">Negligible (&lt;10MB)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-green-400">●</span>
+                <span className="text-muted-foreground/70">Small (≥10MB)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-yellow-400">●</span>
+                <span className="text-muted-foreground/70">Medium (≥1GB)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-orange-400">●</span>
+                <span className="text-muted-foreground/70">Large (≥10GB)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-red-500">●</span>
+                <span className="text-muted-foreground/70">Very large (≥50GB)</span>
+              </div>
+            </div>
+            <div className="mt-1.5 text-[9px] text-muted-foreground/60 leading-tight">
+              Colors applied to file/folder icons and size text.
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground/40">●</span>
-            <span className="text-[9px]">&lt;10MB</span>
-            <span className="text-green-400">●</span>
-            <span className="text-[9px]">1GB</span>
-            <span className="text-yellow-400">●</span>
-            <span className="text-[9px]">10GB</span>
-            <span className="text-orange-400">●</span>
-            <span className="text-[9px]">50GB</span>
-            <span className="text-red-500">●</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Target className="w-3 h-3" />
-            <span>Set reference</span>
+
+          {/* Section 3: Reference selector */}
+          <div>
+            <div className="text-foreground/70 font-medium mb-1.5">Reference Selection</div>
+            <div className="flex items-center gap-1.5 mb-1">
+              <Target className="w-3 h-3 text-muted-foreground/70" />
+              <span className="text-muted-foreground/70">Click to set reference</span>
+            </div>
+            <div className="text-[9px] text-muted-foreground/60 leading-tight">
+              Select any folder as the comparison baseline. Percentages and bars will recalculate relative to that folder. Selected reference is highlighted in green.
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Data semantics note */}
-      <div className="bg-muted/30 border border-border/50 rounded-sm px-3 py-2 mb-3 text-xs text-muted-foreground">
-        <strong className="text-foreground/80">Data:</strong> Directory sizes show{" "}
-        <strong>recursive totals</strong>. Counts format: (files dirs).
-        Percentages relative to {state.referencePath ? <span className="text-green-500/80">selected reference</span> : "project total"}.
-        Click <Target className="w-3 h-3 inline mx-0.5" /> to set reference directory.
-      </div>
-
-      {/* Tree */}
+      {/* Tree - Show /project/cil as root node */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
-        {rootData && rootData.folders.length > 0 ? (
-          sortEntries(rootData.folders, state.sortMode).map((folder) => (
-            <TreeNode
-              key={folder.path}
-              path={folder.path}
-              name={folder.name}
-              snapshotDate={selectedSnapshot}
-              level={0}
-              isDirectory={folder.is_directory}
-              size={folder.size}
-              sizeFormatted={folder.size_formatted || ""}
-              recursiveSize={folder.recursive_size}
-              recursiveSizeFormatted={folder.recursive_size_formatted}
-              fileCount={folder.file_count}
-              dirCount={folder.dir_count}
-              owner={folder.owner}
-              modifiedTime={folder.modified_time}
-              accessedTime={folder.accessed_time}
-              fileType={folder.file_type}
-              referenceSize={referenceSize}
-              state={state}
-              onSetReference={handleSetReference}
-              isInsideReference={state.referencePath === "/project/cil"}
-            />
-          ))
+        {rootData ? (
+          <TreeNode
+            key="/project/cil"
+            path="/project/cil"
+            name="cil"
+            snapshotDate={selectedSnapshot}
+            level={0}
+            isDirectory={true}
+            size={projectSize}
+            sizeFormatted={`${(projectSize / 1024 ** 4).toFixed(2)} TiB`}
+            recursiveSize={projectSize}
+            recursiveSizeFormatted={`${(projectSize / 1024 ** 4).toFixed(2)} TiB`}
+            fileCount={undefined}
+            dirCount={undefined}
+            owner={undefined}
+            modifiedTime={undefined}
+            accessedTime={undefined}
+            fileType={undefined}
+            referenceSize={referenceSize}
+            state={state}
+            onSetReference={handleSetReference}
+            isInsideReference={true}
+            parentPath="/project"
+          />
         ) : (
           <div className="text-sm text-muted-foreground p-4">Loading...</div>
         )}
