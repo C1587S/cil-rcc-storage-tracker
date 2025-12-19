@@ -15,6 +15,7 @@ High-performance analytics system for interactive filesystem exploration and ana
 - [Database Management](#database-management)
 - [Troubleshooting](#troubleshooting)
 - [Architecture](#architecture)
+- [Recursive Directory Sizes](#recursive-directory-sizes)
 - [Schema Reference](#schema-reference)
 - [Performance](#performance)
 
@@ -1013,6 +1014,82 @@ clickhouse/
 └── data/
     └── clickhouse/                # ClickHouse data directory (created on first run)
 ```
+
+## Recursive Directory Sizes
+
+### Problem and Solution
+
+The `directory_sizes` and `directory_hierarchy` views only show **direct child totals** (immediate files), not recursive subtree totals. This makes disk usage misleading.
+
+**Example:** `/project/cil/gcp` shows ~1 GiB (direct files) but contains hundreds of TB in subdirectories.
+
+**Solution:** New table `directory_recursive_sizes` pre-computes recursive totals at import time.
+
+### Setup
+
+```bash
+# 1. Create table
+docker exec tracker-clickhouse clickhouse-client < schema/03_recursive_directory_sizes.sql
+
+# 2. Compute for existing snapshot
+python scripts/compute_recursive_sizes_v2.py 2025-12-12
+
+# 3. Verify accuracy
+python scripts/compute_recursive_sizes_v2.py 2025-12-12 --verify
+```
+
+### Table Schema
+
+| Column | Type | Description |
+|--------|------|-------------|
+| snapshot_date | Date | Snapshot date |
+| path | String | Directory path |
+| recursive_size_bytes | UInt64 | **Total size of all files in subtree** |
+| recursive_file_count | UInt64 | Total files in subtree |
+| recursive_dir_count | UInt64 | Total subdirectories |
+| direct_size_bytes | UInt64 | Size of immediate child files only |
+| direct_file_count | UInt64 | Count of immediate child files |
+
+### Usage
+
+```sql
+-- Get recursive size of a directory (accurate)
+SELECT formatReadableSize(recursive_size_bytes) AS size
+FROM filesystem.directory_recursive_sizes
+WHERE snapshot_date = '2025-12-12' AND path = '/project/cil/gcp';
+
+-- Find largest subdirectories
+SELECT path, formatReadableSize(recursive_size_bytes) AS size
+FROM filesystem.directory_recursive_sizes
+WHERE snapshot_date = '2025-12-12' AND path LIKE '/project/cil/%'
+ORDER BY recursive_size_bytes DESC LIMIT 20;
+```
+
+### Performance
+
+- **Computation:** ~3-5 min for 40M entries (one-time per snapshot)
+- **Query time:** <10ms (vs ~500ms scanning entries table)
+- **Storage:** ~2% overhead (~300 MB per snapshot)
+
+### Integration with Import Pipeline
+
+Add to end of `import_snapshot.py`:
+
+```python
+# After snapshot import
+from compute_recursive_sizes_v2 import RecursiveSizeComputer
+computer = RecursiveSizeComputer()
+computer.compute_for_snapshot(snapshot_date)
+```
+
+Or run manually after each import:
+
+```bash
+python scripts/import_snapshot.py /path/to/snapshot/2025-12-12
+python scripts/compute_recursive_sizes_v2.py 2025-12-12
+```
+
+---
 
 ## Schema Reference
 
