@@ -1,0 +1,10 @@
+# ClickHouse runtime stuff
+clickhouse/data/
+clickhouse/cil_scans_aggregated/
+clickhouse/.venv/
+
+# IDE
+.vscode/
+
+# Generated stuff
+reports/
