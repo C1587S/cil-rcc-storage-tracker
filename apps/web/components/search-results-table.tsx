@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { DirectoryEntry } from "@/lib/types";
 import { formatDistanceToNow } from "date-fns";
-import { Download } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface SearchResultsTableProps {
@@ -14,6 +14,8 @@ interface SearchResultsTableProps {
 
 interface ColumnWidths {
   filename: number;
+  parent_dir: number;
+  top_level_dir: number;
   path: number;
   size: number;
   owner: number;
@@ -22,13 +24,35 @@ interface ColumnWidths {
 }
 
 const DEFAULT_COLUMN_WIDTHS: ColumnWidths = {
-  filename: 180,
-  path: 320,
+  filename: 150,
+  parent_dir: 120,
+  top_level_dir: 100,
+  path: 280,
   size: 100,
   owner: 120,
   modified: 140,
   accessed: 140,
 };
+
+type SortField = keyof ColumnWidths;
+type SortDirection = "asc" | "desc" | null;
+
+interface EnrichedEntry extends DirectoryEntry {
+  parent_dir: string;
+  top_level_dir: string;
+}
+
+interface AggregationConfig {
+  groupBy: ("parent_dir" | "top_level_dir" | "owner" | "file_type")[];
+  metrics: ("count" | "sum" | "avg")[];
+}
+
+interface AggregationRow {
+  keys: Record<string, string>;
+  count: number;
+  totalSize: number;
+  avgSize: number;
+}
 
 function formatReadableSize(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -50,6 +74,27 @@ function formatTimestamp(timestamp?: number): string {
 function extractFilename(path: string): string {
   const parts = path.split("/");
   return parts[parts.length - 1] || path;
+}
+
+function extractParentDir(path: string): string {
+  const parts = path.split("/").filter(p => p);
+  if (parts.length <= 1) return "-";
+  return parts[parts.length - 2] || "-";
+}
+
+function extractTopLevelDir(path: string): string {
+  // Assumes paths like /project/cil/gcp/... where top-level is "gcp"
+  const parts = path.split("/").filter(p => p);
+  if (parts.length < 3) return "-";
+  return parts[2] || "-"; // Index 2 = third segment after /project/cil/
+}
+
+function enrichEntry(entry: DirectoryEntry): EnrichedEntry {
+  return {
+    ...entry,
+    parent_dir: extractParentDir(entry.path),
+    top_level_dir: extractTopLevelDir(entry.path),
+  };
 }
 
 function generateMarkdownTable(results: DirectoryEntry[]): string {
@@ -140,6 +185,128 @@ export function SearchResultsTable({ results, isLoading, totalCount }: SearchRes
   const [startX, setStartX] = useState(0);
   const [startWidth, setStartWidth] = useState(0);
   const [viewMode, setViewMode] = useState<"table" | "markdown">("table");
+  const [sortField, setSortField] = useState<SortField | null>("size");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [showAggregation, setShowAggregation] = useState(false);
+  const [aggGroupBy, setAggGroupBy] = useState<("parent_dir" | "top_level_dir" | "owner" | "file_type")[]>(["top_level_dir"]);
+
+  // Enrich results with derived columns
+  const enrichedResults = useMemo(() => results.map(enrichEntry), [results]);
+
+  // Client-side sorting
+  const sortedResults = useMemo(() => {
+    if (!sortField || !sortDirection) return enrichedResults;
+
+    return [...enrichedResults].sort((a, b) => {
+      let aVal: any;
+      let bVal: any;
+
+      if (sortField === "filename") {
+        aVal = extractFilename(a.path).toLowerCase();
+        bVal = extractFilename(b.path).toLowerCase();
+      } else if (sortField === "parent_dir") {
+        aVal = a.parent_dir.toLowerCase();
+        bVal = b.parent_dir.toLowerCase();
+      } else if (sortField === "top_level_dir") {
+        aVal = a.top_level_dir.toLowerCase();
+        bVal = b.top_level_dir.toLowerCase();
+      } else if (sortField === "path") {
+        aVal = a.path.toLowerCase();
+        bVal = b.path.toLowerCase();
+      } else if (sortField === "size") {
+        aVal = a.size;
+        bVal = b.size;
+      } else if (sortField === "owner") {
+        aVal = (a.owner || "").toLowerCase();
+        bVal = (b.owner || "").toLowerCase();
+      } else if (sortField === "modified") {
+        aVal = a.modified_time || 0;
+        bVal = b.modified_time || 0;
+      } else if (sortField === "accessed") {
+        aVal = a.accessed_time || 0;
+        bVal = b.accessed_time || 0;
+      }
+
+      if (aVal < bVal) return sortDirection === "asc" ? -1 : 1;
+      if (aVal > bVal) return sortDirection === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [enrichedResults, sortField, sortDirection]);
+
+  // Compute aggregations
+  const aggregations = useMemo(() => {
+    if (!showAggregation || aggGroupBy.length === 0) return [];
+
+    const groups = new Map<string, AggregationRow>();
+
+    enrichedResults.forEach(entry => {
+      const keyParts: string[] = [];
+      const keyObj: Record<string, string> = {};
+
+      aggGroupBy.forEach(field => {
+        if (field === "parent_dir") {
+          keyParts.push(entry.parent_dir);
+          keyObj.parent_dir = entry.parent_dir;
+        } else if (field === "top_level_dir") {
+          keyParts.push(entry.top_level_dir);
+          keyObj.top_level_dir = entry.top_level_dir;
+        } else if (field === "owner") {
+          keyParts.push(entry.owner || "-");
+          keyObj.owner = entry.owner || "-";
+        } else if (field === "file_type") {
+          keyParts.push(entry.file_type || "-");
+          keyObj.file_type = entry.file_type || "-";
+        }
+      });
+
+      const key = keyParts.join("|");
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          keys: keyObj,
+          count: 0,
+          totalSize: 0,
+          avgSize: 0,
+        });
+      }
+
+      const group = groups.get(key)!;
+      group.count += 1;
+      group.totalSize += entry.size;
+    });
+
+    // Calculate averages
+    const result = Array.from(groups.values());
+    result.forEach(row => {
+      row.avgSize = row.count > 0 ? row.totalSize / row.count : 0;
+    });
+
+    // Sort by total size desc
+    return result.sort((a, b) => b.totalSize - a.totalSize);
+  }, [enrichedResults, showAggregation, aggGroupBy]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      if (sortDirection === "desc") {
+        setSortDirection("asc");
+      } else if (sortDirection === "asc") {
+        setSortField(null);
+        setSortDirection("desc");
+      }
+    } else {
+      setSortField(field);
+      setSortDirection("desc");
+    }
+  };
+
+  const getSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return <ChevronsUpDown className="h-3 w-3 opacity-40" />;
+    }
+    return sortDirection === "desc"
+      ? <ChevronDown className="h-3 w-3" />
+      : <ChevronUp className="h-3 w-3" />;
+  };
 
   useEffect(() => {
     if (!resizingColumn) return;
@@ -202,68 +369,110 @@ export function SearchResultsTable({ results, isLoading, totalCount }: SearchRes
   return (
     <div className="border border-border/30 rounded-sm overflow-hidden">
       {/* Header with view mode toggle and download buttons */}
-      <div className="bg-muted/10 border-b border-border/30 flex items-center justify-between px-3 py-2">
-        <div className="flex items-center gap-3">
-          <div className="text-[10px] font-mono text-muted-foreground">
-            {results.length} of {totalCount.toLocaleString()} results
-            {totalCount > results.length && " (server limit)"}
+      <div className="bg-muted/10 border-b border-border/30 px-3 py-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="text-[10px] font-mono text-muted-foreground">
+              {results.length} of {totalCount.toLocaleString()} results
+              {totalCount > results.length && " (server limit)"}
+            </div>
+
+            {/* View Mode Toggle */}
+            <div className="flex gap-1 border border-border/20 rounded-sm overflow-hidden">
+              <button
+                onClick={() => setViewMode("table")}
+                className={`px-2 py-0.5 text-[10px] font-mono transition-colors ${
+                  viewMode === "table"
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-muted/20"
+                }`}
+              >
+                Table
+              </button>
+              <button
+                onClick={() => setViewMode("markdown")}
+                className={`px-2 py-0.5 text-[10px] font-mono transition-colors ${
+                  viewMode === "markdown"
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-muted/20"
+                }`}
+              >
+                Markdown
+              </button>
+            </div>
+
+            {/* Aggregation Toggle */}
+            {viewMode === "table" && (
+              <button
+                onClick={() => setShowAggregation(!showAggregation)}
+                className={`px-2 py-0.5 text-[10px] font-mono border border-border/20 rounded-sm transition-colors ${
+                  showAggregation
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-muted/20"
+                }`}
+              >
+                Summary
+              </button>
+            )}
           </div>
 
-          {/* View Mode Toggle */}
-          <div className="flex gap-1 border border-border/20 rounded-sm overflow-hidden">
-            <button
-              onClick={() => setViewMode("table")}
-              className={`px-2 py-0.5 text-[10px] font-mono transition-colors ${
-                viewMode === "table"
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:bg-muted/20"
-              }`}
-            >
-              Table
-            </button>
-            <button
-              onClick={() => setViewMode("markdown")}
-              className={`px-2 py-0.5 text-[10px] font-mono transition-colors ${
-                viewMode === "markdown"
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:bg-muted/20"
-              }`}
-            >
-              Markdown
-            </button>
-          </div>
-        </div>
-
-        <div className="flex gap-2">
-          {viewMode === "markdown" && (
+          <div className="flex gap-2">
+            {viewMode === "markdown" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCopyMarkdown}
+                className="h-6 px-2 text-[10px] font-mono"
+              >
+                Copy
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleCopyMarkdown}
+              onClick={() => downloadAsCSV(results)}
               className="h-6 px-2 text-[10px] font-mono"
             >
-              Copy
+              <Download className="h-3 w-3 mr-1" />
+              CSV
             </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => downloadAsCSV(results)}
-            className="h-6 px-2 text-[10px] font-mono"
-          >
-            <Download className="h-3 w-3 mr-1" />
-            CSV
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => downloadAsTXT(results)}
-            className="h-6 px-2 text-[10px] font-mono"
-          >
-            <Download className="h-3 w-3 mr-1" />
-            TXT
-          </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => downloadAsTXT(results)}
+              className="h-6 px-2 text-[10px] font-mono"
+            >
+              <Download className="h-3 w-3 mr-1" />
+              TXT
+            </Button>
+          </div>
         </div>
+
+        {/* Aggregation Controls */}
+        {showAggregation && viewMode === "table" && (
+          <div className="mt-2 pt-2 border-t border-border/20 flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground font-mono">Group by:</span>
+            <div className="flex gap-2">
+              {(["top_level_dir", "parent_dir", "owner", "file_type"] as const).map(field => (
+                <label key={field} className="flex items-center gap-1 text-[10px]">
+                  <input
+                    type="checkbox"
+                    checked={aggGroupBy.includes(field)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setAggGroupBy([...aggGroupBy, field]);
+                      } else {
+                        setAggGroupBy(aggGroupBy.filter(f => f !== field));
+                      }
+                    }}
+                    className="rounded border-border"
+                  />
+                  <span className="font-mono text-muted-foreground">{field.replace("_", " ")}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Markdown View */}
@@ -278,78 +487,142 @@ export function SearchResultsTable({ results, isLoading, totalCount }: SearchRes
       {/* Table container with horizontal scroll */}
       {viewMode === "table" && (
       <div className="overflow-x-auto">
-        {/* Table header - fixed widths, resizable */}
+        {/* Table header - fixed widths, resizable, sortable */}
         <div className="bg-muted/10 border-b border-border/30 select-none">
           <div className="flex items-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
             {/* Filename */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20"
+              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
               style={{ width: columnWidths.filename }}
+              onClick={() => handleSort("filename")}
             >
-              Filename
+              <div className="flex items-center gap-1">
+                <span>Filename</span>
+                {getSortIcon("filename")}
+              </div>
               <div
-                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50"
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
                 onMouseDown={(e) => handleResizeStart("filename", e)}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+
+            {/* Parent Dir */}
+            <div
+              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
+              style={{ width: columnWidths.parent_dir }}
+              onClick={() => handleSort("parent_dir")}
+            >
+              <div className="flex items-center gap-1">
+                <span>Parent</span>
+                {getSortIcon("parent_dir")}
+              </div>
+              <div
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
+                onMouseDown={(e) => handleResizeStart("parent_dir", e)}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+
+            {/* Top Level Dir */}
+            <div
+              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
+              style={{ width: columnWidths.top_level_dir }}
+              onClick={() => handleSort("top_level_dir")}
+            >
+              <div className="flex items-center gap-1">
+                <span>Top Dir</span>
+                {getSortIcon("top_level_dir")}
+              </div>
+              <div
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
+                onMouseDown={(e) => handleResizeStart("top_level_dir", e)}
+                onClick={(e) => e.stopPropagation()}
               />
             </div>
 
             {/* Path */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20"
+              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
               style={{ width: columnWidths.path }}
+              onClick={() => handleSort("path")}
             >
-              Full Path
+              <div className="flex items-center gap-1">
+                <span>Full Path</span>
+                {getSortIcon("path")}
+              </div>
               <div
-                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50"
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
                 onMouseDown={(e) => handleResizeStart("path", e)}
+                onClick={(e) => e.stopPropagation()}
               />
             </div>
 
             {/* Size */}
             <div
-              className="px-3 py-2 font-mono text-right flex-shrink-0 relative border-r border-border/20"
+              className="px-3 py-2 font-mono text-right flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
               style={{ width: columnWidths.size }}
+              onClick={() => handleSort("size")}
             >
-              Size
+              <div className="flex items-center justify-end gap-1">
+                <span>Size</span>
+                {getSortIcon("size")}
+              </div>
               <div
-                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50"
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
                 onMouseDown={(e) => handleResizeStart("size", e)}
+                onClick={(e) => e.stopPropagation()}
               />
             </div>
 
             {/* Owner */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20"
+              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
               style={{ width: columnWidths.owner }}
+              onClick={() => handleSort("owner")}
             >
-              Owner
+              <div className="flex items-center gap-1">
+                <span>Owner</span>
+                {getSortIcon("owner")}
+              </div>
               <div
-                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50"
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
                 onMouseDown={(e) => handleResizeStart("owner", e)}
+                onClick={(e) => e.stopPropagation()}
               />
             </div>
 
             {/* Modified */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20"
+              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
               style={{ width: columnWidths.modified }}
+              onClick={() => handleSort("modified")}
             >
-              Modified
+              <div className="flex items-center gap-1">
+                <span>Modified</span>
+                {getSortIcon("modified")}
+              </div>
               <div
-                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50"
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
                 onMouseDown={(e) => handleResizeStart("modified", e)}
+                onClick={(e) => e.stopPropagation()}
               />
             </div>
 
             {/* Accessed */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative"
+              className="px-3 py-2 font-mono flex-shrink-0 relative cursor-pointer hover:bg-muted/20 transition-colors"
               style={{ width: columnWidths.accessed }}
+              onClick={() => handleSort("accessed")}
             >
-              Accessed
+              <div className="flex items-center gap-1">
+                <span>Accessed</span>
+                {getSortIcon("accessed")}
+              </div>
               <div
-                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50"
+                className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 active:bg-primary/50 z-10"
                 onMouseDown={(e) => handleResizeStart("accessed", e)}
+                onClick={(e) => e.stopPropagation()}
               />
             </div>
           </div>
@@ -357,7 +630,7 @@ export function SearchResultsTable({ results, isLoading, totalCount }: SearchRes
 
         {/* Results with vertical scrolling - fixed column widths */}
         <div className="divide-y divide-border/30 bg-background max-h-[500px] overflow-y-auto">
-          {results.map((entry, idx) => {
+          {sortedResults.map((entry, idx) => {
             const filename = extractFilename(entry.path);
             return (
               <div
@@ -371,6 +644,24 @@ export function SearchResultsTable({ results, isLoading, totalCount }: SearchRes
                   title={filename}
                 >
                   {filename}
+                </div>
+
+                {/* Parent Dir */}
+                <div
+                  className="px-3 py-2 font-mono text-muted-foreground flex-shrink-0 truncate border-r border-border/10"
+                  style={{ width: columnWidths.parent_dir }}
+                  title={entry.parent_dir}
+                >
+                  {entry.parent_dir}
+                </div>
+
+                {/* Top Level Dir */}
+                <div
+                  className="px-3 py-2 font-mono text-muted-foreground flex-shrink-0 truncate border-r border-border/10"
+                  style={{ width: columnWidths.top_level_dir }}
+                  title={entry.top_level_dir}
+                >
+                  {entry.top_level_dir}
                 </div>
 
                 {/* Path */}
@@ -419,6 +710,47 @@ export function SearchResultsTable({ results, isLoading, totalCount }: SearchRes
           })}
         </div>
       </div>
+      )}
+
+      {/* Aggregation Panel */}
+      {viewMode === "table" && aggregations.length > 0 && (
+        <div className="border-t border-border/30 mt-4">
+          <div className="bg-muted/10 px-3 py-2 border-b border-border/30">
+            <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
+              Summary (Grouped by {aggGroupBy.join(", ")})
+            </div>
+          </div>
+          <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+            <table className="w-full text-xs font-mono">
+              <thead className="bg-muted/10 border-b border-border/30 sticky top-0">
+                <tr>
+                  {aggGroupBy.map(field => (
+                    <th key={field} className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      {field.replace("_", " ")}
+                    </th>
+                  ))}
+                  <th className="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">Count</th>
+                  <th className="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">Total Size</th>
+                  <th className="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">Avg Size</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/30">
+                {aggregations.map((row, idx) => (
+                  <tr key={idx} className="hover:bg-muted/5 transition-colors">
+                    {aggGroupBy.map(field => (
+                      <td key={field} className="px-3 py-2 text-muted-foreground">
+                        {row.keys[field] || "-"}
+                      </td>
+                    ))}
+                    <td className="px-3 py-2 text-right text-muted-foreground">{row.count.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right text-muted-foreground">{formatReadableSize(row.totalSize)}</td>
+                    <td className="px-3 py-2 text-right text-muted-foreground">{formatReadableSize(row.avgSize)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );

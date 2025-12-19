@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -74,22 +74,6 @@ const EXAMPLE_PRESETS: ExamplePreset[] = [
       limit: 100,
     },
   },
-  {
-    id: "model-checkpoints",
-    category: "code",
-    icon: <HardDrive className="h-4 w-4 text-purple-400" />,
-    title: "Model checkpoint files",
-    description: "Find .ckpt or .pth files (PyTorch/TensorFlow checkpoints)",
-    filters: {
-      searchText: ".ckpt",
-      searchMode: "suffix",
-      includeFiles: true,
-      includeDirs: false,
-      scopeMode: "custom",
-      customPath: "/project/cil",
-      limit: 100,
-    },
-  },
 
   // Data Workflows
   {
@@ -105,22 +89,6 @@ const EXAMPLE_PRESETS: ExamplePreset[] = [
       includeDirs: false,
       scopeMode: "custom",
       customPath: "/project/cil",
-      limit: 100,
-    },
-  },
-  {
-    id: "netcdf-climate",
-    category: "data",
-    icon: <HardDrive className="h-4 w-4 text-cyan-400" />,
-    title: "NetCDF climate data (.nc4)",
-    description: "Scientific data files under /project/cil/gcp/climate",
-    filters: {
-      searchText: ".nc4",
-      searchMode: "suffix",
-      includeFiles: true,
-      includeDirs: false,
-      scopeMode: "custom",
-      customPath: "/project/cil/gcp/climate",
       limit: 100,
     },
   },
@@ -181,7 +149,7 @@ const EXAMPLE_PRESETS: ExamplePreset[] = [
     category: "directories",
     icon: <FolderTree className="h-4 w-4 text-pink-400" />,
     title: "Output directories",
-    description: "Find all 'outputs' or 'output' folders (exact match)",
+    description: "Find all 'outputs' or 'output' folders",
     filters: {
       searchText: "output",
       searchMode: "contains",
@@ -240,47 +208,171 @@ ORDER BY size DESC
 LIMIT ${filters.limit};`;
 }
 
+// SQL Templates for Guided Mode
+interface SQLTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: "files" | "directories" | "storage" | "hygiene";
+  params: { name: string; label: string; type: "text" | "number"; default: any; placeholder?: string }[];
+  generateSQL: (params: Record<string, any>, snapshotDate: string) => string;
+}
+
+const SQL_TEMPLATES: SQLTemplate[] = [
+  {
+    id: "largest-files-in-dir",
+    name: "Top N largest files in directory",
+    description: "Find the largest files under a specific path",
+    category: "files",
+    params: [
+      { name: "path", label: "Directory Path", type: "text", default: "/project/cil/gcp", placeholder: "/project/cil/gcp" },
+      { name: "limit", label: "Limit", type: "number", default: 10 },
+    ],
+    generateSQL: (params, snapshotDate) => `SELECT
+  path,
+  name,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(modified_time) AS modified
+FROM filesystem.entries
+WHERE snapshot_date = '${snapshotDate}'
+  AND path LIKE '${params.path}/%'
+  AND is_directory = 0
+ORDER BY size DESC
+LIMIT ${params.limit};`,
+  },
+  {
+    id: "files-not-accessed",
+    name: "Files not accessed in N days",
+    description: "Find stale files that haven't been accessed recently",
+    category: "storage",
+    params: [
+      { name: "path", label: "Directory Path", type: "text", default: "/project/cil", placeholder: "/project/cil" },
+      { name: "days", label: "Days", type: "number", default: 180 },
+      { name: "limit", label: "Limit", type: "number", default: 100 },
+    ],
+    generateSQL: (params, snapshotDate) => `SELECT
+  path,
+  name,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(accessed_time) AS last_accessed,
+  dateDiff('day', toDateTime(accessed_time), now()) AS days_since_access
+FROM filesystem.entries
+WHERE snapshot_date = '${snapshotDate}'
+  AND path LIKE '${params.path}/%'
+  AND is_directory = 0
+  AND accessed_time < toUnixTimestamp(now() - INTERVAL ${params.days} DAY)
+ORDER BY size DESC
+LIMIT ${params.limit};`,
+  },
+  {
+    id: "dirs-with-most-empty-files",
+    name: "Directories with most empty files",
+    description: "Find directories containing many empty (0-byte) files",
+    category: "hygiene",
+    params: [
+      { name: "path", label: "Scope Path", type: "text", default: "/project/cil", placeholder: "/project/cil" },
+      { name: "limit", label: "Limit", type: "number", default: 20 },
+    ],
+    generateSQL: (params, snapshotDate) => `SELECT
+  parent_path,
+  count() AS empty_file_count,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = '${snapshotDate}'
+  AND path LIKE '${params.path}/%'
+  AND is_directory = 0
+  AND size = 0
+GROUP BY parent_path
+ORDER BY empty_file_count DESC
+LIMIT ${params.limit};`,
+  },
+  {
+    id: "total-empty-files",
+    name: "Total empty files audit",
+    description: "Count all empty (0-byte) files across the project",
+    category: "hygiene",
+    params: [
+      { name: "path", label: "Scope Path", type: "text", default: "/project/cil", placeholder: "/project/cil" },
+    ],
+    generateSQL: (params, snapshotDate) => `SELECT
+  count() AS total_empty_files,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = '${snapshotDate}'
+  AND path LIKE '${params.path}/%'
+  AND is_directory = 0
+  AND size = 0;`,
+  },
+  {
+    id: "size-by-top-level-dir",
+    name: "File count and size by top-level directory",
+    description: "Group files by top-level directory (e.g., gcp, battuta-shares)",
+    category: "directories",
+    params: [
+      { name: "limit", label: "Limit", type: "number", default: 10 },
+    ],
+    generateSQL: (params, snapshotDate) => `SELECT
+  splitByChar('/', path)[3] AS top_level_dir,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = '${snapshotDate}'
+  AND is_directory = 0
+  AND length(splitByChar('/', path)) >= 4
+GROUP BY top_level_dir
+ORDER BY sum(size) DESC
+LIMIT ${params.limit};`,
+  },
+];
+
 // Guided SQL Mode Component
 function GuidedSQLMode({
   selectedSnapshot,
-  filters
 }: {
   selectedSnapshot: string | null;
-  filters: FilterState;
 }) {
+  const [selectedTemplate, setSelectedTemplate] = useState<SQLTemplate | null>(null);
+  const [templateParams, setTemplateParams] = useState<Record<string, any>>({});
   const [generatedSQL, setGeneratedSQL] = useState("");
-  const [limit, setLimit] = useState(100);
-  const [orderBy, setOrderBy] = useState("size DESC");
   const [hasExecuted, setHasExecuted] = useState(false);
 
-  // Generate SQL when filters change
-  useState(() => {
-    if (selectedSnapshot && filters.searchText) {
-      const sql = generateSQLFromFilters(filters, selectedSnapshot);
+  // Update params when template changes
+  useEffect(() => {
+    if (selectedTemplate) {
+      const defaultParams: Record<string, any> = {};
+      selectedTemplate.params.forEach(param => {
+        defaultParams[param.name] = param.default;
+      });
+      setTemplateParams(defaultParams);
+
+      if (selectedSnapshot) {
+        const sql = selectedTemplate.generateSQL(defaultParams, selectedSnapshot);
+        setGeneratedSQL(sql);
+      }
+    }
+  }, [selectedTemplate, selectedSnapshot]);
+
+  // Regenerate SQL when params change
+  const handleParamChange = (paramName: string, value: any) => {
+    const updated = { ...templateParams, [paramName]: value };
+    setTemplateParams(updated);
+
+    if (selectedTemplate && selectedSnapshot) {
+      const sql = selectedTemplate.generateSQL(updated, selectedSnapshot);
       setGeneratedSQL(sql);
     }
-  });
-
-  // Update SQL when filters or snapshot changes
-  if (selectedSnapshot && filters.searchText && !generatedSQL) {
-    const sql = generateSQLFromFilters(filters, selectedSnapshot);
-    setGeneratedSQL(sql);
-  }
+  };
 
   const { data: queryResult, isLoading, error } = useQuery({
-    queryKey: ["guided-sql", selectedSnapshot, generatedSQL, limit, orderBy, hasExecuted],
+    queryKey: ["guided-sql", selectedSnapshot, generatedSQL, hasExecuted],
     queryFn: async () => {
       if (!selectedSnapshot) throw new Error("No snapshot selected");
-
-      // Rebuild SQL with current limit and order
-      let modifiedSQL = generatedSQL
-        .replace(/LIMIT \d+;$/, `LIMIT ${limit};`)
-        .replace(/ORDER BY [^\n]+/, `ORDER BY ${orderBy}`);
-
       return executeQuery({
         snapshot_date: selectedSnapshot,
-        sql: modifiedSQL,
-        limit,
+        sql: generatedSQL,
+        limit: 5000,
       });
     },
     enabled: hasExecuted && !!selectedSnapshot && !!generatedSQL,
@@ -291,84 +383,119 @@ function GuidedSQLMode({
     navigator.clipboard.writeText(generatedSQL);
   };
 
+  const templatesByCategory = {
+    files: SQL_TEMPLATES.filter(t => t.category === "files"),
+    directories: SQL_TEMPLATES.filter(t => t.category === "directories"),
+    storage: SQL_TEMPLATES.filter(t => t.category === "storage"),
+    hygiene: SQL_TEMPLATES.filter(t => t.category === "hygiene"),
+  };
+
   return (
     <div className="space-y-4">
       <div className="text-xs text-muted-foreground mb-2">
-        SQL generated from Filter Builder. Adjust LIMIT and ORDER BY below.
+        Select a query template, adjust parameters, and execute. snapshot_date is auto-injected.
       </div>
 
-      {/* SQL Display */}
-      <div className="border border-border/30 rounded-sm bg-muted/5">
-        <div className="bg-muted/10 border-b border-border/30 px-3 py-2 flex items-center justify-between">
+      {/* Template Selector */}
+      <div className="border border-border/30 rounded-sm">
+        <div className="bg-muted/10 border-b border-border/30 px-3 py-2">
           <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
-            Generated SQL
+            Query Templates
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCopySQL}
-            className="h-6 px-2 text-[10px] font-mono"
-          >
-            Copy SQL
-          </Button>
         </div>
-        <pre className="p-3 text-[11px] font-mono text-foreground overflow-x-auto max-h-[300px] overflow-y-auto">
-          {generatedSQL || "Configure filters in Filter Builder mode to generate SQL"}
-        </pre>
+        <div className="p-3 space-y-3">
+          {Object.entries(templatesByCategory).map(([category, templates]) => (
+            <div key={category}>
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                {category}
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {templates.map(template => (
+                  <button
+                    key={template.id}
+                    onClick={() => {
+                      setSelectedTemplate(template);
+                      setHasExecuted(false);
+                    }}
+                    className={`text-left p-2.5 border rounded-sm transition-colors ${
+                      selectedTemplate?.id === template.id
+                        ? "bg-primary/10 border-primary/30"
+                        : "border-border/20 hover:bg-muted/10"
+                    }`}
+                  >
+                    <div className="text-xs font-medium text-foreground">{template.name}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{template.description}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Adjustable Parameters */}
-      {generatedSQL && (
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-              Order By
-            </label>
-            <select
-              value={orderBy}
-              onChange={(e) => setOrderBy(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs bg-background border border-border rounded-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
-            >
-              <option value="size DESC">Size (largest first)</option>
-              <option value="size ASC">Size (smallest first)</option>
-              <option value="name ASC">Name (A-Z)</option>
-              <option value="name DESC">Name (Z-A)</option>
-              <option value="modified_time DESC">Modified (newest first)</option>
-              <option value="modified_time ASC">Modified (oldest first)</option>
-            </select>
+      {/* Template Parameters */}
+      {selectedTemplate && selectedTemplate.params.length > 0 && (
+        <div className="border border-border/30 rounded-sm">
+          <div className="bg-muted/10 border-b border-border/30 px-3 py-2">
+            <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
+              Parameters
+            </div>
           </div>
-
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-              Limit
-            </label>
-            <select
-              value={limit}
-              onChange={(e) => setLimit(parseInt(e.target.value))}
-              className="w-full px-3 py-1.5 text-xs bg-background border border-border rounded-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
-            >
-              <option value={50}>50 results</option>
-              <option value={100}>100 results</option>
-              <option value={500}>500 results</option>
-              <option value={1000}>1000 results</option>
-              <option value={5000}>5000 results (max)</option>
-            </select>
+          <div className="p-3 grid grid-cols-2 gap-3">
+            {selectedTemplate.params.map(param => (
+              <div key={param.name}>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                  {param.label}
+                </label>
+                <input
+                  type={param.type}
+                  value={templateParams[param.name] ?? param.default}
+                  onChange={(e) => handleParamChange(param.name, param.type === "number" ? parseInt(e.target.value) : e.target.value)}
+                  placeholder={param.placeholder}
+                  className="w-full px-3 py-1.5 text-xs bg-background border border-border rounded-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                />
+              </div>
+            ))}
           </div>
         </div>
       )}
 
+      {/* SQL Display */}
+      {generatedSQL && (
+        <div className="border border-border/30 rounded-sm bg-muted/5">
+          <div className="bg-muted/10 border-b border-border/30 px-3 py-2 flex items-center justify-between">
+            <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
+              Generated SQL
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopySQL}
+              className="h-6 px-2 text-[10px] font-mono"
+            >
+              Copy SQL
+            </Button>
+          </div>
+          <pre className="p-3 text-[11px] font-mono text-foreground overflow-x-auto max-h-[300px] overflow-y-auto">
+            {generatedSQL}
+          </pre>
+        </div>
+      )}
+
       {/* Execute Button */}
-      <div className="flex justify-end">
-        <Button
-          size="sm"
-          onClick={() => setHasExecuted(true)}
-          disabled={!selectedSnapshot || !generatedSQL}
-          className="text-xs"
-        >
-          <Database className="h-3.5 w-3.5 mr-1.5" />
-          Execute SQL
-        </Button>
-      </div>
+      {generatedSQL && (
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            onClick={() => setHasExecuted(true)}
+            disabled={!selectedSnapshot || !generatedSQL}
+            className="text-xs"
+          >
+            <Database className="h-3.5 w-3.5 mr-1.5" />
+            Execute Query
+          </Button>
+        </div>
+      )}
 
       {/* Error Display */}
       {error && (
@@ -1042,7 +1169,6 @@ export function SearchConsole() {
           {mode === "guided" && (
             <GuidedSQLMode
               selectedSnapshot={selectedSnapshot}
-              filters={filters}
             />
           )}
 
