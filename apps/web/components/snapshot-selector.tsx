@@ -59,8 +59,7 @@ export function SnapshotSelector() {
           <option value="">Select a snapshot...</option>
           {snapshots.map((snapshot) => (
             <option key={snapshot.snapshot_date} value={snapshot.snapshot_date}>
-              {snapshot.snapshot_date} ({snapshot.total_entries.toLocaleString()}{" "}
-              entries)
+              {snapshot.snapshot_date}
             </option>
           ))}
         </Select>
