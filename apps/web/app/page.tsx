@@ -1,7 +1,7 @@
 "use client";
 
 import { SnapshotSelector } from "@/components/snapshot-selector";
-import { FolderExplorer } from "@/components/folder-explorer";
+import { DiskUsageExplorer } from "@/components/disk-usage-explorer";
 
 export default function Home() {
   return (
@@ -16,9 +16,7 @@ export default function Home() {
           <SnapshotSelector />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <FolderExplorer />
-        </div>
+        <DiskUsageExplorer />
       </div>
     </main>
   );

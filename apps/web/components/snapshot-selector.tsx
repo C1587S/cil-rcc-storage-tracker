@@ -14,14 +14,8 @@ export function SnapshotSelector() {
     queryFn: getSnapshots,
   });
 
-  // Debug logging
-  console.log("SnapshotSelector - data:", data);
-  console.log("SnapshotSelector - isLoading:", isLoading);
-  console.log("SnapshotSelector - error:", error);
-
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value;
-    console.log("Snapshot selected:", value);
     setSelectedSnapshot(value || null);
   };
 
@@ -53,10 +47,7 @@ export function SnapshotSelector() {
     );
   }
 
-  // data is now directly an array of Snapshot objects
   const snapshots = data || [];
-
-  console.log("Snapshots to render:", snapshots);
 
   return (
     <Card>

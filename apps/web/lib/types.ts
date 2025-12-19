@@ -18,8 +18,8 @@ export interface DirectoryEntry {
   size_formatted?: string;
   owner?: string;
   file_type?: string;
-  modified_time?: string;
-  accessed_time?: string;
+  modified_time?: number;
+  accessed_time?: number;
   file_count?: number;
 }
 
