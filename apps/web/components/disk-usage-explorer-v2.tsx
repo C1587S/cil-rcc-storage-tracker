@@ -231,10 +231,12 @@ function TreeNode({
   const isReferenceRow = state.referencePath === path;
 
   // Bar visibility logic:
-  // Show bars ONLY for direct children of the reference directory
-  // This ensures bars at each level sum to 100%
+  // - Reference directory itself: NO bar (it's the 100% baseline)
+  // - Expanded folders: NO bar (their % is split among visible children)
+  // - Direct children of reference OR visible items inside reference: show bar
+  // - All visible bars must sum to 100%
   const isDirectChildOfReference = parentPath === state.referencePath;
-  const shouldShowBar = isReferenceRow || isDirectChildOfReference;
+  const shouldShowBar = !isReferenceRow && !isExpanded && isDirectChildOfReference;
 
   return (
     <div>
@@ -275,8 +277,15 @@ function TreeNode({
         <div className="flex items-baseline gap-2 min-w-[200px] max-w-[300px]">
           <span className="text-xs font-medium truncate">{name}</span>
           {isDirectory && (fileCount !== undefined || dirCount !== undefined) && (
-            <span className="text-[10px] text-muted-foreground/50 font-mono flex-shrink-0 whitespace-nowrap">
-              ({fileCount || 0}f {dirCount || 0}d)
+            <span className="text-[10px] text-muted-foreground/50 font-mono flex-shrink-0 whitespace-nowrap flex items-center gap-1">
+              <span className="flex items-center gap-0.5">
+                <File className="w-2.5 h-2.5" />
+                {fileCount || 0}
+              </span>
+              <span className="flex items-center gap-0.5">
+                <Folder className="w-2.5 h-2.5" />
+                {dirCount || 0}
+              </span>
             </span>
           )}
         </div>
@@ -543,9 +552,9 @@ export function DiskUsageExplorerV2() {
       <div className="bg-muted/20 border border-border/40 rounded-sm px-3 py-2 mb-3">
         <div className="grid grid-cols-3 gap-4 text-[10px]">
           {/* Section 1: Bar types */}
-          <div>
+          <div className="flex flex-col">
             <div className="text-foreground/70 font-medium mb-1.5">Percentage Bars</div>
-            <div className="space-y-1">
+            <div className="space-y-1 mb-auto">
               <div className="flex items-center gap-1.5">
                 <div className="w-6 h-2 bg-foreground/25 rounded-sm"
                      style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.15) 2px, rgba(255,255,255,0.15) 5px)" }} />
@@ -556,15 +565,15 @@ export function DiskUsageExplorerV2() {
                 <span className="text-muted-foreground/70">Files</span>
               </div>
             </div>
-            <div className="mt-1.5 text-[9px] text-muted-foreground/60 leading-tight">
-              Bars show % relative to selected reference (default: /project/cil). Visible bars sum to 100%.
+            <div className="mt-2 text-[9px] text-muted-foreground/60 leading-tight">
+              Bars show % relative to reference. Visible bars always sum to 100%.
             </div>
           </div>
 
           {/* Section 2: Size colors */}
-          <div>
+          <div className="flex flex-col">
             <div className="text-foreground/70 font-medium mb-1.5">Size Severity</div>
-            <div className="space-y-0.5">
+            <div className="space-y-0.5 mb-auto">
               <div className="flex items-center gap-1.5">
                 <span className="text-muted-foreground/40">●</span>
                 <span className="text-muted-foreground/70">Negligible (&lt;10MB)</span>
@@ -586,20 +595,20 @@ export function DiskUsageExplorerV2() {
                 <span className="text-muted-foreground/70">Very large (≥50GB)</span>
               </div>
             </div>
-            <div className="mt-1.5 text-[9px] text-muted-foreground/60 leading-tight">
-              Colors applied to file/folder icons and size text.
+            <div className="mt-2 text-[9px] text-muted-foreground/60 leading-tight">
+              Applied to file/folder icons and size text.
             </div>
           </div>
 
           {/* Section 3: Reference selector */}
-          <div>
+          <div className="flex flex-col">
             <div className="text-foreground/70 font-medium mb-1.5">Reference Selection</div>
-            <div className="flex items-center gap-1.5 mb-1">
+            <div className="flex items-center gap-1.5 mb-auto">
               <Target className="w-3 h-3 text-muted-foreground/70" />
               <span className="text-muted-foreground/70">Click to set reference</span>
             </div>
-            <div className="text-[9px] text-muted-foreground/60 leading-tight">
-              Select any folder as the comparison baseline. Percentages and bars will recalculate relative to that folder. Selected reference is highlighted in green.
+            <div className="mt-2 text-[9px] text-muted-foreground/60 leading-tight">
+              Select any folder as baseline. Selected reference highlighted in green.
             </div>
           </div>
         </div>
