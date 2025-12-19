@@ -214,8 +214,19 @@ function TreeNode({
 
   const hasChildren = allEntries.length > 0;
 
-  // Use the global reference size for all percentage calculations
-  const childReferenceSize = referenceSize;
+  // Calculate percentage using recursive size (true directory weight)
+  const displaySize = recursiveSize || size;  // Use recursive size for dirs, regular size for files
+  const percent = referenceSize > 0 ? (displaySize / referenceSize) * 100 : 0;
+
+  const isReferenceRow = state.referencePath === path;
+
+  // Percentage propagation logic:
+  // - If this node is the reference: children use this node's size as reference
+  // - If this node is expanded (and had a bar): children use this node's size as reference
+  // - Otherwise: children inherit the same reference size
+  const childReferenceSize = isReferenceRow || (isExpanded && isInsideReference && !isReferenceRow)
+    ? displaySize  // Children are relative to this expanded folder
+    : referenceSize;  // Children inherit the same reference
 
   const handleToggle = () => {
     if (isDirectory) {
@@ -224,19 +235,12 @@ function TreeNode({
     }
   };
 
-  // Calculate percentage using recursive size (true directory weight)
-  const displaySize = recursiveSize || size;  // Use recursive size for dirs, regular size for files
-  const percent = referenceSize > 0 ? (displaySize / referenceSize) * 100 : 0;
-
-  const isReferenceRow = state.referencePath === path;
-
   // Bar visibility logic:
   // - Reference directory itself: NO bar (it's the 100% baseline)
   // - Expanded folders: NO bar (their % is split among visible children)
-  // - Direct children of reference OR visible items inside reference: show bar
-  // - All visible bars must sum to 100%
-  const isDirectChildOfReference = parentPath === state.referencePath;
-  const shouldShowBar = !isReferenceRow && !isExpanded && isDirectChildOfReference;
+  // - All OTHER visible items inside reference tree: show bars
+  // - All visible bars must sum to 100% relative to reference
+  const shouldShowBar = !isReferenceRow && !isExpanded && isInsideReference;
 
   return (
     <div>
