@@ -2,6 +2,7 @@
 
 import { SnapshotSelector } from "@/components/snapshot-selector";
 import { DiskUsageExplorerV2 } from "@/components/disk-usage-explorer-v2";
+import { SearchConsole } from "@/components/search-console";
 
 export default function Home() {
   return (
@@ -16,7 +17,10 @@ export default function Home() {
           <SnapshotSelector />
         </div>
 
-        <DiskUsageExplorerV2 />
+        <div className="space-y-6">
+          <DiskUsageExplorerV2 />
+          <SearchConsole />
+        </div>
       </div>
     </main>
   );
