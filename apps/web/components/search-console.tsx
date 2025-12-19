@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -239,7 +239,7 @@ WHERE snapshot_date = '${snapshotDate}'
   AND path LIKE '${params.path}/%'
   AND is_directory = 0
 ORDER BY size DESC
-LIMIT ${params.limit};`,
+LIMIT ${params.limit}`,
   },
   {
     id: "files-not-accessed",
@@ -264,7 +264,7 @@ WHERE snapshot_date = '${snapshotDate}'
   AND is_directory = 0
   AND accessed_time < toUnixTimestamp(now() - INTERVAL ${params.days} DAY)
 ORDER BY size DESC
-LIMIT ${params.limit};`,
+LIMIT ${params.limit}`,
   },
   {
     id: "dirs-with-most-empty-files",
@@ -286,7 +286,7 @@ WHERE snapshot_date = '${snapshotDate}'
   AND size = 0
 GROUP BY parent_path
 ORDER BY empty_file_count DESC
-LIMIT ${params.limit};`,
+LIMIT ${params.limit}`,
   },
   {
     id: "total-empty-files",
@@ -303,7 +303,7 @@ FROM filesystem.entries
 WHERE snapshot_date = '${snapshotDate}'
   AND path LIKE '${params.path}/%'
   AND is_directory = 0
-  AND size = 0;`,
+  AND size = 0`,
   },
   {
     id: "size-by-top-level-dir",
@@ -323,7 +323,29 @@ WHERE snapshot_date = '${snapshotDate}'
   AND length(splitByChar('/', path)) >= 4
 GROUP BY top_level_dir
 ORDER BY sum(size) DESC
-LIMIT ${params.limit};`,
+LIMIT ${params.limit}`,
+  },
+  {
+    id: "file-type-breakdown",
+    name: "File type breakdown in directory",
+    description: "Count files by extension/type (.zarr, .csv, .py, etc.)",
+    category: "files",
+    params: [
+      { name: "path", label: "Directory Path", type: "text", default: "/project/cil/sacagawea_shares", placeholder: "/project/cil/sacagawea_shares" },
+      { name: "limit", label: "Limit", type: "number", default: 20 },
+    ],
+    generateSQL: (params, snapshotDate) => `SELECT
+  file_type,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = '${snapshotDate}'
+  AND path LIKE '${params.path}/%'
+  AND is_directory = 0
+  AND file_type != ''
+GROUP BY file_type
+ORDER BY sum(size) DESC
+LIMIT ${params.limit}`,
   },
 ];
 
@@ -369,9 +391,26 @@ function GuidedSQLMode({
     queryKey: ["guided-sql", selectedSnapshot, generatedSQL, hasExecuted],
     queryFn: async () => {
       if (!selectedSnapshot) throw new Error("No snapshot selected");
+
+      // Sanitize SQL: remove trailing semicolons and trim whitespace
+      const sanitizedSQL = generatedSQL.trim().replace(/;+\s*$/, '');
+
+      // DEBUG: Log exact SQL being sent to backend
+      console.log('=== GUIDED SQL DEBUG ===');
+      console.log('Original SQL:', generatedSQL);
+      console.log('Sanitized SQL:', sanitizedSQL);
+      console.log('SQL length:', sanitizedSQL.length);
+      console.log('Contains semicolon:', sanitizedSQL.includes(';'));
+      console.log('Statement count:', sanitizedSQL.split(';').filter(s => s.trim()).length);
+      console.log('Exact payload:', {
+        snapshot_date: selectedSnapshot,
+        sql: sanitizedSQL,
+        limit: 5000,
+      });
+
       return executeQuery({
         snapshot_date: selectedSnapshot,
-        sql: generatedSQL,
+        sql: sanitizedSQL,
         limit: 5000,
       });
     },
@@ -482,6 +521,24 @@ function GuidedSQLMode({
         </div>
       )}
 
+      {/* DEBUG: Show exact SQL that will be sent to backend */}
+      {generatedSQL && (
+        <div className="border border-yellow-500/30 rounded-sm bg-yellow-500/5 p-3">
+          <div className="text-[10px] font-mono font-semibold text-yellow-600 mb-2">
+            🔍 DEBUG: SQL to be executed (after sanitization)
+          </div>
+          <pre className="text-[10px] font-mono text-foreground whitespace-pre-wrap break-all bg-black/20 p-2 rounded-sm border border-yellow-500/20">
+            {generatedSQL.trim().replace(/;+\s*$/, '')}
+          </pre>
+          <div className="mt-2 text-[10px] text-muted-foreground space-y-1 font-mono">
+            <div>Length: <span className="text-foreground">{generatedSQL.trim().replace(/;+\s*$/, '').length}</span> chars</div>
+            <div>Has semicolon: <span className={generatedSQL.trim().replace(/;+\s*$/, '').includes(';') ? 'text-red-400 font-bold' : 'text-green-400'}>{generatedSQL.trim().replace(/;+\s*$/, '').includes(';') ? 'YES ⚠️' : 'NO ✓'}</span></div>
+            <div>Statements: <span className={generatedSQL.trim().replace(/;+\s*$/, '').split(';').filter(s => s.trim()).length > 1 ? 'text-red-400 font-bold' : 'text-green-400'}>{generatedSQL.trim().replace(/;+\s*$/, '').split(';').filter(s => s.trim()).length}</span></div>
+            <div className="text-[9px] text-yellow-600 mt-1">Check browser console for full debug output</div>
+          </div>
+        </div>
+      )}
+
       {/* Execute Button */}
       {generatedSQL && (
         <div className="flex justify-end">
@@ -517,11 +574,73 @@ function GuidedSQLMode({
   );
 }
 
+// Example queries for Raw SQL mode (from clickhouse/docs)
+const EXAMPLE_RAW_QUERIES = [
+  {
+    id: "exact-filename",
+    name: "Exact filename search",
+    sql: `SELECT
+  path,
+  parent_path,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(modified_time) AS modified
+FROM filesystem.entries
+WHERE snapshot_date = 'SNAPSHOT_DATE'
+  AND name = 'example.csv'
+ORDER BY modified_time DESC`,
+  },
+  {
+    id: "substring-search",
+    name: "Files containing keyword",
+    sql: `SELECT
+  path,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(modified_time) AS modified
+FROM filesystem.entries
+WHERE snapshot_date = 'SNAPSHOT_DATE'
+  AND positionCaseInsensitive(name, 'weights') > 0
+  AND is_directory = 0
+ORDER BY size DESC
+LIMIT 100`,
+  },
+  {
+    id: "duplicate-filenames",
+    name: "Duplicate filenames",
+    sql: `SELECT
+  name,
+  count() AS occurrences,
+  groupArray(path) AS locations
+FROM filesystem.entries
+WHERE snapshot_date = 'SNAPSHOT_DATE'
+  AND is_directory = 0
+GROUP BY name
+HAVING occurrences > 1
+ORDER BY occurrences DESC
+LIMIT 100`,
+  },
+  {
+    id: "large-csv-files",
+    name: "Large CSV files (>1GB)",
+    sql: `SELECT
+  path,
+  formatReadableSize(size) AS size,
+  owner
+FROM filesystem.entries
+WHERE snapshot_date = 'SNAPSHOT_DATE'
+  AND name LIKE '%.csv'
+  AND size > 1 * 1024 * 1024 * 1024
+ORDER BY size DESC`,
+  },
+];
+
 // Raw SQL Mode Component
 function RawSQLMode({ selectedSnapshot }: { selectedSnapshot: string | null }) {
   const [sql, setSQL] = useState("");
   const [limit, setLimit] = useState(100);
   const [hasExecuted, setHasExecuted] = useState(false);
+  const [showExamples, setShowExamples] = useState(false);
 
   const { data: queryResult, isLoading, error } = useQuery({
     queryKey: ["raw-sql", selectedSnapshot, sql, limit, hasExecuted],
@@ -542,6 +661,14 @@ function RawSQLMode({ selectedSnapshot }: { selectedSnapshot: string | null }) {
     setHasExecuted(true);
   };
 
+  const loadExample = (exampleSQL: string) => {
+    // Replace SNAPSHOT_DATE placeholder with actual snapshot
+    const finalSQL = exampleSQL.replace(/SNAPSHOT_DATE/g, selectedSnapshot || 'YYYY-MM-DD');
+    setSQL(finalSQL);
+    setHasExecuted(false);
+    setShowExamples(false);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-sm">
@@ -550,6 +677,40 @@ function RawSQLMode({ selectedSnapshot }: { selectedSnapshot: string | null }) {
           <strong>Advanced mode:</strong> Write raw SQL queries with strict backend guardrails.
           Only SELECT statements allowed. snapshot_date filter required. Max 5000 rows.
         </div>
+      </div>
+
+      {/* Example Queries */}
+      <div className="border border-border/30 rounded-sm">
+        <button
+          onClick={() => setShowExamples(!showExamples)}
+          className="w-full flex items-center justify-between p-3 hover:bg-muted/5 transition-colors"
+        >
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Example Queries (from clickhouse/docs)
+          </h4>
+          {showExamples ? (
+            <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          )}
+        </button>
+
+        {showExamples && (
+          <div className="px-3 pb-3 border-t border-border/30">
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              {EXAMPLE_RAW_QUERIES.map((example) => (
+                <button
+                  key={example.id}
+                  onClick={() => loadExample(example.sql)}
+                  className="text-left p-2.5 border border-border/20 rounded-sm hover:bg-muted/10 transition-colors"
+                >
+                  <div className="text-xs font-medium text-foreground">{example.name}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">Click to load</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* SQL Editor */}
@@ -565,7 +726,7 @@ FROM filesystem.entries
 WHERE snapshot_date = '${selectedSnapshot || "YYYY-MM-DD"}'
   AND name LIKE '%pattern%'
 ORDER BY size DESC
-LIMIT 100;`}
+LIMIT 100`}
           className="w-full px-3 py-2 text-xs bg-background border border-border rounded-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 min-h-[200px] resize-y"
         />
       </div>
@@ -638,6 +799,9 @@ function QueryResultsTable({
   result: QueryResponse;
   isLoading: boolean;
 }) {
+  const [showAggregation, setShowAggregation] = useState(false);
+  const [aggGroupByColumns, setAggGroupByColumns] = useState<string[]>([]);
+
   if (isLoading) {
     return (
       <div className="border border-border/30 rounded-sm bg-muted/5">
@@ -661,22 +825,128 @@ function QueryResultsTable({
     link.click();
   };
 
+  // Build aggregations
+  const aggregations = useMemo(() => {
+    if (!showAggregation || aggGroupByColumns.length === 0) return [];
+
+    // Find indices for grouping columns and numeric columns
+    const groupByIndices = aggGroupByColumns.map(col => result.columns.indexOf(col)).filter(idx => idx !== -1);
+    if (groupByIndices.length === 0) return [];
+
+    // Find numeric columns (exclude formatted size strings)
+    const numericColumnIndices = result.columns.map((col, idx) => {
+      // Skip if it's a grouping column
+      if (groupByIndices.includes(idx)) return -1;
+
+      // Check if most values are numeric
+      const sampleValues = result.rows.slice(0, Math.min(10, result.rows.length)).map(row => row[idx]);
+      const numericCount = sampleValues.filter(v => typeof v === 'number' || !isNaN(Number(v))).length;
+      return numericCount > sampleValues.length / 2 ? idx : -1;
+    }).filter(idx => idx !== -1);
+
+    // Group by selected columns
+    const groups = new Map<string, { keys: Record<string, any>; count: number; sums: number[] }>();
+
+    result.rows.forEach(row => {
+      const key = groupByIndices.map(idx => String(row[idx] || "-")).join("|||");
+
+      if (!groups.has(key)) {
+        const keys: Record<string, any> = {};
+        groupByIndices.forEach((idx, i) => {
+          keys[aggGroupByColumns[i]] = row[idx] || "-";
+        });
+        groups.set(key, { keys, count: 0, sums: new Array(numericColumnIndices.length).fill(0) });
+      }
+
+      const group = groups.get(key)!;
+      group.count++;
+
+      // Sum numeric columns
+      numericColumnIndices.forEach((colIdx, i) => {
+        const value = row[colIdx];
+        const numValue = typeof value === 'number' ? value : parseFloat(String(value));
+        if (!isNaN(numValue)) {
+          group.sums[i] += numValue;
+        }
+      });
+    });
+
+    return Array.from(groups.values()).map(group => ({
+      keys: group.keys,
+      count: group.count,
+      numericSums: group.sums,
+    }));
+  }, [result, showAggregation, aggGroupByColumns]);
+
+  // Get available grouping columns (text columns)
+  const availableGroupByColumns = result.columns.filter((col, idx) => {
+    // Check if column contains mostly text values
+    const sampleValues = result.rows.slice(0, Math.min(10, result.rows.length)).map(row => row[idx]);
+    const textCount = sampleValues.filter(v => typeof v === 'string' || (typeof v !== 'number' && isNaN(Number(v)))).length;
+    return textCount > sampleValues.length / 2;
+  });
+
   return (
     <div className="border border-border/30 rounded-sm overflow-hidden">
       {/* Header */}
-      <div className="bg-muted/10 border-b border-border/30 flex items-center justify-between px-3 py-2">
-        <div className="text-[10px] font-mono text-muted-foreground">
-          {result.row_count} rows • {result.execution_time_ms}ms
+      <div className="bg-muted/10 border-b border-border/30 px-3 py-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="text-[10px] font-mono text-muted-foreground">
+              {result.row_count} rows • {result.execution_time_ms}ms
+            </div>
+
+            {/* Aggregation Toggle */}
+            {availableGroupByColumns.length > 0 && (
+              <button
+                onClick={() => setShowAggregation(!showAggregation)}
+                className={`px-2 py-0.5 text-[10px] font-mono border border-border/20 rounded-sm transition-colors ${
+                  showAggregation
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-muted/20"
+                }`}
+              >
+                Summary
+              </button>
+            )}
+          </div>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={downloadCSV}
+            className="h-6 px-2 text-[10px] font-mono"
+          >
+            <Download className="h-3 w-3 mr-1" />
+            CSV
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={downloadCSV}
-          className="h-6 px-2 text-[10px] font-mono"
-        >
-          <Download className="h-3 w-3 mr-1" />
-          CSV
-        </Button>
+
+        {/* Aggregation Controls */}
+        {showAggregation && availableGroupByColumns.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-border/20 flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] text-muted-foreground font-mono">Group by:</span>
+            <div className="flex gap-2 flex-wrap">
+              {availableGroupByColumns.map(col => (
+                <label key={col} className="flex items-center gap-1 text-[10px]">
+                  <input
+                    type="checkbox"
+                    checked={aggGroupByColumns.includes(col)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setAggGroupByColumns([...aggGroupByColumns, col]);
+                      } else {
+                        setAggGroupByColumns(aggGroupByColumns.filter(c => c !== col));
+                      }
+                    }}
+                    className="rounded border-border"
+                  />
+                  <span className="font-mono text-muted-foreground">{col}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -709,6 +979,43 @@ function QueryResultsTable({
           </table>
         </div>
       </div>
+
+      {/* Aggregation Panel */}
+      {aggregations.length > 0 && (
+        <div className="border-t border-border/30 mt-4">
+          <div className="bg-muted/10 px-3 py-2 border-b border-border/30">
+            <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
+              Summary (Grouped by {aggGroupByColumns.join(", ")})
+            </div>
+          </div>
+          <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+            <table className="w-full text-xs font-mono">
+              <thead className="bg-muted/10 border-b border-border/30 sticky top-0">
+                <tr>
+                  {aggGroupByColumns.map(col => (
+                    <th key={col} className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      {col}
+                    </th>
+                  ))}
+                  <th className="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">Count</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/30">
+                {aggregations.map((row: any, idx: number) => (
+                  <tr key={idx} className="hover:bg-muted/5 transition-colors">
+                    {aggGroupByColumns.map(col => (
+                      <td key={col} className="px-3 py-2 text-muted-foreground">
+                        {row.keys[col] || "-"}
+                      </td>
+                    ))}
+                    <td className="px-3 py-2 text-right text-muted-foreground">{row.count.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
