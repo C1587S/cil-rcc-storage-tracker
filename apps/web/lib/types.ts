@@ -14,13 +14,16 @@ export interface DirectoryEntry {
   path: string;
   name: string;
   is_directory: boolean;
-  size: number;
+  size: number;  // Direct size (for files: file size, for dirs: sum of direct children)
   size_formatted?: string;
+  recursive_size?: number;  // Recursive subtree total (dirs only)
+  recursive_size_formatted?: string;
   owner?: string;
   file_type?: string;
   modified_time?: number;
   accessed_time?: number;
-  file_count?: number;
+  file_count?: number;  // Direct children count
+  dir_count?: number;  // Recursive subdirectories count
 }
 
 export interface BrowseResponse {

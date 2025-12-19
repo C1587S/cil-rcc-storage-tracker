@@ -1,7 +1,7 @@
 "use client";
 
 import { SnapshotSelector } from "@/components/snapshot-selector";
-import { DiskUsageExplorer } from "@/components/disk-usage-explorer";
+import { DiskUsageExplorerV2 } from "@/components/disk-usage-explorer-v2";
 
 export default function Home() {
   return (
@@ -16,7 +16,7 @@ export default function Home() {
           <SnapshotSelector />
         </div>
 
-        <DiskUsageExplorer />
+        <DiskUsageExplorerV2 />
       </div>
     </main>
   );

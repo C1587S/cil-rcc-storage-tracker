@@ -27,14 +27,16 @@ class DirectoryEntry(BaseModel):
     path: str
     name: str
     is_directory: bool
-    size: int  # bytes (use formatReadableSize on frontend)
+    size: int  # bytes (direct size for files, direct children sum for dirs)
     size_formatted: str | None = None
+    recursive_size: int | None = None  # bytes (recursive subtree total, dirs only)
+    recursive_size_formatted: str | None = None
     owner: str | None = None
     file_type: str | None = None
     modified_time: int | None = None  # Unix timestamp
     accessed_time: int | None = None  # Unix timestamp
-    file_count: int | None = None  # For directories
-    dir_count: int | None = None  # For directories
+    file_count: int | None = None  # For directories (direct children)
+    dir_count: int | None = None  # For directories (recursive subdirectories)
 
 
 class BrowseResponse(BaseModel):

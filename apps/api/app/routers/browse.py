@@ -30,29 +30,28 @@ async def browse_folders(
     if parent_path != "/" and parent_path.endswith("/"):
         parent_path = parent_path.rstrip("/")
 
-    # Query using directory_hierarchy with directory_sizes for aggregated totals
-    # directory_sizes contains sum of direct children only (not recursive)
-    # For truly recursive sizes, query entries directly with path prefix match
+    # Query using directory_hierarchy with directory_recursive_sizes for true recursive totals
+    # directory_recursive_sizes contains actual recursive subtree sizes (materialized)
     query = """
     SELECT
         h.child_path AS path,
         h.name,
         1 AS is_directory,
-        COALESCE(ds.total_size, 0) AS size,
-        formatReadableSize(COALESCE(ds.total_size, 0)) AS size_formatted,
+        COALESCE(rs.recursive_size_bytes, 0) AS recursive_size,
+        formatReadableSize(COALESCE(rs.recursive_size_bytes, 0)) AS recursive_size_formatted,
+        COALESCE(rs.direct_size_bytes, 0) AS size,
+        formatReadableSize(COALESCE(rs.direct_size_bytes, 0)) AS size_formatted,
         h.last_modified AS modified_time,
-        COALESCE(ds.file_count, 0) AS file_count
+        COALESCE(rs.direct_file_count, 0) AS file_count,
+        COALESCE(rs.recursive_dir_count, 0) AS dir_count
     FROM filesystem.directory_hierarchy AS h
-    LEFT JOIN (
-        SELECT path, sum(total_size) AS total_size, sum(file_count) AS file_count
-        FROM filesystem.directory_sizes
-        WHERE snapshot_date = %(snapshot_date)s
-        GROUP BY path
-    ) AS ds ON ds.path = h.child_path
+    LEFT JOIN filesystem.directory_recursive_sizes AS rs
+        ON rs.snapshot_date = h.snapshot_date
+        AND rs.path = h.child_path
     WHERE h.snapshot_date = %(snapshot_date)s
       AND h.parent_path = %(parent_path)s
       AND h.is_directory = 1
-    ORDER BY size DESC
+    ORDER BY recursive_size DESC
     LIMIT %(limit)s
     """
 
@@ -76,8 +75,11 @@ async def browse_folders(
                     is_directory=bool(row["is_directory"]),
                     size=row["size"],
                     size_formatted=row.get("size_formatted"),
+                    recursive_size=row.get("recursive_size"),
+                    recursive_size_formatted=row.get("recursive_size_formatted"),
                     modified_time=row.get("modified_time"),
                     file_count=row.get("file_count"),
+                    dir_count=row.get("dir_count"),
                 )
             )
 
