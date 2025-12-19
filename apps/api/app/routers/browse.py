@@ -30,21 +30,29 @@ async def browse_folders(
     if parent_path != "/" and parent_path.endswith("/"):
         parent_path = parent_path.rstrip("/")
 
-    # Query using directory_hierarchy materialized view
+    # Query using directory_hierarchy with directory_sizes for aggregated totals
+    # directory_sizes contains sum of direct children only (not recursive)
+    # For truly recursive sizes, query entries directly with path prefix match
     query = """
     SELECT
-        child_path AS path,
-        name,
+        h.child_path AS path,
+        h.name,
         1 AS is_directory,
-        total_size AS size,
-        formatReadableSize(total_size) AS size_formatted,
-        last_modified AS modified_time,
-        file_count
-    FROM filesystem.directory_hierarchy
-    WHERE snapshot_date = %(snapshot_date)s
-      AND parent_path = %(parent_path)s
-      AND is_directory = 1
-    ORDER BY total_size DESC
+        COALESCE(ds.total_size, 0) AS size,
+        formatReadableSize(COALESCE(ds.total_size, 0)) AS size_formatted,
+        h.last_modified AS modified_time,
+        COALESCE(ds.file_count, 0) AS file_count
+    FROM filesystem.directory_hierarchy AS h
+    LEFT JOIN (
+        SELECT path, sum(total_size) AS total_size, sum(file_count) AS file_count
+        FROM filesystem.directory_sizes
+        WHERE snapshot_date = %(snapshot_date)s
+        GROUP BY path
+    ) AS ds ON ds.path = h.child_path
+    WHERE h.snapshot_date = %(snapshot_date)s
+      AND h.parent_path = %(parent_path)s
+      AND h.is_directory = 1
+    ORDER BY size DESC
     LIMIT %(limit)s
     """
 

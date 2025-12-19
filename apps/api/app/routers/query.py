@@ -67,6 +67,35 @@ async def execute_sql_query(request: QueryRequest):
         )
 
     except QueryValidationError as e:
-        raise HTTPException(status_code=400, detail=f"Query validation failed: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Query validation failed",
+                "message": str(e),
+                "help": "Ensure your query is a SELECT statement with snapshot_date filter and LIMIT clause",
+            },
+        )
+    except ValueError as e:
+        # Pydantic validation errors (e.g., missing snapshot_date in request body)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "Invalid request",
+                "message": str(e),
+                "help": "Request body must include 'snapshot_date' (YYYY-MM-DD), 'sql' (string), and 'limit' (integer)",
+            },
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        error_msg = str(e)
+        # Provide helpful hints for common errors
+        if "snapshot_date" in error_msg.lower():
+            hint = "Make sure snapshot_date is included in WHERE clause as: WHERE snapshot_date = '2025-12-12'"
+        elif "content-type" in error_msg.lower() or "json" in error_msg.lower():
+            hint = "Set Content-Type header to 'application/json'"
+        else:
+            hint = "Check the query syntax and ensure all referenced columns exist"
+
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Database error", "message": error_msg, "help": hint},
+        )

@@ -60,6 +60,7 @@ The API will be available at:
 
 - `GET /api/browse` - Get child folders for a directory (folders only)
   - Query params: `snapshot_date`, `parent_path`, `limit`
+  - **Note**: Returns direct children sizes only, not recursive totals. Directory sizes shown are the sum of immediate child files. For recursive totals, use the query endpoint with path prefix matching.
 
 ### Contents
 

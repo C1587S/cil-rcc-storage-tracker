@@ -65,8 +65,10 @@ async def search_files(
                 # No scope filter needed for root
                 pass
             else:
-                scope_filter = "AND (parent_path = %(scope_path)s OR parent_path LIKE concat(%(scope_path)s, '/%'))"
+                # Use parameterized LIKE pattern to avoid % formatting issues
+                scope_filter = "AND (parent_path = %(scope_path)s OR parent_path LIKE %(scope_pattern)s)"
                 params["scope_path"] = scope_path
+                params["scope_pattern"] = f"{scope_path}/%" # Pattern with % passed as parameter
         except QueryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
