@@ -3,13 +3,21 @@
 import { useState, useEffect, useMemo } from "react";
 import { DirectoryEntry } from "@/lib/types";
 import { formatDistanceToNow } from "date-fns";
-import { Download, ChevronDown, ChevronUp, ChevronsUpDown } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, ChevronsUpDown, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface SearchResultsTableProps {
   results: DirectoryEntry[];
   isLoading?: boolean;
   totalCount: number;
+  onAddToReport?: (entry: {
+    mode: "filters";
+    sql: string;
+    columns: string[];
+    rows: any[][];
+    rowCount: number;
+  }) => void;
+  searchFilters?: Record<string, any>;
 }
 
 interface ColumnWidths {
@@ -179,7 +187,13 @@ function downloadAsTXT(results: DirectoryEntry[]) {
   link.click();
 }
 
-export function SearchResultsTable({ results, isLoading, totalCount }: SearchResultsTableProps) {
+export function SearchResultsTable({
+  results,
+  isLoading,
+  totalCount,
+  onAddToReport,
+  searchFilters
+}: SearchResultsTableProps) {
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(DEFAULT_COLUMN_WIDTHS);
   const [resizingColumn, setResizingColumn] = useState<keyof ColumnWidths | null>(null);
   const [startX, setStartX] = useState(0);
@@ -366,6 +380,49 @@ export function SearchResultsTable({ results, isLoading, totalCount }: SearchRes
     navigator.clipboard.writeText(markdown);
   };
 
+  const handleAddToReport = () => {
+    if (!onAddToReport) return;
+
+    // Generate a readable SQL summary from search filters
+    const filterParts: string[] = [];
+    if (searchFilters?.searchText) {
+      filterParts.push(`name search: "${searchFilters.searchText}" (${searchFilters.searchMode || 'contains'})`);
+    }
+    if (searchFilters?.scopePath) {
+      filterParts.push(`scope: ${searchFilters.scopePath}`);
+    }
+    if (searchFilters?.fileType) {
+      filterParts.push(`file type: ${searchFilters.fileType}`);
+    }
+    if (searchFilters?.minSize !== undefined || searchFilters?.maxSize !== undefined) {
+      const sizeRange = [];
+      if (searchFilters.minSize !== undefined) sizeRange.push(`min: ${formatReadableSize(searchFilters.minSize)}`);
+      if (searchFilters.maxSize !== undefined) sizeRange.push(`max: ${formatReadableSize(searchFilters.maxSize)}`);
+      filterParts.push(`size: ${sizeRange.join(', ')}`);
+    }
+
+    const sqlSummary = `-- Filter Builder Search\n-- ${filterParts.join(' | ')}\n-- Results: ${results.length} of ${totalCount}`;
+
+    // Convert results to rows format matching QueryResultsTable
+    const columns = ["Filename", "Full Path", "Size", "Owner", "Modified", "Accessed"];
+    const rows = results.map(entry => [
+      extractFilename(entry.path),
+      entry.path,
+      formatReadableSize(entry.size),
+      entry.owner || "-",
+      formatTimestamp(entry.modified_time),
+      formatTimestamp(entry.accessed_time),
+    ]);
+
+    onAddToReport({
+      mode: "filters",
+      sql: sqlSummary,
+      columns,
+      rows,
+      rowCount: results.length,
+    });
+  };
+
   return (
     <div className="border border-border/30 rounded-sm overflow-hidden">
       {/* Header with view mode toggle and download buttons */}
@@ -417,6 +474,17 @@ export function SearchResultsTable({ results, isLoading, totalCount }: SearchRes
           </div>
 
           <div className="flex gap-2">
+            {onAddToReport && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleAddToReport}
+                className="h-6 px-2 text-[10px] font-mono bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30"
+              >
+                <FileText className="h-3 w-3 mr-1" />
+                Add to Report
+              </Button>
+            )}
             {viewMode === "markdown" && (
               <Button
                 variant="ghost"

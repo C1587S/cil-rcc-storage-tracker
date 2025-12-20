@@ -257,11 +257,19 @@ function TreeNode({
   const isReferenceRow = state.referencePath === path;
   const isSelectedRow = state.selectedPath === path;
 
+  // CRITICAL: Determine if this node is actually inside the current reference directory
+  // This must be computed dynamically based on the current reference path, not inherited from parent.
+  // When the reference directory changes, we need to recompute which nodes should show bars.
+  // Without this, stale bars from a previous reference would remain visible.
+  const isActuallyInsideReference = state.referencePath
+    ? (path === state.referencePath || path.startsWith(state.referencePath + '/'))
+    : isInsideReference;
+
   // Percentage propagation logic:
   // - If this node is the reference: children use this node's size as reference
   // - If this node is expanded (and had a bar): children use this node's size as reference
   // - Otherwise: children inherit the same reference size
-  const childReferenceSize = isReferenceRow || (isExpanded && isInsideReference && !isReferenceRow)
+  const childReferenceSize = isReferenceRow || (isExpanded && isActuallyInsideReference && !isReferenceRow)
     ? displaySize  // Children are relative to this expanded folder
     : referenceSize;  // Children inherit the same reference
 
@@ -283,7 +291,7 @@ function TreeNode({
   // - Expanded folders: NO bar (their % is split among visible children)
   // - All OTHER visible items inside reference tree: show bars
   // - All visible bars must sum to 100% relative to reference
-  const shouldShowBar = !isReferenceRow && !isExpanded && isInsideReference;
+  const shouldShowBar = !isReferenceRow && !isExpanded && isActuallyInsideReference;
 
   return (
     <div>
@@ -437,7 +445,7 @@ function TreeNode({
                 state={state}
                 setState={setState}
                 onSetReference={onSetReference}
-                isInsideReference={isReferenceRow || isInsideReference}
+                isInsideReference={isReferenceRow || isActuallyInsideReference}
                 parentPath={path}
               />
             ))}
