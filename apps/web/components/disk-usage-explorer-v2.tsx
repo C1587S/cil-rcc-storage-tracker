@@ -210,8 +210,21 @@ function TreeNode({
   isInsideReference,
   parentPath,
 }: TreeNodeProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  // Auto-expand if this node is the reference directory or an ancestor of it
+  const shouldAutoExpand = state.referencePath && (
+    path === state.referencePath ||
+    state.referencePath.startsWith(path + '/')
+  );
+
+  const [isExpanded, setIsExpanded] = useState(shouldAutoExpand || false);
   const { setSelectedPath } = useAppStore();
+
+  // Auto-expand when this node becomes part of the reference path
+  useEffect(() => {
+    if (shouldAutoExpand && !isExpanded) {
+      setIsExpanded(true);
+    }
+  }, [shouldAutoExpand, isExpanded]);
 
   // Fetch folders (with recursive sizes) from browse endpoint
   const { data: foldersData, isLoading: foldersLoading } = useQuery({
@@ -825,7 +838,7 @@ export function DiskUsageExplorerV2() {
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
         {rootData ? (
           <TreeNode
-            key="/project/cil"
+            key={`/project/cil-${state.referencePath || 'default'}`}
             path="/project/cil"
             name="cil"
             snapshotDate={selectedSnapshot}
