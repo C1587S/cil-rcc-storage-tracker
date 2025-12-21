@@ -99,7 +99,7 @@ export async function buildVoronoiTree(
     isDirectory: true,
     is_directory: true,
     children: children.filter(child => child.size > 0), // Filter out zero-size nodes
-    file_count: browseResult.total_folders + browseResult.total_files,
+    file_count: browseResult.total_count, // Total count of folders in browse result
     depth: 0,
   };
 
@@ -169,38 +169,65 @@ async function fetchChildren(
       } catch (error) {
         console.warn(`[fetchChildren] Failed to fetch grandchildren for ${folder.path}:`, error);
       }
+    } else {
+      // CRITICAL FIX: At max depth, fetch files as children of this folder
+      try {
+        const contentsResult = await getContents({
+          snapshot_date: snapshotDate,
+          parent_path: folder.path,
+          limit: Math.max(20, Math.floor(nodeBudget / topFolders.length)), // Files per folder
+          sort: "size_desc",
+        });
+
+        const files = contentsResult.entries
+          .filter(entry => !entry.is_directory)
+          .slice(0, 20) // Top 20 largest files per folder
+          .map(file => ({
+            name: file.name,
+            size: file.size,
+            path: file.path,
+            isDirectory: false,
+            is_directory: false,
+            depth: currentDepth + 1,
+          }));
+
+        if (files.length > 0) {
+          node.children = files;
+          console.log(`[fetchChildren] Added ${files.length} files to folder ${folder.name} at depth ${currentDepth}`);
+        }
+      } catch (error) {
+        console.warn(`[fetchChildren] Failed to fetch files for folder ${folder.path}:`, error);
+      }
     }
 
     children.push(node);
   }
 
-  // If at max depth, also fetch files
-  if (currentDepth === maxDepth) {
-    try {
-      const contentsResult = await getContents({
-        snapshot_date: snapshotDate,
-        parent_path: parentPath,
-        limit: Math.max(20, Math.floor(nodeBudget / 2)), // At least 20 files, up to half the budget
-        sort: "size_desc",
-      });
+  // CRITICAL FIX: Also fetch top-level files in the current directory (not just in subfolders)
+  try {
+    const contentsResult = await getContents({
+      snapshot_date: snapshotDate,
+      parent_path: parentPath,
+      limit: Math.max(20, Math.floor(nodeBudget / 2)), // At least 20 files, up to half the budget
+      sort: "size_desc",
+    });
 
-      const files = contentsResult.entries
-        .filter(entry => !entry.is_directory)
-        .slice(0, Math.floor(nodeBudget / 2))
-        .map(file => ({
-          name: file.name,
-          size: file.size,
-          path: file.path,
-          isDirectory: false,
-          is_directory: false,
-          depth: currentDepth,
-        }));
+    const files = contentsResult.entries
+      .filter(entry => !entry.is_directory)
+      .slice(0, Math.floor(nodeBudget / 2))
+      .map(file => ({
+        name: file.name,
+        size: file.size,
+        path: file.path,
+        isDirectory: false,
+        is_directory: false,
+        depth: currentDepth,
+      }));
 
-      console.log(`[fetchChildren] Added ${files.length} files at depth ${currentDepth}`);
-      children.push(...files);
-    } catch (error) {
-      console.warn(`[fetchChildren] Failed to fetch files for ${parentPath}:`, error);
-    }
+    console.log(`[fetchChildren] Added ${files.length} direct files at path ${parentPath}, depth ${currentDepth}`);
+    children.push(...files);
+  } catch (error) {
+    console.warn(`[fetchChildren] Failed to fetch files for ${parentPath}:`, error);
   }
 
   return children.filter(child => child.size > 0);

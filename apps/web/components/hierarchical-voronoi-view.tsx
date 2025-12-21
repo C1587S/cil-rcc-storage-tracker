@@ -95,8 +95,45 @@ function applyHierarchicalVoronoiTreemap(
 }
 
 /**
- * Advanced circle packing using D3 force simulation
- * Returns array of {x, y, r} circles that fit inside the polygon with proper clustering
+ * Check if a point is inside a polygon using ray casting algorithm
+ */
+function isPointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
+  const [x, y] = point
+  let inside = false
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i]
+    const [xj, yj] = polygon[j]
+
+    const intersect = ((yi > y) !== (yj > y)) &&
+      (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+
+    if (intersect) inside = !inside
+  }
+
+  return inside
+}
+
+/**
+ * Check if a circle fits entirely within a polygon
+ */
+function isCircleInPolygon(cx: number, cy: number, r: number, polygon: [number, number][]): boolean {
+  // Check if center is inside
+  if (!isPointInPolygon([cx, cy], polygon)) return false
+
+  // Check 8 points around the circle perimeter
+  for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+    const px = cx + r * Math.cos(angle)
+    const py = cy + r * Math.sin(angle)
+    if (!isPointInPolygon([px, py], polygon)) return false
+  }
+
+  return true
+}
+
+/**
+ * Advanced circle packing with strict collision detection and boundary enforcement
+ * Returns array of {x, y, r} circles that fit entirely within polygon with no overlap
  */
 function packCirclesInPolygon(
   polygon: [number, number][],
@@ -116,54 +153,104 @@ function packCirclesInPolygon(
   // Total size for scaling
   const totalSize = topFiles.reduce((sum, f) => sum + f.value, 0)
 
-  // Calculate radii with better constraints
-  const minR = Math.min(6, Math.sqrt(area) / 50) // Minimum legible radius
-  const maxR = Math.sqrt(area / Math.PI) * 0.35
+  // Calculate radii with STRICT constraints to ensure fit
+  const minR = 4 // Absolute minimum for visibility
+  const maxR = Math.min(Math.sqrt(area / Math.PI) * 0.25, 30) // Much more conservative
 
-  const circles = topFiles.map((file) => {
+  const circles: Array<{ x: number; y: number; r: number; node: VoronoiNode; fx?: number; fy?: number }> = []
+
+  // Pack circles one by one, checking for collisions and boundaries
+  for (const file of topFiles) {
     const sizeRatio = file.value / totalSize
-    const r = Math.max(
+    let r = Math.max(
       minR,
       Math.min(
-        Math.sqrt(sizeRatio * area / Math.PI) * 0.9,
+        Math.sqrt(sizeRatio * area / Math.PI) * 0.6,
         maxR
       )
     )
-    return {
-      x: centroid[0] + (Math.random() - 0.5) * Math.sqrt(area) * 0.3,
-      y: centroid[1] + (Math.random() - 0.5) * Math.sqrt(area) * 0.3,
-      r,
-      node: file.node
-    }
-  })
 
-  // Apply D3 force simulation for better clustering
+    // Try to place circle, reducing radius if needed
+    let placed = false
+    let attempts = 0
+    const maxAttempts = 50
+
+    while (!placed && attempts < maxAttempts && r >= minR) {
+      // Random position near centroid
+      const angle = Math.random() * Math.PI * 2
+      const distance = Math.random() * Math.sqrt(area) * 0.3
+      const x = centroid[0] + distance * Math.cos(angle)
+      const y = centroid[1] + distance * Math.sin(angle)
+
+      // Check if circle fits in polygon
+      if (!isCircleInPolygon(x, y, r, polygon)) {
+        attempts++
+        if (attempts % 10 === 0) r *= 0.9 // Shrink if struggling to place
+        continue
+      }
+
+      // Check for collisions with existing circles
+      const hasCollision = circles.some(existing => {
+        const dx = x - existing.x
+        const dy = y - existing.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        return dist < (r + existing.r + 2) // 2px gap
+      })
+
+      if (!hasCollision) {
+        circles.push({ x, y, r, node: file.node })
+        placed = true
+      } else {
+        attempts++
+        if (attempts % 10 === 0) r *= 0.9
+      }
+    }
+
+    // If we couldn't place after many attempts, skip this circle
+  }
+
+  // Apply D3 force simulation for natural clustering (but keep within bounds)
   const simulation = d3.forceSimulation(circles as any)
-    .force('collision', d3.forceCollide<any>().radius((d: any) => d.r + 1))
-    .force('x', d3.forceX(centroid[0]).strength(0.1))
-    .force('y', d3.forceY(centroid[1]).strength(0.1))
-    .force('center', d3.forceCenter(centroid[0], centroid[1]))
+    .force('collision', d3.forceCollide<any>().radius((d: any) => d.r + 2))
+    .force('x', d3.forceX(centroid[0]).strength(0.05))
+    .force('y', d3.forceY(centroid[1]).strength(0.05))
+    .force('center', d3.forceCenter(centroid[0], centroid[1]).strength(0.02))
     .stop()
 
   // Run simulation synchronously
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 120; i++) {
     simulation.tick()
   }
 
-  // Constrain circles to polygon bounds with better boundary detection
-  const bounds = {
-    minX: Math.min(...polygon.map(p => p[0])),
-    maxX: Math.max(...polygon.map(p => p[0])),
-    minY: Math.min(...polygon.map(p => p[1])),
-    maxY: Math.max(...polygon.map(p => p[1]))
-  }
+  // CRITICAL: Verify all circles are still within bounds after simulation
+  // If not, pull them back in
+  return circles.filter(circle => {
+    // Try to keep circle if possible, but pull it back if needed
+    let { x, y, r } = circle
 
-  return circles.map(circle => ({
-    x: Math.max(bounds.minX + circle.r, Math.min(bounds.maxX - circle.r, circle.x)),
-    y: Math.max(bounds.minY + circle.r, Math.min(bounds.maxY - circle.r, circle.y)),
-    r: circle.r,
-    node: circle.node
-  }))
+    // If outside, try to pull back toward centroid
+    if (!isCircleInPolygon(x, y, r, polygon)) {
+      const dx = centroid[0] - x
+      const dy = centroid[1] - y
+      const dist = Math.sqrt(dx * dx + dy * dy)
+
+      if (dist > 0) {
+        // Move toward centroid in small steps until inside
+        for (let step = 0; step < 20; step++) {
+          x += (dx / dist) * 2
+          y += (dy / dist) * 2
+          if (isCircleInPolygon(x, y, r, polygon)) {
+            circle.x = x
+            circle.y = y
+            break
+          }
+        }
+      }
+    }
+
+    // If still can't fit, exclude this circle
+    return isCircleInPolygon(circle.x, circle.y, circle.r, polygon)
+  })
 }
 
 export function HierarchicalVoronoiView() {
@@ -181,6 +268,7 @@ export function HierarchicalVoronoiView() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [selectedPartition, setSelectedPartition] = useState<VoronoiNode | null>(null)
   const zoomRef = useRef<any>(null)
+  const simulationRef = useRef<d3.Simulation<any, undefined> | null>(null)
 
   // Fetch snapshots for metadata
   const { data: snapshots } = useQuery({
@@ -465,14 +553,14 @@ export function HierarchicalVoronoiView() {
                 onNodeClick(cellNode)
               })
 
-            // Extended metadata labels (CRITICAL: no icons)
-            if (area > 3000) {
+            // Compact metadata labels - ONLY for current visible level (depth === 1)
+            if (depth === 1 && area > 3000) {
               const fontSize = Math.min(12, Math.sqrt(area) / 15)
 
-              // Name
+              // Name (always show)
               g.append('text')
                 .attr('x', centroid[0])
-                .attr('y', centroid[1] - fontSize * 1.2)
+                .attr('y', centroid[1] - fontSize * 1.8)
                 .attr('text-anchor', 'middle')
                 .attr('fill', TERMINAL_COLORS.textBright)
                 .attr('font-size', `${fontSize}px`)
@@ -485,77 +573,53 @@ export function HierarchicalVoronoiView() {
                 .text(cellNode.name.length > 18 ? cellNode.name.slice(0, 15) + '...' : cellNode.name)
 
               if (area > 5000) {
-                // Size
+                // Compact icon-driven metadata line 1: Size + % of quota
+                const percentOfQuota = (cellNode.size / (STORAGE_QUOTA_TB * 1024 ** 4)) * 100
+                const sizeText = `${formatBytes(cellNode.size)} · ${percentOfQuota.toFixed(2)}% quota`
+
                 g.append('text')
                   .attr('x', centroid[0])
-                  .attr('y', centroid[1] - 2)
+                  .attr('y', centroid[1] - fontSize * 0.5)
                   .attr('text-anchor', 'middle')
                   .attr('fill', fillColor)
-                  .attr('font-size', `${fontSize * 0.85}px`)
+                  .attr('font-size', `${fontSize * 0.75}px`)
+                  .attr('font-weight', '600')
                   .attr('font-family', 'monospace')
                   .attr('pointer-events', 'none')
                   .attr('stroke', TERMINAL_COLORS.background)
                   .attr('stroke-width', 2.5)
                   .attr('paint-order', 'stroke')
-                  .text(formatBytes(cellNode.size))
+                  .text(sizeText)
 
-                // % of project (if we have project size)
-                if (projectSize > 0) {
+                // Compact icon-driven metadata line 2: % of parent/reference + file count
+                if (area > 8000 && projectSize > 0) {
                   const percentOfProject = (cellNode.size / projectSize) * 100
+                  let metadataLine2 = `${percentOfProject.toFixed(1)}% of project`
+
+                  if (cellNode.file_count) {
+                    const filePercent = (cellNode.file_count / FILE_COUNT_QUOTA) * 100
+                    metadataLine2 += ` · ${cellNode.file_count.toLocaleString()} files (${filePercent.toFixed(2)}%)`
+                  }
+
                   g.append('text')
                     .attr('x', centroid[0])
-                    .attr('y', centroid[1] + fontSize * 0.9)
+                    .attr('y', centroid[1] + fontSize * 0.6)
                     .attr('text-anchor', 'middle')
                     .attr('fill', TERMINAL_COLORS.text)
-                    .attr('font-size', `${fontSize * 0.75}px`)
+                    .attr('font-size', `${fontSize * 0.65}px`)
                     .attr('font-family', 'monospace')
                     .attr('pointer-events', 'none')
                     .attr('stroke', TERMINAL_COLORS.background)
                     .attr('stroke-width', 2)
                     .attr('paint-order', 'stroke')
-                    .text(`${percentOfProject.toFixed(1)}% of project`)
-                }
-
-                // % of quota
-                if (area > 8000) {
-                  const percentOfQuota = (cellNode.size / (STORAGE_QUOTA_TB * 1024 ** 4)) * 100
-                  g.append('text')
-                    .attr('x', centroid[0])
-                    .attr('y', centroid[1] + fontSize * 1.8)
-                    .attr('text-anchor', 'middle')
-                    .attr('fill', TERMINAL_COLORS.textDim)
-                    .attr('font-size', `${fontSize * 0.7}px`)
-                    .attr('font-family', 'monospace')
-                    .attr('pointer-events', 'none')
-                    .attr('stroke', TERMINAL_COLORS.background)
-                    .attr('stroke-width', 2)
-                    .attr('paint-order', 'stroke')
-                    .text(`${percentOfQuota.toFixed(2)}% quota`)
-                }
-
-                // File count (if available)
-                if (cellNode.file_count && area > 10000) {
-                  const filePercent = (cellNode.file_count / FILE_COUNT_QUOTA) * 100
-                  g.append('text')
-                    .attr('x', centroid[0])
-                    .attr('y', centroid[1] + fontSize * 2.7)
-                    .attr('text-anchor', 'middle')
-                    .attr('fill', TERMINAL_COLORS.textDim)
-                    .attr('font-size', `${fontSize * 0.7}px`)
-                    .attr('font-family', 'monospace')
-                    .attr('pointer-events', 'none')
-                    .attr('stroke', TERMINAL_COLORS.background)
-                    .attr('stroke-width', 2)
-                    .attr('paint-order', 'stroke')
-                    .text(`${cellNode.file_count.toLocaleString()} files (${filePercent.toFixed(2)}%)`)
+                    .text(metadataLine2)
                 }
               }
             }
 
-            // CRITICAL FIX: Only show file bubbles for direct children of displayNode (depth === 1)
-            // This means bubbles appear ONLY when user has explicitly drilled into a folder
-            // Not for all folders at all subdivision depths
-            if (depth === 1 && area > 5000 && cellNode.children) {
+            // Show file bubbles for immediate children (depth === 1 means direct children of current view)
+            // Preview mode: also show files at depth 0 (one level before drilling down)
+            if ((depth === 0 || depth === 1) && area > 5000 && cellNode.children) {
               const files = cellNode.children.filter(child => !child.isDirectory)
               if (files.length > 0) {
                 const fileData = files.map(file => ({
@@ -565,20 +629,31 @@ export function HierarchicalVoronoiView() {
 
                 const circles = packCirclesInPolygon(polygon, fileData, 15)
 
-                circles.forEach(circle => {
-                  const fileColor = getSizeFillColor(circle.node.size)
+                // Create a group for this partition's bubbles
+                const bubbleGroup = g.append('g')
+                  .attr('class', 'bubble-group')
+                  .attr('data-partition', cellNode.path)
 
-                  // Draw circle
-                  g.append('circle')
+                circles.forEach((circle, idx) => {
+                  const fileColor = getSizeFillColor(circle.node.size)
+                  const bubbleId = `bubble-${cellNode.path}-${idx}`
+
+                  // Draw circle with drag support
+                  const bubbleCircle = bubbleGroup.append('circle')
+                    .attr('id', bubbleId)
                     .attr('cx', circle.x)
                     .attr('cy', circle.y)
                     .attr('r', circle.r)
                     .attr('fill', fileColor)
-                    .attr('fill-opacity', 0.5)
+                    .attr('fill-opacity', depth === 0 ? 0.3 : 0.5) // Lower opacity for preview
                     .attr('stroke', fileColor)
                     .attr('stroke-width', 1.5)
-                    .attr('stroke-opacity', 0.8)
-                    .style('cursor', 'default')
+                    .attr('stroke-opacity', depth === 0 ? 0.5 : 0.8)
+                    .style('cursor', depth === 1 ? 'grab' : 'default')
+                    .datum({ ...circle, polygon, centroid: d3.polygonCentroid(polygon) })
+
+                  // Add hover effects
+                  bubbleCircle
                     .on('mouseover', function(event) {
                       d3.select(this)
                         .attr('fill-opacity', 0.7)
@@ -587,10 +662,69 @@ export function HierarchicalVoronoiView() {
                     })
                     .on('mouseout', function() {
                       d3.select(this)
-                        .attr('fill-opacity', 0.5)
+                        .attr('fill-opacity', depth === 0 ? 0.3 : 0.5)
                         .attr('stroke-width', 1.5)
                       hideTooltip()
                     })
+
+                  // Add drag behavior ONLY for depth 1 (explored folders)
+                  if (depth === 1) {
+                    const drag = d3.drag<SVGCircleElement, any>()
+                      .on('start', function() {
+                        d3.select(this).style('cursor', 'grabbing')
+                        if (simulationRef.current) {
+                          simulationRef.current.stop()
+                        }
+                      })
+                      .on('drag', function(event, d: any) {
+                        const newX = event.x
+                        const newY = event.y
+
+                        // Check if new position is within polygon
+                        if (isCircleInPolygon(newX, newY, d.r, d.polygon)) {
+                          d.x = newX
+                          d.y = newY
+                          d3.select(this)
+                            .attr('cx', newX)
+                            .attr('cy', newY)
+                        }
+                      })
+                      .on('end', function(_event, d: any) {
+                        d3.select(this).style('cursor', 'grab')
+
+                        // Create regrouping simulation
+                        const allBubbles = bubbleGroup.selectAll('circle').data() as any[]
+
+                        const regroup = d3.forceSimulation(allBubbles)
+                          .force('collision', d3.forceCollide<any>().radius((b: any) => b.r + 2))
+                          .force('x', d3.forceX((b: any) => b.centroid[0]).strength(0.15))
+                          .force('y', d3.forceY((b: any) => b.centroid[1]).strength(0.15))
+                          .force('center', d3.forceCenter(d.centroid[0], d.centroid[1]).strength(0.05))
+                          .alphaDecay(0.05)
+                          .on('tick', () => {
+                            bubbleGroup.selectAll('circle').each(function(bubble: any) {
+                              // Enforce polygon boundaries during regrouping
+                              if (!isCircleInPolygon(bubble.x, bubble.y, bubble.r, bubble.polygon)) {
+                                const dx = bubble.centroid[0] - bubble.x
+                                const dy = bubble.centroid[1] - bubble.y
+                                const dist = Math.sqrt(dx * dx + dy * dy)
+                                if (dist > 0) {
+                                  bubble.x += (dx / dist) * 3
+                                  bubble.y += (dy / dist) * 3
+                                }
+                              }
+
+                              d3.select(this)
+                                .attr('cx', bubble.x)
+                                .attr('cy', bubble.y)
+                            })
+                          })
+
+                        simulationRef.current = regroup
+                      })
+
+                    bubbleCircle.call(drag as any)
+                  }
                 })
               }
             }
@@ -1017,7 +1151,7 @@ export function HierarchicalVoronoiView() {
         <svg ref={svgRef} className="rounded w-full h-full" />
       </div>
 
-      {/* Legend - CRITICAL: Clear explanation of semantic color scale */}
+      {/* Legend - Clear explanation of semantic color scale and new interaction modes */}
       <div className="grid grid-cols-2 gap-4 text-xs font-mono p-4 rounded"
            style={{ color: TERMINAL_COLORS.textDim, background: TERMINAL_COLORS.backgroundLight }}>
         <div>
@@ -1029,14 +1163,14 @@ export function HierarchicalVoronoiView() {
             </div>
             <div className="flex items-center gap-2">
               <div className="w-4 h-4 rounded-full border" style={{ borderColor: '#facc15', background: '#facc1580' }} />
-              <span>Files (bubbles in explored folders)</span>
+              <span>Files (bubbles, draggable when explored)</span>
             </div>
           </div>
 
           <p className="font-semibold mt-4 mb-2" style={{ color: TERMINAL_COLORS.text }}>Size-Based Color Scale</p>
           <div className="space-y-1 text-[10px]">
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded" style={{ background: '#10b981' }} />
+              <div className="w-3 h-3 rounded" style={{ background: '#4ade80' }} />
               <span className="text-green-400">Green: Small (10 MB - 1 GB)</span>
             </div>
             <div className="flex items-center gap-2">
@@ -1044,7 +1178,7 @@ export function HierarchicalVoronoiView() {
               <span className="text-yellow-400">Yellow: Medium (1 GB - 10 GB)</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded" style={{ background: '#f97316' }} />
+              <div className="w-3 h-3 rounded" style={{ background: '#fb923c' }} />
               <span className="text-orange-400">Orange: Large (10 GB - 50 GB)</span>
             </div>
             <div className="flex items-center gap-2">
@@ -1052,26 +1186,27 @@ export function HierarchicalVoronoiView() {
               <span className="text-red-400">Red: Very Large (50 GB+)</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded" style={{ background: '#6b7280' }} />
+              <div className="w-3 h-3 rounded" style={{ background: '#9ca3af' }} />
               <span className="text-gray-400">Gray: Negligible (&lt;10 MB)</span>
             </div>
           </div>
         </div>
         <div>
-          <p className="font-semibold mb-2" style={{ color: TERMINAL_COLORS.text }}>Controls</p>
+          <p className="font-semibold mb-2" style={{ color: TERMINAL_COLORS.text }}>Interactions</p>
           <div className="space-y-1.5">
-            <div>• Click directory to drill down</div>
-            <div>• Hover for details</div>
-            <div>• Scroll to zoom (camera movement)</div>
-            <div>• Drag to pan</div>
-            <div>• Use breadcrumb to navigate up</div>
+            <div>• Click directory to drill down and explore</div>
+            <div>• Drag file bubbles (auto-regroup on release)</div>
+            <div>• Hover for detailed tooltips</div>
+            <div>• Scroll to zoom, drag background to pan</div>
+            <div>• Use breadcrumb to navigate up hierarchy</div>
           </div>
 
           <p className="font-semibold mt-4 mb-2" style={{ color: TERMINAL_COLORS.text }}>Behavior</p>
           <div className="space-y-1.5 text-[10px]">
-            <div>• Folders show as nested polygons (up to 3 levels)</div>
-            <div>• File bubbles appear only in explored folders</div>
-            <div>• Click partition to see details in panel above</div>
+            <div>• One-level preview: see immediate children before clicking</div>
+            <div>• Metadata shown only for current visible level</div>
+            <div>• Bubbles never overlap or cross partition boundaries</div>
+            <div>• Physics-based clustering with collision detection</div>
             <div>• Larger areas = larger sizes (proportional)</div>
           </div>
         </div>
