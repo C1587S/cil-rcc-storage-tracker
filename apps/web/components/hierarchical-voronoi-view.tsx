@@ -278,13 +278,17 @@ export function HierarchicalVoronoiView() {
 
   const currentSnapshot = snapshots?.find(s => s.snapshot_date === selectedSnapshot)
 
-  // Eager fetch: Load data in background even before tab is visible
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['voronoi-tree-hierarchical', selectedSnapshot, referencePath],
-    queryFn: () => buildVoronoiTree(selectedSnapshot!, referencePath || '/project/cil', 3, 500),
-    enabled: !!selectedSnapshot && !!referencePath,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
+  // Fetch data for current view path (supports infinite drill-down)
+  // currentNode represents the active drilled-down folder, or null for root
+  const currentPath = currentNode ? currentNode.path : (referencePath || '/project/cil')
+
+  const { data, isLoading, error, isFetching } = useQuery({
+    queryKey: ['voronoi-tree-hierarchical', selectedSnapshot, currentPath],
+    queryFn: () => buildVoronoiTree(selectedSnapshot!, currentPath, 2, 500), // previewDepth = 2
+    enabled: !!selectedSnapshot && !!currentPath,
+    staleTime: 10 * 60 * 1000, // 10 minutes - aggressive caching
+    gcTime: 30 * 60 * 1000, // 30 minutes cache retention
+    placeholderData: (previousData) => previousData, // Keep previous data while fetching
   })
 
   // Calculate project size from root data
@@ -304,7 +308,12 @@ export function HierarchicalVoronoiView() {
   }, [referencePath])
 
   const zoomIntoNode = useCallback((node: VoronoiNode) => {
-    if (isTransitioning || !node.isDirectory) return
+    if (isTransitioning || !node.isDirectory) {
+      console.log(`[Navigation] Blocked: isTransitioning=${isTransitioning}, isDirectory=${node.isDirectory}`)
+      return
+    }
+
+    console.log(`[Navigation] Drilling into: ${node.path} (from ${currentNode?.path || 'root'})`)
 
     setIsTransitioning(true)
 
@@ -410,7 +419,9 @@ export function HierarchicalVoronoiView() {
   useEffect(() => {
     if (!data || !svgRef.current || !containerRef.current || isTransitioning) return
 
-    const displayNode = currentNode || data
+    // CRITICAL: Always display freshly fetched data, not stale currentNode
+    // data is fetched for currentPath, which is derived from currentNode
+    const displayNode = data
 
     const container = containerRef.current
     const width = container.clientWidth
@@ -467,6 +478,11 @@ export function HierarchicalVoronoiView() {
     onNodeClick: (node: VoronoiNode) => void,
     onPartitionSelect: (node: VoronoiNode) => void
   ) => {
+    // DEBUG: Log rendering details (BEFORE filtering)
+    const folders = node.children?.filter(c => c.isDirectory) || []
+    const files = node.children?.filter(c => !c.isDirectory) || []
+    console.log(`[Voronoi Render] PRE-FILTER: path="${node.path}", folders=${folders.length}, files=${files.length}, totalChildren=${node.children?.length || 0}`)
+
     const padding = 20
     const clipPolygon: [number, number][] = [
       [padding, padding],
@@ -475,8 +491,46 @@ export function HierarchicalVoronoiView() {
       [padding, height - padding]
     ]
 
-    const hierarchy = d3.hierarchy(node)
+    // CRITICAL FIX: Filter out files from hierarchy - only directories get Voronoi partitions
+    // Files will be rendered as bubbles inside their parent directory's polygon
+    const filterFilesFromHierarchy = (n: any, depth: number = 0): any => {
+      if (!n.children || n.children.length === 0) return n
+
+      // CRITICAL: Check BOTH isDirectory and is_directory for compatibility
+      // Log any mismatches to catch data integrity issues
+      const directoriesOnly = n.children.filter((child: VoronoiNode) => {
+        const isDir = child.isDirectory ?? child.is_directory ?? false
+        if (child.isDirectory !== child.is_directory) {
+          console.warn(`[Filter WARNING] Mismatch at depth ${depth}: ${child.name}, isDirectory=${child.isDirectory}, is_directory=${child.is_directory}`)
+        }
+        return isDir
+      })
+
+      const filesFiltered = n.children.length - directoriesOnly.length
+      if (filesFiltered > 0) {
+        console.log(`[Filter] depth=${depth}, path="${n.path}", filtered out ${filesFiltered} files, kept ${directoriesOnly.length} dirs`)
+      }
+
+      // CRITICAL: Even if there are no subdirectories, preserve the parent as a valid node
+      // Don't set children to undefined, set to empty array - this keeps the directory visible
+      return {
+        ...n,
+        children: directoriesOnly.length > 0
+          ? directoriesOnly.map((child: any) => filterFilesFromHierarchy(child, depth + 1))
+          : []  // Empty array, not undefined - directory with only files is still valid
+      }
+    }
+
+    const hierarchyData = filterFilesFromHierarchy(node)
+
+    // DEBUG: Log what's left after filtering
+    const filteredFolders = hierarchyData.children?.filter((c: VoronoiNode) => c.isDirectory) || []
+    const filteredFiles = hierarchyData.children?.filter((c: VoronoiNode) => !c.isDirectory) || []
+    console.log(`[Voronoi Render] POST-FILTER: folders=${filteredFolders.length}, files=${filteredFiles.length} (files should be 0)`)
+
+    const hierarchy = d3.hierarchy(hierarchyData)
       .sum(d => {
+        // Sum only directory sizes (files are already filtered out)
         if (!d.children || d.children.length === 0) {
           return Math.max(d.size || 1, 1)
         }
@@ -499,6 +553,14 @@ export function HierarchicalVoronoiView() {
       const byDepth = d3.group(allDescendants, d => d.depth)
       const depths = Array.from(byDepth.keys()).sort((a, b) => b - a)
 
+      // DEBUG: Log rendering counts by depth
+      depths.forEach(depth => {
+        const cells = byDepth.get(depth) || []
+        const dirCount = cells.filter(d => (d.data as VoronoiNode).isDirectory).length
+        const fileCount = cells.filter(d => !(d.data as VoronoiNode).isDirectory).length
+        console.log(`[Voronoi Render] depth=${depth}, totalCells=${cells.length}, dirs=${dirCount}, files=${fileCount}`)
+      })
+
       depths.forEach(depth => {
         const cells = byDepth.get(depth) || []
 
@@ -510,14 +572,18 @@ export function HierarchicalVoronoiView() {
 
           const centroid = d3.polygonCentroid(polygon)
           const area = Math.abs(d3.polygonArea(polygon))
-          const isLeaf = !cellNode.children || cellNode.children.length === 0
           const isDirectory = cellNode.isDirectory
 
           // Get semantic color based on size (CRITICAL: replaces hardcoded green)
           const fillColor = getSizeFillColor(cellNode.size)
           const strokeColor = fillColor
 
-          if (isDirectory && !isLeaf) {
+          // CRITICAL FIX: Render ALL directories as partitions, not just non-leaf ones
+          // Bug was: if (isDirectory && !isLeaf) - this excluded directories with only files!
+          // After filtering files, those directories have children: [] (empty), making isLeaf=true
+          // This caused subfolder partitions to disappear in mixed-content directories
+          // Solution: Render all directories, regardless of whether they have subdirectories
+          if (isDirectory) {
             // Folder partition: semantic color based on size
             const path = g.append('path')
               .attr('d', 'M' + polygon.map((p: any) => p.join(',')).join('L') + 'Z')
@@ -550,6 +616,7 @@ export function HierarchicalVoronoiView() {
                 event.stopPropagation()
                 // Set selected partition first, then drill down
                 onPartitionSelect(cellNode)
+                // Pass the cellNode from the CURRENT data, not from closure
                 onNodeClick(cellNode)
               })
 
@@ -617,11 +684,14 @@ export function HierarchicalVoronoiView() {
               }
             }
 
-            // Show file bubbles for immediate children (depth === 1 means direct children of current view)
-            // Preview mode: also show files at depth 0 (one level before drilling down)
-            if ((depth === 0 || depth === 1) && area > 5000 && cellNode.children) {
+            // Show file bubbles for preview depths (0, 1, 2)
+            // Depth 0: One level before current (dimmed preview)
+            // Depth 1: Current exploration level (full interactivity)
+            // Depth 2: One level deeper (preview for next drill-down)
+            if ((depth === 0 || depth === 1 || depth === 2) && area > 3000 && cellNode.children) {
               const files = cellNode.children.filter(child => !child.isDirectory)
               if (files.length > 0) {
+                console.log(`[Bubble Rendering] depth=${depth}, partition="${cellNode.name}", files=${files.length}, area=${Math.floor(area)}`)
                 const fileData = files.map(file => ({
                   node: file,
                   value: file.size
@@ -639,17 +709,19 @@ export function HierarchicalVoronoiView() {
                   const bubbleId = `bubble-${cellNode.path}-${idx}`
 
                   // Draw circle with drag support
+                  // Opacity based on depth: 0=preview(dim), 1=current(normal), 2=preview(dim)
+                  const isPreview = depth === 0 || depth === 2
                   const bubbleCircle = bubbleGroup.append('circle')
                     .attr('id', bubbleId)
                     .attr('cx', circle.x)
                     .attr('cy', circle.y)
                     .attr('r', circle.r)
                     .attr('fill', fileColor)
-                    .attr('fill-opacity', depth === 0 ? 0.3 : 0.5) // Lower opacity for preview
+                    .attr('fill-opacity', isPreview ? 0.3 : 0.5) // Lower opacity for preview levels
                     .attr('stroke', fileColor)
                     .attr('stroke-width', 1.5)
-                    .attr('stroke-opacity', depth === 0 ? 0.5 : 0.8)
-                    .style('cursor', depth === 1 ? 'grab' : 'default')
+                    .attr('stroke-opacity', isPreview ? 0.5 : 0.8)
+                    .style('cursor', depth === 1 ? 'grab' : 'default') // Only depth 1 is draggable
                     .datum({ ...circle, polygon, centroid: d3.polygonCentroid(polygon) })
 
                   // Add hover effects
@@ -661,16 +733,19 @@ export function HierarchicalVoronoiView() {
                       showTooltip(event, circle.node)
                     })
                     .on('mouseout', function() {
+                      const isPreview = depth === 0 || depth === 2
                       d3.select(this)
-                        .attr('fill-opacity', depth === 0 ? 0.3 : 0.5)
+                        .attr('fill-opacity', isPreview ? 0.3 : 0.5)
                         .attr('stroke-width', 1.5)
                       hideTooltip()
                     })
 
                   // Add drag behavior ONLY for depth 1 (explored folders)
                   if (depth === 1) {
+                    console.log(`[Drag] Attaching drag handler to bubble ${bubbleId} at depth 1`)
                     const drag = d3.drag<SVGCircleElement, any>()
                       .on('start', function() {
+                        console.log(`[Drag] Drag started on ${bubbleId}`)
                         d3.select(this).style('cursor', 'grabbing')
                         if (simulationRef.current) {
                           simulationRef.current.stop()
@@ -728,69 +803,59 @@ export function HierarchicalVoronoiView() {
                 })
               }
             }
-          } else if (!isDirectory) {
-            // File partition: semantic color based on size
-            const fileColor = getSizeFillColor(cellNode.size)
-
-            g.append('path')
-              .attr('d', 'M' + polygon.map((p: any) => p.join(',')).join('L') + 'Z')
-              .attr('fill', fileColor)
-              .attr('fill-opacity', 0.3)
-              .attr('stroke', fileColor)
-              .attr('stroke-width', 1.5)
-              .attr('stroke-opacity', 0.7)
-              .style('cursor', 'default')
-              .on('mouseover', function(event) {
-                d3.select(this)
-                  .attr('fill-opacity', 0.5)
-                  .attr('stroke-width', 2.5)
-                  .attr('stroke-opacity', 1)
-                showTooltip(event, cellNode)
-              })
-              .on('mouseout', function() {
-                d3.select(this)
-                  .attr('fill-opacity', 0.3)
-                  .attr('stroke-width', 1.5)
-                  .attr('stroke-opacity', 0.7)
-                hideTooltip()
-              })
-
-            // Label for files (no icons)
-            if (area > 1500) {
-              const fontSize = Math.min(10, Math.sqrt(area) / 18)
-
-              g.append('text')
-                .attr('x', centroid[0])
-                .attr('y', centroid[1] - 2)
-                .attr('text-anchor', 'middle')
-                .attr('fill', TERMINAL_COLORS.textBright)
-                .attr('font-size', `${fontSize}px`)
-                .attr('font-weight', '600')
-                .attr('font-family', 'monospace')
-                .attr('pointer-events', 'none')
-                .attr('stroke', TERMINAL_COLORS.background)
-                .attr('stroke-width', 2.5)
-                .attr('paint-order', 'stroke')
-                .text(cellNode.name.length > 20 ? cellNode.name.slice(0, 17) + '...' : cellNode.name)
-
-              if (area > 2500) {
-                g.append('text')
-                  .attr('x', centroid[0])
-                  .attr('y', centroid[1] + fontSize + 2)
-                  .attr('text-anchor', 'middle')
-                  .attr('fill', fileColor)
-                  .attr('font-size', `${fontSize * 0.8}px`)
-                  .attr('font-family', 'monospace')
-                  .attr('pointer-events', 'none')
-                  .attr('stroke', TERMINAL_COLORS.background)
-                  .attr('stroke-width', 2)
-                  .attr('paint-order', 'stroke')
-                  .text(formatBytes(cellNode.size))
-              }
-            }
           }
+          // NOTE: Files are NEVER rendered as partitions - they are filtered out of hierarchy
+          // Files are ONLY rendered as bubbles inside directory partitions (see bubble rendering above)
         })
       })
+
+      // CRITICAL: Render root-level files as bubbles in the root container
+      // These are files that are direct children of the current node
+      const rootFiles = node.children?.filter(child => !child.isDirectory) || []
+      if (rootFiles.length > 0) {
+        console.log(`[Voronoi Render] Rendering ${rootFiles.length} root-level files as bubbles in root container`)
+
+        const fileData = rootFiles.map(file => ({
+          node: file,
+          value: file.size
+        }))
+
+        const circles = packCirclesInPolygon(clipPolygon, fileData, 20)
+
+        const rootBubbleGroup = g.append('g')
+          .attr('class', 'root-bubble-group')
+
+        circles.forEach((circle, idx) => {
+          const fileColor = getSizeFillColor(circle.node.size)
+          const bubbleId = `root-bubble-${idx}`
+
+          const bubbleCircle = rootBubbleGroup.append('circle')
+            .attr('id', bubbleId)
+            .attr('cx', circle.x)
+            .attr('cy', circle.y)
+            .attr('r', circle.r)
+            .attr('fill', fileColor)
+            .attr('fill-opacity', 0.6)
+            .attr('stroke', fileColor)
+            .attr('stroke-width', 2)
+            .attr('stroke-opacity', 0.9)
+            .style('cursor', 'default')
+
+          bubbleCircle
+            .on('mouseover', function(event) {
+              d3.select(this)
+                .attr('fill-opacity', 0.8)
+                .attr('stroke-width', 3)
+              showTooltip(event, circle.node)
+            })
+            .on('mouseout', function() {
+              d3.select(this)
+                .attr('fill-opacity', 0.6)
+                .attr('stroke-width', 2)
+              hideTooltip()
+            })
+        })
+      }
 
     } catch (error) {
       console.error('[HierarchicalVoronoi] Error:', error)
@@ -1099,6 +1164,17 @@ export function HierarchicalVoronoiView() {
             </span>
           ))}
         </div>
+
+        {/* Subtle loading indicator */}
+        {isFetching && !isLoading && (
+          <div className="flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded" style={{
+            background: TERMINAL_COLORS.backgroundLight,
+            color: TERMINAL_COLORS.textDim
+          }}>
+            <div className="w-1 h-1 rounded-full bg-cyan-500/60 animate-pulse" />
+            <span>Loading...</span>
+          </div>
+        )}
       </div>
 
       {/* Controls */}
@@ -1143,12 +1219,24 @@ export function HierarchicalVoronoiView() {
       </div>
 
       {/* Visualization container - CRITICAL: SVG always fills container, zoom transforms inner <g> */}
-      <div ref={containerRef} className="w-full rounded overflow-hidden border"
+      <div ref={containerRef} className="w-full rounded overflow-hidden border relative"
            style={{
              borderColor: TERMINAL_COLORS.border,
              height: isFullscreen ? `${window.innerHeight - 300}px` : '700px'
            }}>
         <svg ref={svgRef} className="rounded w-full h-full" />
+
+        {/* Loading overlay to block clicks during fetch */}
+        {isFetching && (
+          <div className="absolute inset-0 bg-black/20 flex items-center justify-center pointer-events-auto cursor-wait"
+               style={{ backdropFilter: 'blur(2px)' }}>
+            <div className="bg-muted/90 rounded-lg px-6 py-4 flex items-center gap-3 border border-border/50">
+              <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
+                   style={{ borderColor: '#4ade80', borderTopColor: 'transparent' }} />
+              <span className="text-sm font-mono text-foreground/90">Loading...</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Legend - Clear explanation of semantic color scale and new interaction modes */}

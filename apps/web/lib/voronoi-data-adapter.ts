@@ -14,24 +14,26 @@ export interface VoronoiNode {
 /**
  * Build a hierarchical tree for Voronoi visualization from flat browse/contents API.
  *
+ * CRITICAL: No hard depth limit - user can drill down infinitely.
+ *
  * Performance guardrails:
- * - maxDepth: Limit tree depth (default 2, recommended 1-3)
- * - maxNodes: Hard cap on total nodes (default 500, max safe value)
+ * - previewDepth: Initial preview depth (default 2 for performance)
+ * - maxNodes: Hard cap on total nodes per level (default 500, max safe value)
  *
  * Data semantics:
  * - Uses recursive_size from /api/browse for accurate directory sizes
  * - Falls back to size if recursive_size unavailable
- * - Fetches files from /api/contents at leaf level
+ * - Fetches BOTH folders and files at every level
  */
 export async function buildVoronoiTree(
   snapshotDate: string,
   path: string,
-  maxDepth: number = 2,
+  previewDepth: number = 2,
   maxNodes: number = 500
 ): Promise<VoronoiNode> {
-  console.log(`[buildVoronoiTree] Starting build for path="${path}", maxDepth=${maxDepth}, maxNodes=${maxNodes}`);
+  console.log(`[buildVoronoiTree] Starting build for path="${path}", previewDepth=${previewDepth}, maxNodes=${maxNodes}`);
 
-  // Fetch root directory folders
+  // Fetch root directory folders (ONLY folders from /api/browse)
   const browseResult = await getBrowse({
     snapshot_date: snapshotDate,
     parent_path: path,
@@ -51,7 +53,7 @@ export async function buildVoronoiTree(
 
   console.log(`[buildVoronoiTree] Top ${sortedFolders.length} folders by size (after limiting to ${maxNodes})`);
 
-  // Build children recursively if maxDepth > 1
+  // Build children recursively up to preview depth
   const children: VoronoiNode[] = await Promise.all(
     sortedFolders.map(async (folder) => {
       const node: VoronoiNode = {
@@ -64,14 +66,14 @@ export async function buildVoronoiTree(
         depth: 1,
       };
 
-      // Recursively fetch children if within depth limit
-      if (maxDepth > 1) {
+      // Recursively fetch children if within preview depth
+      if (previewDepth > 1) {
         try {
           const childNodes = await fetchChildren(
             snapshotDate,
             folder.path,
             2, // Current depth for children
-            maxDepth,
+            previewDepth,
             Math.floor(maxNodes / sortedFolders.length) // Distribute node budget
           );
           if (childNodes.length > 0) {
@@ -87,8 +89,35 @@ export async function buildVoronoiTree(
     })
   );
 
+  // CRITICAL FIX: Also fetch files at root level
+  let rootFiles: VoronoiNode[] = [];
+  try {
+    const contentsResult = await getContents({
+      snapshot_date: snapshotDate,
+      parent_path: path,
+      limit: 100,
+      sort: "size_desc",
+    });
+
+    rootFiles = contentsResult.entries
+      .filter(entry => !entry.is_directory) // ONLY files, no directories
+      .slice(0, 50) // Top 50 files
+      .map(file => ({
+        name: file.name,
+        size: file.size,
+        path: file.path,
+        isDirectory: false,
+        is_directory: false,
+        depth: 1,
+      }));
+
+    console.log(`[buildVoronoiTree] Added ${rootFiles.length} files at root level`);
+  } catch (error) {
+    console.warn(`[buildVoronoiTree] Failed to fetch root files:`, error);
+  }
+
   // Calculate root size (sum of all children)
-  const totalSize = children.reduce((sum, child) => sum + child.size, 0);
+  const totalSize = [...children, ...rootFiles].reduce((sum, child) => sum + child.size, 0);
 
   // Build root node
   const rootName = path === "/" ? "root" : path.split("/").filter(Boolean).pop() || "root";
@@ -98,32 +127,36 @@ export async function buildVoronoiTree(
     path: path,
     isDirectory: true,
     is_directory: true,
-    children: children.filter(child => child.size > 0), // Filter out zero-size nodes
-    file_count: browseResult.total_count, // Total count of folders in browse result
+    children: [...children, ...rootFiles].filter(child => child.size > 0), // CRITICAL: Include files
+    file_count: browseResult.total_count,
     depth: 0,
   };
 
-  console.log(`[buildVoronoiTree] Built root node with ${rootNode.children?.length || 0} children, total size: ${totalSize}`);
+  console.log(`[buildVoronoiTree] Built root node with ${rootNode.children?.length || 0} children (${children.length} folders, ${rootFiles.length} files), total size: ${totalSize}`);
 
   return rootNode;
 }
 
 /**
- * Recursively fetch children for a directory.
- * Includes both subdirectories and files at the leaf level.
+ * Recursively fetch children for a directory (for initial preview build).
+ *
+ * CRITICAL: This is ONLY used for initial preview rendering.
+ * When user clicks to drill down, we fetch fresh data on-demand (no depth limit).
+ *
+ * Includes both subdirectories and files at every level.
  */
 async function fetchChildren(
   snapshotDate: string,
   parentPath: string,
   currentDepth: number,
-  maxDepth: number,
+  previewDepth: number,
   nodeBudget: number
 ): Promise<VoronoiNode[]> {
-  console.log(`[fetchChildren] path="${parentPath}", depth=${currentDepth}, budget=${nodeBudget}`);
+  console.log(`[fetchChildren] path="${parentPath}", depth=${currentDepth}/${previewDepth}, budget=${nodeBudget}`);
 
   const children: VoronoiNode[] = [];
 
-  // Fetch subdirectories
+  // Fetch subdirectories (ONLY folders, guaranteed by /api/browse)
   const browseResult = await getBrowse({
     snapshot_date: snapshotDate,
     parent_path: parentPath,
@@ -153,14 +186,14 @@ async function fetchChildren(
       depth: currentDepth,
     };
 
-    // Recurse if we haven't hit max depth
-    if (currentDepth < maxDepth) {
+    // Recurse if we haven't hit preview depth
+    if (currentDepth < previewDepth) {
       try {
         const grandchildren = await fetchChildren(
           snapshotDate,
           folder.path,
           currentDepth + 1,
-          maxDepth,
+          previewDepth,
           Math.floor(nodeBudget / topFolders.length)
         );
         if (grandchildren.length > 0) {
@@ -169,52 +202,26 @@ async function fetchChildren(
       } catch (error) {
         console.warn(`[fetchChildren] Failed to fetch grandchildren for ${folder.path}:`, error);
       }
-    } else {
-      // CRITICAL FIX: At max depth, fetch files as children of this folder
-      try {
-        const contentsResult = await getContents({
-          snapshot_date: snapshotDate,
-          parent_path: folder.path,
-          limit: Math.max(20, Math.floor(nodeBudget / topFolders.length)), // Files per folder
-          sort: "size_desc",
-        });
-
-        const files = contentsResult.entries
-          .filter(entry => !entry.is_directory)
-          .slice(0, 20) // Top 20 largest files per folder
-          .map(file => ({
-            name: file.name,
-            size: file.size,
-            path: file.path,
-            isDirectory: false,
-            is_directory: false,
-            depth: currentDepth + 1,
-          }));
-
-        if (files.length > 0) {
-          node.children = files;
-          console.log(`[fetchChildren] Added ${files.length} files to folder ${folder.name} at depth ${currentDepth}`);
-        }
-      } catch (error) {
-        console.warn(`[fetchChildren] Failed to fetch files for folder ${folder.path}:`, error);
-      }
     }
+    // CRITICAL: Do NOT add files as children here at preview depth
+    // Files will be fetched separately below for the current directory
 
     children.push(node);
   }
 
-  // CRITICAL FIX: Also fetch top-level files in the current directory (not just in subfolders)
+  // CRITICAL FIX: Fetch files at THIS directory level (not nested inside folders)
+  // This ensures files appear as siblings to folders, not as children of folders
   try {
     const contentsResult = await getContents({
       snapshot_date: snapshotDate,
       parent_path: parentPath,
-      limit: Math.max(20, Math.floor(nodeBudget / 2)), // At least 20 files, up to half the budget
+      limit: Math.max(50, Math.floor(nodeBudget / 2)), // At least 50 files
       sort: "size_desc",
     });
 
     const files = contentsResult.entries
-      .filter(entry => !entry.is_directory)
-      .slice(0, Math.floor(nodeBudget / 2))
+      .filter(entry => !entry.is_directory) // CRITICAL: ONLY files, exclude directories
+      .slice(0, 50) // Top 50 largest files
       .map(file => ({
         name: file.name,
         size: file.size,
@@ -224,7 +231,7 @@ async function fetchChildren(
         depth: currentDepth,
       }));
 
-    console.log(`[fetchChildren] Added ${files.length} direct files at path ${parentPath}, depth ${currentDepth}`);
+    console.log(`[fetchChildren] Added ${files.length} files at path ${parentPath}, depth ${currentDepth}`);
     children.push(...files);
   } catch (error) {
     console.warn(`[fetchChildren] Failed to fetch files for ${parentPath}:`, error);
