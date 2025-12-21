@@ -477,11 +477,11 @@ function TreeNode({
 }
 
 export function DiskUsageExplorerV2() {
-  const { selectedSnapshot } = useAppStore();
+  const { selectedSnapshot, referencePath, referenceSize, setReferencePath, setReferenceSize } = useAppStore();
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [state, setState] = useState<DiskUsageState>({
-    referencePath: "/project/cil",  // Default reference to project root
-    referenceSize: null,  // Will be set once data loads
+    referencePath: referencePath,  // Use global store value
+    referenceSize: referenceSize,  // Use global store value
     sortMode: "size",  // Default: sort by size (largest first)
     selectedPath: null,  // No selection initially
   });
@@ -497,11 +497,11 @@ export function DiskUsageExplorerV2() {
 
   // Fetch root browse to calculate project size (use recursive sizes)
   const { data: rootData } = useQuery({
-    queryKey: ["browse", selectedSnapshot, "/project/cil"],
+    queryKey: ["browse", selectedSnapshot, referencePath],
     queryFn: () =>
       getBrowse({
         snapshot_date: selectedSnapshot!,
-        parent_path: "/project/cil",
+        parent_path: referencePath,
         limit: 1000,
       }),
     enabled: !!selectedSnapshot,
@@ -513,7 +513,7 @@ export function DiskUsageExplorerV2() {
     : 0;
 
   // Use custom reference if set, otherwise use project total
-  const referenceSize = state.referenceSize || projectSize;
+  const effectiveReferenceSize = referenceSize || projectSize;
 
   // Fetch data for the selected path (for context card)
   const { data: selectedData } = useQuery({
@@ -527,12 +527,21 @@ export function DiskUsageExplorerV2() {
     enabled: !!selectedSnapshot && !!state.selectedPath,
   });
 
-  // Update reference size when project size loads (only if reference is still /project/cil)
+  // Update global reference size when project size loads
   useEffect(() => {
-    if (projectSize > 0 && state.referencePath === "/project/cil" && !state.referenceSize) {
-      setState((prev) => ({ ...prev, referenceSize: projectSize }));
+    if (projectSize > 0 && referencePath === "/project/cil" && !referenceSize) {
+      setReferenceSize(projectSize);
     }
-  }, [projectSize, state.referencePath, state.referenceSize]);
+  }, [projectSize, referencePath, referenceSize, setReferenceSize]);
+
+  // Sync local state with global store
+  useEffect(() => {
+    setState((prev) => ({
+      ...prev,
+      referencePath: referencePath,
+      referenceSize: referenceSize,
+    }));
+  }, [referencePath, referenceSize]);
 
   // ESC to exit fullscreen
   useEffect(() => {
@@ -548,11 +557,9 @@ export function DiskUsageExplorerV2() {
   }, [isFullscreen]);
 
   const handleSetReference = (path: string, size: number) => {
-    setState((prev) => ({
-      ...prev,
-      referencePath: path,
-      referenceSize: size,
-    }));
+    // Update global store (shared with Voronoi)
+    setReferencePath(path);
+    setReferenceSize(size);
   };
 
   if (!selectedSnapshot) {
@@ -854,7 +861,7 @@ export function DiskUsageExplorerV2() {
             modifiedTime={undefined}
             accessedTime={undefined}
             fileType={undefined}
-            referenceSize={referenceSize}
+            referenceSize={effectiveReferenceSize}
             state={state}
             setState={setState}
             onSetReference={handleSetReference}
