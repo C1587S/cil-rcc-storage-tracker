@@ -8,19 +8,13 @@ import { Button } from "@/components/ui/button";
 import { FileTypeTreemap } from "@/components/file-type-treemap";
 import {
   ChevronRight,
-  Folder,
-  FolderOpen,
   File,
-  FileText,
-  Image,
-  Film,
-  Archive,
-  Code,
-  Database,
+  Folder,
   Maximize2,
   Minimize2,
   Target,
 } from "lucide-react";
+import { getFileIcon, getFolderIcon, getSizeColor } from "@/lib/utils/icon-helpers";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import type { DirectoryEntry } from "@/lib/types";
@@ -90,59 +84,7 @@ interface TreeNodeProps {
   parentPath: string;  // Parent directory path
 }
 
-// Get size-based severity color (5-level semaphore scale)
-function getSizeColor(sizeBytes: number): string {
-  const sizeGB = sizeBytes / (1024 ** 3);
-  if (sizeGB >= 50) return "text-red-500";         // ≥50GB: red (very large)
-  if (sizeGB >= 10) return "text-orange-400";      // ≥10GB: orange (large)
-  if (sizeGB >= 1) return "text-yellow-400";       // ≥1GB: yellow (medium)
-  if (sizeGB >= 0.01) return "text-green-400";     // ≥10MB: green (small)
-  return "text-muted-foreground/40";               // <10MB: near-white (negligible)
-}
-
-function getFileIcon(name: string, fileType: string | undefined, sizeBytes: number) {
-  const ext = name.split(".").pop()?.toLowerCase();
-  const colorClass = getSizeColor(sizeBytes);
-
-  // Scientific data files (NetCDF, HDF5, Zarr)
-  if (["nc", "nc4", "netcdf", "hdf", "hdf5", "h5", "he5", "zarr"].includes(ext || "")) {
-    return <Database className={cn("w-3.5 h-3.5", colorClass)} />;
-  }
-  // Tabular data (CSV, TSV, Parquet, Feather)
-  if (["csv", "tsv", "parquet", "feather", "arrow"].includes(ext || "")) {
-    return <Database className={cn("w-3.5 h-3.5", colorClass)} />;
-  }
-  // Statistical software files (Stata, R, SPSS, SAS)
-  if (["dta", "r", "rdata", "rds", "sav", "sas7bdat"].includes(ext || "")) {
-    return <Code className={cn("w-3.5 h-3.5", colorClass)} />;
-  }
-  // Code files (Python, Julia, MATLAB, Shell)
-  if (["py", "jl", "m", "sh", "bash", "zsh", "js", "ts", "tsx", "jsx", "cpp", "c", "h", "java", "rs", "go"].includes(ext || "")) {
-    return <Code className={cn("w-3.5 h-3.5", colorClass)} />;
-  }
-  // Archives
-  if (["zip", "tar", "gz", "bz2", "7z", "rar", "xz", "tgz", "tbz2"].includes(ext || "")) {
-    return <Archive className={cn("w-3.5 h-3.5", colorClass)} />;
-  }
-  // Images
-  if (["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "tiff", "tif"].includes(ext || "")) {
-    return <Image className={cn("w-3.5 h-3.5", colorClass)} />;
-  }
-  // Video
-  if (["mp4", "avi", "mkv", "mov", "wmv", "flv", "webm"].includes(ext || "")) {
-    return <Film className={cn("w-3.5 h-3.5", colorClass)} />;
-  }
-  // Structured data (JSON, XML, YAML)
-  if (["json", "xml", "yaml", "yml", "toml"].includes(ext || "")) {
-    return <Database className={cn("w-3.5 h-3.5", colorClass)} />;
-  }
-  // Text
-  if (["txt", "md", "log", "cfg", "conf", "ini", "env", "readme"].includes(ext || "")) {
-    return <FileText className={cn("w-3.5 h-3.5", colorClass)} />;
-  }
-
-  return <File className={cn("w-3.5 h-3.5", colorClass)} />;
-}
+// Icon and color logic moved to shared utility: lib/utils/icon-helpers.tsx
 
 function formatDate(timestamp?: number): string {
   if (!timestamp) return "";
@@ -328,11 +270,7 @@ function TreeNode({
                   isExpanded && "rotate-90"
                 )}
               />
-              {isExpanded ? (
-                <FolderOpen className={cn("w-3.5 h-3.5", getSizeColor(displaySize))} />
-              ) : (
-                <Folder className={cn("w-3.5 h-3.5", getSizeColor(displaySize))} />
-              )}
+              {getFolderIcon(displaySize, isExpanded)}
             </>
           ) : (
             <>
