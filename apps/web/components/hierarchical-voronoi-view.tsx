@@ -98,12 +98,14 @@ export function HierarchicalVoronoiView() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const zoomRef = useRef<any>(null)
 
-  // Auto-fetch data when snapshot and reference are available (no activation button)
+  // Eager fetch: Load data in background even before tab is visible
+  // This ensures instant rendering when user switches to Voronoi tab
   const { data, isLoading, error } = useQuery({
     queryKey: ['voronoi-tree-hierarchical', selectedSnapshot, referencePath],
     queryFn: () => buildVoronoiTree(selectedSnapshot!, referencePath || '/project/cil', 3, 500),
-    enabled: !!selectedSnapshot && !!referencePath,
+    enabled: !!selectedSnapshot && !!referencePath,  // Start loading immediately when snapshot selected
     staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,  // Keep in cache for 10 minutes
   })
 
   // Reset drill-down state when reference path changes
