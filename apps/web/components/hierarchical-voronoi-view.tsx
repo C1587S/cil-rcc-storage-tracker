@@ -1,5 +1,8 @@
 'use client'
 
+// DEBUG: Confirm file loaded
+console.log('[VORONOI] file loaded', new Date().toISOString())
+
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
@@ -209,17 +212,32 @@ function packCirclesInPolygon(
     // If we couldn't place after many attempts, skip this circle
   }
 
-  // Apply D3 force simulation for natural clustering (but keep within bounds)
+  // Apply D3 force simulation for natural clustering with STRONG boundary containment
   const simulation = d3.forceSimulation(circles as any)
-    .force('collision', d3.forceCollide<any>().radius((d: any) => d.r + 2))
-    .force('x', d3.forceX(centroid[0]).strength(0.05))
-    .force('y', d3.forceY(centroid[1]).strength(0.05))
-    .force('center', d3.forceCenter(centroid[0], centroid[1]).strength(0.02))
+    .force('collision', d3.forceCollide<any>().radius((d: any) => d.r + 3).strength(0.9)) // Stronger collision
+    .force('x', d3.forceX(centroid[0]).strength(0.15)) // Stronger pull to center X
+    .force('y', d3.forceY(centroid[1]).strength(0.15)) // Stronger pull to center Y
+    .force('center', d3.forceCenter(centroid[0], centroid[1]).strength(0.08)) // Stronger center force
+    .alphaDecay(0.02) // Slower decay for better settling
     .stop()
 
-  // Run simulation synchronously
-  for (let i = 0; i < 120; i++) {
+  // Run simulation synchronously with boundary enforcement
+  for (let i = 0; i < 150; i++) {
     simulation.tick()
+
+    // CRITICAL: Enforce boundaries during EVERY tick
+    circles.forEach((circle: any) => {
+      if (!isCircleInPolygon(circle.x, circle.y, circle.r, polygon)) {
+        // Push strongly toward centroid
+        const dx = centroid[0] - circle.x
+        const dy = centroid[1] - circle.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist > 0) {
+          circle.x += (dx / dist) * circle.r * 0.5 // Push proportional to radius
+          circle.y += (dy / dist) * circle.r * 0.5
+        }
+      }
+    })
   }
 
   // CRITICAL: Verify all circles are still within bounds after simulation
@@ -417,7 +435,9 @@ export function HierarchicalVoronoiView() {
   const { parts: pathParts, rootPartsCount } = buildBreadcrumbParts()
 
   useEffect(() => {
-    if (!data || !svgRef.current || !containerRef.current || isTransitioning) return
+    if (!data || !svgRef.current || !containerRef.current) return
+
+    console.log('[Render Effect] Running, data path:', data.path)
 
     // CRITICAL: Always display freshly fetched data, not stale currentNode
     // data is fetched for currentPath, which is derived from currentNode
@@ -430,28 +450,44 @@ export function HierarchicalVoronoiView() {
     if (width === 0) return
 
     const svg = d3.select(svgRef.current)
-    svg.selectAll('*').remove()
 
-    // CRITICAL FIX: SVG container is always 100% width/height
-    // Zoom transform is applied to inner <g> element ONLY
-    svg
-      .attr('width', '100%')
-      .attr('height', '100%')
-      .attr('viewBox', `0 0 ${width} ${height}`)
-      .style('background', TERMINAL_COLORS.background)
+    // CRITICAL FIX: Use stable container instead of clearing everything
+    // Only remove and recreate when data.path changes (new directory)
+    // This preserves D3 event handlers on bubbles
+    let g = svg.select<SVGGElement>('g#voronoi-root')
 
-    const g = svg.append('g')
+    // Only recreate if root doesn't exist or path changed
+    if (g.empty() || g.attr('data-path') !== data.path) {
+      console.log('[Render Effect] Creating new root for path:', data.path)
+      svg.selectAll('*').remove()
 
-    // CRITICAL FIX: Zoom scale extent starts at 1.0 (no shrinking)
-    // This ensures zoom is camera movement, not canvas resizing
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([1, 8])  // Start at 1.0, no shrinking below baseline
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform)
-      })
+      // CRITICAL FIX: SVG container is always 100% width/height
+      // Zoom transform is applied to inner <g> element ONLY
+      svg
+        .attr('width', '100%')
+        .attr('height', '100%')
+        .attr('viewBox', `0 0 ${width} ${height}`)
+        .style('background', TERMINAL_COLORS.background)
 
-    svg.call(zoom)
-    zoomRef.current = zoom
+      g = svg.append('g')
+        .attr('id', 'voronoi-root')
+        .attr('data-path', data.path)
+
+      // CRITICAL FIX: Zoom scale extent starts at 1.0 (no shrinking)
+      // This ensures zoom is camera movement, not canvas resizing
+      const zoom = d3.zoom<SVGSVGElement, unknown>()
+        .scaleExtent([1, 8])  // Start at 1.0, no shrinking below baseline
+        .on('zoom', (event) => {
+          g.attr('transform', event.transform)
+        })
+
+      svg.call(zoom)
+      zoomRef.current = zoom
+    } else {
+      console.log('[Render Effect] Reusing existing root for path:', data.path)
+      // Clear only the contents, keep the root <g> stable
+      g.selectAll('*').remove()
+    }
 
     if (!displayNode.children || displayNode.children.length === 0) {
       g.append('text')
@@ -467,8 +503,135 @@ export function HierarchicalVoronoiView() {
 
     renderHierarchicalVoronoi(g, displayNode, width, height, zoomIntoNode, setSelectedPartition)
 
+  // CRITICAL: Remove isTransitioning from dependencies to prevent re-renders during animation
+  // Only re-render when data actually changes (new path)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, currentNode, isTransitioning, zoomIntoNode, isFullscreen])
+  }, [data, zoomIntoNode, isFullscreen])
+
+  // CRITICAL FIX: Attach drag handlers AFTER rendering completes
+  // This separate useEffect ensures drag persists even if rendering re-runs
+  useEffect(() => {
+    if (!svgRef.current || !data) return
+
+    console.log('[Drag Effect] Attaching drag handlers to interactive bubbles')
+
+    const svg = d3.select(svgRef.current)
+    // CRITICAL: Select by data-interactive="1" (semantic), not depth (numeric)
+    // This works at any depth level, including root directories with only files
+    const interactiveBubbles = svg.selectAll<SVGCircleElement, any>('circle[data-interactive="1"]')
+
+    console.log('[Drag Effect] Found', interactiveBubbles.size(), 'interactive bubbles')
+
+    if (interactiveBubbles.empty()) {
+      console.log('[Drag Effect] No interactive bubbles found, skipping drag attachment')
+      return
+    }
+
+    // Check if already bound
+    const alreadyBound = interactiveBubbles.filter(function() {
+      return d3.select(this).attr('data-drag-bound') === '1'
+    })
+
+    if (alreadyBound.size() === interactiveBubbles.size()) {
+      console.log('[Drag Effect] All bubbles already have drag bound, skipping')
+      return
+    }
+
+    console.log('[Drag Effect] Attaching drag to', interactiveBubbles.size(), 'bubbles')
+
+    interactiveBubbles.each(function() {
+      const circle = d3.select(this)
+      const bubbleId = circle.attr('id')
+
+      // Skip if already bound
+      if (circle.attr('data-drag-bound') === '1') {
+        return
+      }
+
+      console.log(`[Drag Effect] Binding drag to ${bubbleId}`)
+
+      const drag = d3.drag<SVGCircleElement, any>()
+        .on('start', function() {
+          console.log(`[DRAG] start - ${bubbleId}`)
+          d3.select(this).style('cursor', 'grabbing')
+          if (simulationRef.current) {
+            simulationRef.current.stop()
+          }
+        })
+        .on('drag', function(event, d: any) {
+          const newX = event.x
+          const newY = event.y
+
+          // Check if new position is within polygon
+          if (isCircleInPolygon(newX, newY, d.r, d.polygon)) {
+            d.x = newX
+            d.y = newY
+            d3.select(this)
+              .attr('cx', newX)
+              .attr('cy', newY)
+          }
+        })
+        .on('end', function(_event, d: any) {
+          console.log(`[DRAG] end - ${bubbleId}`)
+          d3.select(this).style('cursor', 'grab')
+
+          // Get all bubbles in this partition
+          const partition = d3.select(this.parentElement!)
+          const allBubbles = partition.selectAll<SVGCircleElement, any>('circle').data() as any[]
+          console.log(`[SIM] Creating regrouping simulation for ${allBubbles.length} bubbles`)
+
+          // Custom gravity force: larger bubbles attract smaller ones
+          const gravityForce = () => {
+            allBubbles.forEach((bubble: any) => {
+              const largest = allBubbles.reduce((max, b) => b.r > max.r ? b : max, allBubbles[0])
+              if (!largest || bubble === largest) return
+
+              const dx = largest.x - bubble.x
+              const dy = largest.y - bubble.y
+              const dist = Math.sqrt(dx * dx + dy * dy)
+              if (dist > 0 && dist > bubble.r + largest.r) {
+                const strength = (largest.r / bubble.r) * 0.001
+                bubble.vx += (dx / dist) * strength
+                bubble.vy += (dy / dist) * strength
+              }
+            })
+          }
+
+          const regroup = d3.forceSimulation(allBubbles)
+            .force('collision', d3.forceCollide<any>().radius((b: any) => b.r + 3).strength(0.9))
+            .force('gravity', gravityForce as any)
+            .force('x', d3.forceX((b: any) => b.centroid[0]).strength(0.2))
+            .force('y', d3.forceY((b: any) => b.centroid[1]).strength(0.2))
+            .force('center', d3.forceCenter(d.centroid[0], d.centroid[1]).strength(0.1))
+            .alphaDecay(0.03)
+            .on('tick', () => {
+              partition.selectAll<SVGCircleElement, any>('circle').each(function(bubble: any) {
+                if (!isCircleInPolygon(bubble.x, bubble.y, bubble.r, bubble.polygon)) {
+                  const dx = bubble.centroid[0] - bubble.x
+                  const dy = bubble.centroid[1] - bubble.y
+                  const dist = Math.sqrt(dx * dx + dy * dy)
+                  if (dist > 0) {
+                    bubble.x += (dx / dist) * bubble.r * 0.6
+                    bubble.y += (dy / dist) * bubble.r * 0.6
+                  }
+                }
+
+                d3.select(this)
+                  .attr('cx', bubble.x)
+                  .attr('cy', bubble.y)
+              })
+            })
+
+          console.log(`[SIM] Simulation created, starting...`)
+          simulationRef.current = regroup
+        })
+
+      circle.call(drag as any)
+      circle.attr('data-drag-bound', '1')
+    })
+
+    console.log('[Drag Effect] Drag attachment complete')
+  }, [data])
 
   const renderHierarchicalVoronoi = (
     g: d3.Selection<SVGGElement, unknown, null, undefined>,
@@ -685,10 +848,11 @@ export function HierarchicalVoronoiView() {
             }
 
             // Show file bubbles for preview depths (0, 1, 2)
-            // Depth 0: One level before current (dimmed preview)
+            // Depth 0: One level before current (dimmed preview) - lower threshold for visibility
             // Depth 1: Current exploration level (full interactivity)
             // Depth 2: One level deeper (preview for next drill-down)
-            if ((depth === 0 || depth === 1 || depth === 2) && area > 3000 && cellNode.children) {
+            const areaThreshold = depth === 0 ? 2000 : 3000 // Lower threshold for preview
+            if ((depth === 0 || depth === 1 || depth === 2) && area > areaThreshold && cellNode.children) {
               const files = cellNode.children.filter(child => !child.isDirectory)
               if (files.length > 0) {
                 console.log(`[Bubble Rendering] depth=${depth}, partition="${cellNode.name}", files=${files.length}, area=${Math.floor(area)}`)
@@ -704,102 +868,56 @@ export function HierarchicalVoronoiView() {
                   .attr('class', 'bubble-group')
                   .attr('data-partition', cellNode.path)
 
+                // CRITICAL: Bubbles are interactive at depth 1 (current level)
+                // But when drilling down, depth shifts - use semantic marker instead
+                const isInteractive = depth === 1
+                console.log(`[BUBBLES] depth=${depth}, rendering ${circles.length} bubbles, interactive=${isInteractive}`)
+
                 circles.forEach((circle, idx) => {
                   const fileColor = getSizeFillColor(circle.node.size)
                   const bubbleId = `bubble-${cellNode.path}-${idx}`
 
                   // Draw circle with drag support
-                  // Opacity based on depth: 0=preview(dim), 1=current(normal), 2=preview(dim)
-                  const isPreview = depth === 0 || depth === 2
+                  // Opacity based on depth: 0=preview(visible), 1=current(normal), 2=preview(dimmed)
+                  // Depth 0 should be clearly visible for comparison, depth 2 can be dimmer
+                  const fillOpacity = depth === 0 ? 0.4 : depth === 1 ? 0.5 : 0.25
+                  const strokeOpacity = depth === 0 ? 0.7 : depth === 1 ? 0.8 : 0.5
+
                   const bubbleCircle = bubbleGroup.append('circle')
                     .attr('id', bubbleId)
+                    .attr('data-depth', depth)
+                    .attr('data-interactive', isInteractive ? '1' : '0') // CRITICAL: Semantic marker for drag
                     .attr('cx', circle.x)
                     .attr('cy', circle.y)
                     .attr('r', circle.r)
                     .attr('fill', fileColor)
-                    .attr('fill-opacity', isPreview ? 0.3 : 0.5) // Lower opacity for preview levels
+                    .attr('fill-opacity', fillOpacity)
                     .attr('stroke', fileColor)
                     .attr('stroke-width', 1.5)
-                    .attr('stroke-opacity', isPreview ? 0.5 : 0.8)
-                    .style('cursor', depth === 1 ? 'grab' : 'default') // Only depth 1 is draggable
+                    .attr('stroke-opacity', strokeOpacity)
+                    .style('cursor', isInteractive ? 'grab' : 'default')
+                    .style('pointer-events', 'auto') // Ensure events are enabled
                     .datum({ ...circle, polygon, centroid: d3.polygonCentroid(polygon) })
 
                   // Add hover effects
                   bubbleCircle
                     .on('mouseover', function(event) {
                       d3.select(this)
-                        .attr('fill-opacity', 0.7)
+                        .attr('fill-opacity', 0.8)
                         .attr('stroke-width', 2.5)
                       showTooltip(event, circle.node)
                     })
                     .on('mouseout', function() {
-                      const isPreview = depth === 0 || depth === 2
+                      // Restore depth-specific opacity
+                      const restoreOpacity = depth === 0 ? 0.4 : depth === 1 ? 0.5 : 0.25
                       d3.select(this)
-                        .attr('fill-opacity', isPreview ? 0.3 : 0.5)
+                        .attr('fill-opacity', restoreOpacity)
                         .attr('stroke-width', 1.5)
                       hideTooltip()
                     })
 
-                  // Add drag behavior ONLY for depth 1 (explored folders)
-                  if (depth === 1) {
-                    console.log(`[Drag] Attaching drag handler to bubble ${bubbleId} at depth 1`)
-                    const drag = d3.drag<SVGCircleElement, any>()
-                      .on('start', function() {
-                        console.log(`[Drag] Drag started on ${bubbleId}`)
-                        d3.select(this).style('cursor', 'grabbing')
-                        if (simulationRef.current) {
-                          simulationRef.current.stop()
-                        }
-                      })
-                      .on('drag', function(event, d: any) {
-                        const newX = event.x
-                        const newY = event.y
-
-                        // Check if new position is within polygon
-                        if (isCircleInPolygon(newX, newY, d.r, d.polygon)) {
-                          d.x = newX
-                          d.y = newY
-                          d3.select(this)
-                            .attr('cx', newX)
-                            .attr('cy', newY)
-                        }
-                      })
-                      .on('end', function(_event, d: any) {
-                        d3.select(this).style('cursor', 'grab')
-
-                        // Create regrouping simulation
-                        const allBubbles = bubbleGroup.selectAll('circle').data() as any[]
-
-                        const regroup = d3.forceSimulation(allBubbles)
-                          .force('collision', d3.forceCollide<any>().radius((b: any) => b.r + 2))
-                          .force('x', d3.forceX((b: any) => b.centroid[0]).strength(0.15))
-                          .force('y', d3.forceY((b: any) => b.centroid[1]).strength(0.15))
-                          .force('center', d3.forceCenter(d.centroid[0], d.centroid[1]).strength(0.05))
-                          .alphaDecay(0.05)
-                          .on('tick', () => {
-                            bubbleGroup.selectAll('circle').each(function(bubble: any) {
-                              // Enforce polygon boundaries during regrouping
-                              if (!isCircleInPolygon(bubble.x, bubble.y, bubble.r, bubble.polygon)) {
-                                const dx = bubble.centroid[0] - bubble.x
-                                const dy = bubble.centroid[1] - bubble.y
-                                const dist = Math.sqrt(dx * dx + dy * dy)
-                                if (dist > 0) {
-                                  bubble.x += (dx / dist) * 3
-                                  bubble.y += (dy / dist) * 3
-                                }
-                              }
-
-                              d3.select(this)
-                                .attr('cx', bubble.x)
-                                .attr('cy', bubble.y)
-                            })
-                          })
-
-                        simulationRef.current = regroup
-                      })
-
-                    bubbleCircle.call(drag as any)
-                  }
+                  // Drag handlers are attached in separate useEffect after rendering completes
+                  // This prevents React re-renders from destroying event handlers
                 })
               }
             }
@@ -813,7 +931,7 @@ export function HierarchicalVoronoiView() {
       // These are files that are direct children of the current node
       const rootFiles = node.children?.filter(child => !child.isDirectory) || []
       if (rootFiles.length > 0) {
-        console.log(`[Voronoi Render] Rendering ${rootFiles.length} root-level files as bubbles in root container`)
+        console.log(`[Voronoi Render] Rendering ${rootFiles.length} root-level files as bubbles in root container (interactive)`)
 
         const fileData = rootFiles.map(file => ({
           node: file,
@@ -831,6 +949,7 @@ export function HierarchicalVoronoiView() {
 
           const bubbleCircle = rootBubbleGroup.append('circle')
             .attr('id', bubbleId)
+            .attr('data-interactive', '1') // CRITICAL: Root bubbles are interactive (current level)
             .attr('cx', circle.x)
             .attr('cy', circle.y)
             .attr('r', circle.r)
@@ -839,7 +958,9 @@ export function HierarchicalVoronoiView() {
             .attr('stroke', fileColor)
             .attr('stroke-width', 2)
             .attr('stroke-opacity', 0.9)
-            .style('cursor', 'default')
+            .style('cursor', 'grab') // Root bubbles are draggable
+            .style('pointer-events', 'auto')
+            .datum({ ...circle, polygon: clipPolygon, centroid: d3.polygonCentroid(clipPolygon) })
 
           bubbleCircle
             .on('mouseover', function(event) {
