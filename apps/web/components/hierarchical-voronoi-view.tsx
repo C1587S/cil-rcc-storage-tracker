@@ -904,7 +904,7 @@ export function HierarchicalVoronoiView() {
       }
     })
 
-  }, [data, currentNode, isTransitioning, isFullscreen, handleDrillDown, handleInspect, getPartitionQuotaPercent, getFileQuotaPercent, getParentQuotaPercent, parentSize, selectedFileInPanel])
+  }, [data, currentNode, isTransitioning, isFullscreen, handleDrillDown, handleInspect, getPartitionQuotaPercent, getFileQuotaPercent, getParentQuotaPercent, parentSize])
 
   // --- BREADCRUMB ---
   const buildBreadcrumb = useCallback(() => {
@@ -984,8 +984,9 @@ export function HierarchicalVoronoiView() {
       {/* TOP ROW: Partition Info Panel + Interaction Guide */}
       <div className="flex gap-3">
         {/* PARTITION INFORMATION PANEL - ENHANCED WITH 4 METRICS */}
-        <div className="flex-1 bg-[#161b22] border border-gray-800 rounded-lg overflow-hidden">
-          <div className="bg-gray-800/50 px-3 py-2 border-b border-gray-700 flex items-center gap-2">
+        {/* CRITICAL: Fixed height prevents layout reflow when hovering partitions */}
+        <div className="flex-1 bg-[#161b22] border border-gray-800 rounded-lg overflow-hidden h-[420px] flex flex-col">
+          <div className="bg-gray-800/50 px-3 py-2 border-b border-gray-700 flex items-center gap-2 shrink-0">
             <Target className="w-4 h-4 text-cyan-400" />
             <span className="font-bold text-white uppercase text-[10px] tracking-wider">Partition Info</span>
             {activePartition && (
@@ -995,7 +996,7 @@ export function HierarchicalVoronoiView() {
             )}
           </div>
 
-          <div className="p-3">
+          <div className="p-3 overflow-y-auto flex-1">
             {activePartition ? (
               <div className="space-y-3">
                 {/* Header with icon and name */}
@@ -1120,8 +1121,9 @@ export function HierarchicalVoronoiView() {
         </div>
 
         {/* INTERACTION GUIDE */}
-        <div className="w-56 bg-[#161b22]/50 border border-gray-800 rounded-lg p-3">
-          <h4 className="text-white font-bold uppercase text-[9px] tracking-widest border-b border-gray-800 pb-2 mb-2">Controls</h4>
+        {/* CRITICAL: Fixed height matches Partition Info panel */}
+        <div className="w-56 bg-[#161b22]/50 border border-gray-800 rounded-lg p-3 h-[420px] flex flex-col">
+          <h4 className="text-white font-bold uppercase text-[9px] tracking-widest border-b border-gray-800 pb-2 mb-2 shrink-0">Controls</h4>
           <div className="space-y-1.5 text-[10px]">
             <div className="flex gap-2">
               <span className="text-green-500 font-bold w-14">L-CLICK:</span>
