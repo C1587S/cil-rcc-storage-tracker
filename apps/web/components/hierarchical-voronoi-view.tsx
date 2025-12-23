@@ -3,17 +3,17 @@
 // DEBUG: Confirm file loaded
 console.log('[VORONOI] file loaded - v7 COMPLETE REWRITE', new Date().toISOString())
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useEffect, useRef, useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
-import { buildVoronoiTree, type VoronoiNode } from '@/lib/voronoi-data-adapter'
+import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
 import * as d3 from 'd3'
 // @ts-ignore - d3-voronoi-treemap types may not be available
 import { voronoiTreemap } from 'd3-voronoi-treemap'
 import { formatBytes } from '@/lib/utils/formatters'
 import { getSizeFillColor } from '@/lib/utils/icon-helpers'
 import { Button } from '@/components/ui/button'
-import { Maximize2, Minimize2, Focus, Target, Folder, FileText, ChevronLeft, HardDrive, Files, BarChart3 } from 'lucide-react'
+import { Maximize2, Minimize2, Focus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
 import {
@@ -23,10 +23,6 @@ import {
   FILE_COUNT_QUOTA,
 } from '@/lib/voronoi/utils/constants'
 import {
-  getSizeSeverity,
-  getFileCountSeverity,
-  getQuotaColor,
-  getQuotaTextColor,
   getFileColor,
 } from '@/lib/voronoi/utils/colors'
 import {
@@ -36,6 +32,15 @@ import {
 } from '@/lib/voronoi/utils/geometry'
 import { packCirclesInPolygon } from '@/lib/voronoi/utils/circle-packing'
 import { type PartitionInfo, type VoronoiCacheEntry } from '@/lib/voronoi/utils/types'
+import { VoronoiHeader } from '@/components/voronoi/VoronoiHeader'
+import { VoronoiLegend } from '@/components/voronoi/VoronoiLegend'
+import { VoronoiControlPanel } from '@/components/voronoi/VoronoiControlPanel'
+import { VoronoiBreadcrumb } from '@/components/voronoi/VoronoiBreadcrumb'
+import { VoronoiPartitionPanel } from '@/components/voronoi/VoronoiPartitionPanel'
+import { useVoronoiData } from '@/lib/voronoi/hooks/useVoronoiData'
+import { useVoronoiNavigation } from '@/lib/voronoi/hooks/useVoronoiNavigation'
+import { useVoronoiSelection } from '@/lib/voronoi/hooks/useVoronoiSelection'
+import { useVoronoiZoom } from '@/lib/voronoi/hooks/useVoronoiZoom'
 
 // --- COMPONENT ---
 
@@ -46,53 +51,56 @@ export function HierarchicalVoronoiView() {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const simulationRef = useRef<d3.Simulation<any, undefined> | null>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
-
-  // Single source of truth for navigation
-  const [viewingPath, setViewingPath] = useState<string | null>(null)
-  const [history, setHistory] = useState<string[]>([])
-  
-  // UI states
-  const [isFullscreen, setIsFullscreen] = useState(false)
-  const [selectedPartition, setSelectedPartition] = useState<PartitionInfo | null>(null)
-  const [hoveredPartition, setHoveredPartition] = useState<PartitionInfo | null>(null)
-  const [selectedFileInPanel, setSelectedFileInPanel] = useState<string | null>(null)
-  
-  // Navigation lock
-  const [navigationLock, setNavigationLock] = useState(false)
-  const navigationLockRef = useRef(false)
-  
-  const zoomRef = useRef<any>(null)
   const voronoiCacheRef = useRef<Map<string, VoronoiCacheEntry>>(new Map())
 
   const { data: snapshots } = useQuery({ queryKey: ['snapshots'], queryFn: getSnapshots })
-  
+
   const basePath = referencePath || '/project/cil'
-  const effectivePath = viewingPath || basePath
-  
-  // CRITICAL: Store in ref for click handlers
-  const effectivePathRef = useRef(effectivePath)
-  effectivePathRef.current = effectivePath
 
-  console.log('[STATE] effectivePath:', effectivePath, '| viewingPath:', viewingPath, '| history:', history.length, '| locked:', navigationLock)
+  // Custom hooks
+  const {
+    selectedPartition,
+    hoveredPartition,
+    selectedFileInPanel,
+    setSelectedPartition,
+    setHoveredPartition,
+    setSelectedFileInPanel,
+    handleInspect,
+    handleFileClickInPanel,
+  } = useVoronoiSelection()
 
-  const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['voronoi-tree-hierarchical', selectedSnapshot, effectivePath],
-    queryFn: () => {
-      console.log('[QUERY] Fetching data for:', effectivePath)
-      return buildVoronoiTree(selectedSnapshot!, effectivePath, 2, 1000)
+  const {
+    viewingPath,
+    history,
+    navigationLock,
+    effectivePath,
+    effectivePathRef,
+    performDrillDown,
+    navigateBack,
+    navigateToBreadcrumb,
+    unlockNavigation,
+  } = useVoronoiNavigation({
+    basePath,
+    onNavigate: () => {
+      setSelectedPartition(null)
+      setHoveredPartition(null)
+      setSelectedFileInPanel(null)
     },
-    enabled: !!selectedSnapshot && !!effectivePath,
-    staleTime: 1000 * 60 * 5,
+  })
+
+  const { isFullscreen, zoomRef, resetZoom, toggleFullscreen } = useVoronoiZoom()
+
+  const { data, isLoading, isFetching, error } = useVoronoiData({
+    selectedSnapshot,
+    effectivePath,
   })
 
   // Unlock when data arrives
   useEffect(() => {
     if (data && !isLoading && !isFetching) {
-      console.log('[DATA] Ready, unlocking')
-      setNavigationLock(false)
-      navigationLockRef.current = false
+      unlockNavigation()
     }
-  }, [data, isLoading, isFetching])
+  }, [data, isLoading, isFetching, unlockNavigation])
 
   const viewRootSize = data?.size || 0
   const projectSize = viewRootSize
@@ -103,104 +111,6 @@ export function HierarchicalVoronoiView() {
   const getPartitionQuotaPercent = useCallback((size: number) => projectSize > 0 ? (size / projectSize) * 100 : 0, [projectSize])
   const getFileQuotaPercent = useCallback((fileCount: number) => (fileCount / FILE_COUNT_QUOTA) * 100, [])
   const getParentQuotaPercent = useCallback((size: number) => parentSize > 0 ? (size / parentSize) * 100 : 0, [parentSize])
-
-  // DRILL DOWN - reads from ref for current path
-  const performDrillDown = useCallback((targetPath: string) => {
-    const currentPath = effectivePathRef.current
-    
-    console.log('[DRILL] Target:', targetPath, '| Current (ref):', currentPath, '| Locked:', navigationLockRef.current)
-    
-    if (navigationLockRef.current) {
-      console.log('[DRILL] BLOCKED - locked')
-      return
-    }
-    
-    if (!targetPath || targetPath === currentPath) {
-      console.log('[DRILL] BLOCKED - invalid or same')
-      return
-    }
-    
-    console.log('[DRILL] ✓ NAVIGATING to:', targetPath)
-    navigationLockRef.current = true
-    setNavigationLock(true)
-    
-    setHistory(prev => [...prev, currentPath])
-    setViewingPath(targetPath)
-    setSelectedPartition(null)
-    setHoveredPartition(null)
-    setSelectedFileInPanel(null)
-  }, [])
-
-  const navigateBack = useCallback(() => {
-    if (navigationLockRef.current || history.length === 0) return
-    
-    navigationLockRef.current = true
-    setNavigationLock(true)
-    
-    const newHistory = [...history]
-    const previousPath = newHistory.pop()!
-    
-    console.log('[BACK] To:', previousPath)
-    
-    setHistory(newHistory)
-    setViewingPath(previousPath === basePath ? null : previousPath)
-    setSelectedPartition(null)
-    setHoveredPartition(null)
-    setSelectedFileInPanel(null)
-  }, [history, basePath])
-
-  const navigateToBreadcrumb = useCallback((targetPath: string) => {
-    if (navigationLockRef.current || targetPath === effectivePath) return
-    
-    navigationLockRef.current = true
-    setNavigationLock(true)
-    
-    const historyIndex = history.indexOf(targetPath)
-    
-    if (targetPath === basePath) {
-      setHistory([])
-      setViewingPath(null)
-    } else if (historyIndex >= 0) {
-      setHistory(history.slice(0, historyIndex))
-      setViewingPath(targetPath)
-    }
-    
-    setSelectedPartition(null)
-    setHoveredPartition(null)
-    setSelectedFileInPanel(null)
-  }, [history, basePath, effectivePath])
-
-  const handleInspect = useCallback((info: PartitionInfo) => {
-    setSelectedPartition(info)
-    setSelectedFileInPanel(null)
-  }, [])
-
-  const resetZoom = useCallback(() => {
-    if (zoomRef.current && svgRef.current) {
-      d3.select(svgRef.current).transition().duration(500).call(zoomRef.current.transform, d3.zoomIdentity)
-    }
-  }, [])
-
-  const toggleFullscreen = async () => {
-    if (!wrapperRef.current) return
-    try {
-      if (!isFullscreen) {
-        await wrapperRef.current.requestFullscreen()
-        setIsFullscreen(true)
-      } else {
-        await document.exitFullscreen()
-        setIsFullscreen(false)
-      }
-    } catch (e) {
-      console.error('Fullscreen error:', e)
-    }
-  }
-
-  const handleFileClickInPanel = useCallback((filePath: string) => {
-    setSelectedFileInPanel(filePath)
-    d3.selectAll('.file-bubble').classed('highlighted', false).attr('stroke-width', 0.5).attr('stroke', 'rgba(255,255,255,0.4)')
-    d3.select(`.file-bubble[data-path="${filePath}"]`).classed('highlighted', true).attr('stroke-width', 2.5).attr('stroke', HOVER_HIGHLIGHT_COLOR).raise()
-  }, [])
 
   // --- RENDER EFFECT ---
   useEffect(() => {
@@ -750,151 +660,46 @@ export function HierarchicalVoronoiView() {
       <div ref={tooltipRef} className="fixed pointer-events-none z-50 bg-black/90 border border-cyan-600 rounded px-2 py-1 hidden" />
 
       {/* HEADER */}
-      <div className="flex flex-col border-b border-gray-800 pb-3 gap-3">
-        <div className="flex justify-between items-start">
-          <div>
-            <h2 className="text-lg font-bold text-white uppercase tracking-widest">Storage Voronoi Topology</h2>
-            <p className="text-gray-500">{selectedSnapshot} · Snapshot Data</p>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500 whitespace-nowrap text-[10px]">GLOBAL QUOTA:</span>
-            <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden border border-gray-800">
-              <div className={cn("h-full transition-all duration-1000", getQuotaColor(storageQuotaPercent))} style={{ width: `${Math.min(storageQuotaPercent, 100)}%` }} />
-            </div>
-            <span className={cn("font-bold min-w-[50px] text-right text-[10px]", getQuotaTextColor(storageQuotaPercent))}>{storageQuotaPercent.toFixed(1)}%</span>
-            <span className="text-gray-600 text-[9px]">({formatBytes(projectSize)} / {STORAGE_QUOTA_TB}TB)</span>
-          </div>
-
-          {viewingPath && (
-            <div className="flex items-center gap-2">
-              <span className="text-gray-500 whitespace-nowrap text-[10px]">CURRENT DIR:</span>
-              <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden border border-gray-800">
-                <div className="h-full bg-cyan-600/70 transition-all duration-1000" style={{ width: '100%' }} />
-              </div>
-              <span className="font-bold min-w-[50px] text-right text-[10px] text-cyan-400">100%</span>
-              <span className="text-gray-600 text-[9px]">({formatBytes(parentSize)})</span>
-            </div>
-          )}
-        </div>
-      </div>
+      <VoronoiHeader
+        selectedSnapshot={selectedSnapshot}
+        projectSize={projectSize}
+        storageQuotaPercent={storageQuotaPercent}
+        viewingPath={viewingPath}
+        parentSize={parentSize}
+      />
 
       {/* PANELS */}
       <div className="flex gap-3">
-        <div className="flex-1 bg-[#161b22] border border-gray-800 rounded-lg overflow-hidden h-[420px] flex flex-col">
-          <div className="bg-gray-800/50 px-3 py-2 border-b border-gray-700 flex items-center gap-2 shrink-0">
-            <Target className="w-4 h-4 text-cyan-400" />
-            <span className="font-bold text-white uppercase text-[10px] tracking-wider">Partition Info</span>
-          </div>
+        <VoronoiPartitionPanel
+          activePartition={activePartition}
+          selectedFileInPanel={selectedFileInPanel}
+          onFileClick={handleFileClickInPanel}
+        />
 
-          <div className="p-3 overflow-y-auto flex-1">
-            {activePartition ? (
-              <div className="space-y-3">
-                <div className="flex items-start gap-4">
-                  <div className="flex items-center gap-2">
-                    {activePartition.isSynthetic ? <Files className="w-6 h-6 text-blue-400" /> : activePartition.isDirectory ? <Folder className="w-6 h-6 text-green-400" /> : <FileText className="w-6 h-6 text-gray-400" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white font-bold truncate">{activePartition.name}</p>
-                    <p className="text-gray-500 text-[10px] truncate">{activePartition.path}</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                    <div className="flex items-center gap-1 mb-1"><HardDrive className="w-3 h-3 text-gray-600" /><label className="text-gray-600 text-[9px]">SIZE</label></div>
-                    <div className="text-cyan-400 font-bold text-sm">{formatBytes(activePartition.size)}</div>
-                    <div className={cn("text-[9px]", getSizeSeverity(activePartition.size).color)}>{getSizeSeverity(activePartition.size).label}</div>
-                  </div>
-                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                    <div className="flex items-center gap-1 mb-1"><BarChart3 className="w-3 h-3 text-gray-600" /><label className="text-gray-600 text-[9px]">STORAGE QUOTA</label></div>
-                    <div className={cn("font-bold text-sm", getQuotaTextColor(activePartition.quotaPercent))}>{activePartition.quotaPercent.toFixed(2)}%</div>
-                    <div className="text-gray-500 text-[9px]">of {STORAGE_QUOTA_TB}TB</div>
-                  </div>
-                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                    <div className="flex items-center gap-1 mb-1"><Files className="w-3 h-3 text-gray-600" /><label className="text-gray-600 text-[9px]">FILE COUNT</label></div>
-                    <div className="text-white font-bold text-sm">{activePartition.file_count > 0 ? activePartition.file_count.toLocaleString() : '—'}</div>
-                    {activePartition.file_count > 0 && <div className={cn("text-[9px]", getFileCountSeverity(activePartition.file_count).color)}>{getFileCountSeverity(activePartition.file_count).label}</div>}
-                  </div>
-                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                    <div className="flex items-center gap-1 mb-1"><BarChart3 className="w-3 h-3 text-gray-600" /><label className="text-gray-600 text-[9px]">FILE QUOTA</label></div>
-                    <div className={cn("font-bold text-sm", getQuotaTextColor(activePartition.fileQuotaPercent))}>{activePartition.fileQuotaPercent.toFixed(3)}%</div>
-                    <div className="text-gray-500 text-[9px]">of {(FILE_COUNT_QUOTA / 1_000_000).toFixed(0)}M</div>
-                  </div>
-                </div>
-
-                {activePartition.parentQuotaPercent !== undefined && activePartition.parentQuotaPercent < 100 && (
-                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                    <div className="flex items-center gap-1 mb-1"><BarChart3 className="w-3 h-3 text-gray-600" /><label className="text-gray-600 text-[9px]">% OF CURRENT DIR</label></div>
-                    <div className={cn("font-bold", getQuotaTextColor(activePartition.parentQuotaPercent))}>{activePartition.parentQuotaPercent.toFixed(1)}%</div>
-                  </div>
-                )}
-
-                {activePartition.isSynthetic && activePartition.originalFiles && activePartition.originalFiles.length > 0 && (
-                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800 max-h-48 overflow-y-auto">
-                    <div className="text-gray-500 text-[9px] uppercase mb-2">Files in this region:</div>
-                    <div className="space-y-1">
-                      {activePartition.originalFiles.slice(0, 50).map((file, idx) => (
-                        <div key={idx} onClick={() => handleFileClickInPanel(file.path)} className={cn("flex items-center justify-between gap-2 p-1 rounded hover:bg-cyan-950/30 cursor-pointer transition-colors", selectedFileInPanel === file.path && "bg-cyan-950/50 border border-cyan-700")}>
-                          <span className="text-white text-[10px] truncate flex-1">{file.name}</span>
-                          <span className="text-gray-400 text-[9px] whitespace-nowrap">{formatBytes(file.size)}</span>
-                        </div>
-                      ))}
-                      {activePartition.originalFiles.length > 50 && <div className="text-gray-600 text-[9px] italic pt-1">+ {activePartition.originalFiles.length - 50} more files</div>}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 text-gray-600 py-2"><Focus className="w-5 h-5" /><span className="italic">Hover or right-click a partition to view details</span></div>
-            )}
-          </div>
-        </div>
-
-        <div className="w-56 bg-[#161b22]/50 border border-gray-800 rounded-lg p-3 h-[420px] flex flex-col">
-          <h4 className="text-white font-bold uppercase text-[9px] tracking-widest border-b border-gray-800 pb-2 mb-2 shrink-0">Controls</h4>
-          <div className="space-y-1.5 text-[10px]">
-            <div className="flex gap-2"><span className="text-green-500 font-bold w-14">L-CLICK:</span><span className="text-gray-400">Drill into</span></div>
-            <div className="flex gap-2"><span className="text-cyan-400 font-bold w-14">R-CLICK:</span><span className="text-gray-400">Select partition</span></div>
-            <div className="flex gap-2"><span className="text-gray-200 font-bold w-14">SCROLL:</span><span className="text-gray-400">Zoom</span></div>
-            <div className="flex gap-2"><span className="text-yellow-400 font-bold w-14">DRAG:</span><span className="text-gray-400">Pan view</span></div>
-            <div className="flex gap-2"><span className="text-purple-400 font-bold w-14">BUBBLES:</span><span className="text-gray-400">Drag files</span></div>
-          </div>
-          <div className="mt-auto pt-2 border-t border-gray-800 text-[9px] text-gray-600 space-y-1">
-            <div>Cache: {voronoiCacheRef.current.size}</div>
-            <div className="truncate" title={effectivePath}>View: {effectivePath.split('/').pop()}</div>
-            <div>History: {history.length}</div>
-            <div className={navigationLock ? 'text-yellow-500' : 'text-green-500'}>{navigationLock ? '🔒 LOCKED' : '✓ Ready'}</div>
-          </div>
-        </div>
+        <VoronoiControlPanel
+          cacheSize={voronoiCacheRef.current.size}
+          effectivePath={effectivePath}
+          historyLength={history.length}
+          navigationLock={navigationLock}
+        />
       </div>
 
       {/* BREADCRUMB */}
-      <div className="bg-[#0a0e14] border border-gray-800 p-2 rounded flex items-center gap-2 overflow-x-auto">
-        <button onClick={navigateBack} disabled={!canGoBack || isLocked} className={cn("flex items-center justify-center w-7 h-7 rounded border transition-all shrink-0", canGoBack && !isLocked ? "border-gray-700 hover:border-cyan-600 hover:bg-cyan-950/30 text-gray-400 hover:text-cyan-400 cursor-pointer" : "border-gray-800 text-gray-700 cursor-not-allowed")} title="Go back">
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <span className="text-gray-700">|</span>
-        <span className="text-green-500 font-bold">$</span>
-        {breadcrumbParts.map((part, i) => (
-          <div key={`${part.path}-${i}`} className="flex items-center gap-1">
-            <button onClick={() => part.isClickable && !isLocked && navigateToBreadcrumb(part.path)} disabled={!part.isClickable || isLocked} className={cn("transition-colors whitespace-nowrap", part.isClickable && !isLocked ? "hover:text-cyan-400 text-gray-400 cursor-pointer" : "text-white cursor-default font-bold")}>
-              {part.name}
-            </button>
-            {i < breadcrumbParts.length - 1 && <span className="text-gray-700">/</span>}
-          </div>
-        ))}
-      </div>
+      <VoronoiBreadcrumb
+        breadcrumbParts={breadcrumbParts}
+        canGoBack={canGoBack}
+        isLocked={isLocked}
+        onNavigateBack={navigateBack}
+        onNavigateToBreadcrumb={navigateToBreadcrumb}
+      />
 
       {/* VISUALIZER */}
       <div ref={containerRef} className={cn("relative border border-gray-800 bg-[#0a0e14] rounded-lg overflow-hidden", isLocked && "pointer-events-none")} style={{ height: isFullscreen ? 'calc(100vh - 280px)' : '550px' }}>
         <svg ref={svgRef} className={cn("w-full h-full cursor-crosshair", isLocked && "pointer-events-none")} />
 
         <div className="absolute bottom-3 right-3 flex gap-2">
-          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={resetZoom} disabled={isLocked} title="Recenter View"><Focus className="w-4 h-4" /></Button>
-          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={toggleFullscreen} title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}>{isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</Button>
+          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => resetZoom(svgRef)} disabled={isLocked} title="Recenter View"><Focus className="w-4 h-4" /></Button>
+          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => toggleFullscreen(wrapperRef)} title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}>{isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</Button>
         </div>
 
         {error && <div className="absolute inset-0 flex items-center justify-center bg-black/80"><p className="text-red-500 font-bold">Failed to compute Voronoi: {error.toString()}</p></div>}
@@ -910,15 +715,7 @@ export function HierarchicalVoronoiView() {
       </div>
 
       {/* LEGEND */}
-      <div className="flex justify-between items-center text-[10px] uppercase tracking-wider font-mono text-gray-600 px-1">
-        <div className="flex gap-4">
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: TERMINAL_COLORS.folder, opacity: 0.4 }} />Directories</span>
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded border border-dashed" style={{ borderColor: TERMINAL_COLORS.filesContainer, opacity: 0.7 }} />Files Region</span>
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: TERMINAL_COLORS.file }} />Files</span>
-          <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded border" style={{ borderColor: '#ffffff', opacity: 0.5 }} />Preview</span>
-        </div>
-        <div className="text-gray-700">Hover partitions • Click to explore • Drag bubbles</div>
-      </div>
+      <VoronoiLegend />
     </div>
   )
 }
