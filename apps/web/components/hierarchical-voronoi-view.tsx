@@ -1,7 +1,7 @@
 'use client'
 
 // DEBUG: Confirm file loaded
-console.log('[VORONOI] file loaded - UNIFIED v3', new Date().toISOString())
+console.log('[VORONOI] file loaded - UNIFIED v4 with full fixes', new Date().toISOString())
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -13,7 +13,7 @@ import { voronoiTreemap } from 'd3-voronoi-treemap'
 import { formatBytes, getFileExtension } from '@/lib/utils/formatters'
 import { getSizeFillColor } from '@/lib/utils/icon-helpers'
 import { Button } from '@/components/ui/button'
-import { Maximize2, Minimize2, Focus, Target, Info, Folder, FileText, ChevronLeft, HardDrive, Files, BarChart3 } from 'lucide-react'
+import { Maximize2, Minimize2, Focus, Target, Folder, FileText, ChevronLeft, HardDrive, Files, BarChart3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
 
@@ -50,7 +50,39 @@ const FILE_TYPE_COLORS: Record<string, string> = {
 const STORAGE_QUOTA_TB = 500
 const FILE_COUNT_QUOTA = 77_000_000
 
+// --- SEVERITY THRESHOLDS ---
+
+const SIZE_SEVERITY = {
+  NEGLIGIBLE: 10 * 1024 * 1024, // 10MB
+  SMALL: 1024 * 1024 * 1024, // 1GB
+  MEDIUM: 10 * 1024 * 1024 * 1024, // 10GB
+  LARGE: 50 * 1024 * 1024 * 1024, // 50GB
+}
+
+const FILE_COUNT_SEVERITY = {
+  NEGLIGIBLE: 100,
+  SMALL: 1000,
+  MEDIUM: 10000,
+  LARGE: 100000,
+}
+
 // --- HELPER FUNCTIONS ---
+
+function getSizeSeverity(size: number): { label: string; color: string } {
+  if (size < SIZE_SEVERITY.NEGLIGIBLE) return { label: 'Negligible', color: 'text-gray-500' }
+  if (size < SIZE_SEVERITY.SMALL) return { label: 'Small', color: 'text-blue-400' }
+  if (size < SIZE_SEVERITY.MEDIUM) return { label: 'Medium', color: 'text-yellow-400' }
+  if (size < SIZE_SEVERITY.LARGE) return { label: 'Large', color: 'text-orange-500' }
+  return { label: 'Very Large', color: 'text-red-500' }
+}
+
+function getFileCountSeverity(count: number): { label: string; color: string } {
+  if (count < FILE_COUNT_SEVERITY.NEGLIGIBLE) return { label: 'Negligible', color: 'text-gray-500' }
+  if (count < FILE_COUNT_SEVERITY.SMALL) return { label: 'Small', color: 'text-blue-400' }
+  if (count < FILE_COUNT_SEVERITY.MEDIUM) return { label: 'Medium', color: 'text-yellow-400' }
+  if (count < FILE_COUNT_SEVERITY.LARGE) return { label: 'Large', color: 'text-orange-500' }
+  return { label: 'Very Large', color: 'text-red-500' }
+}
 
 function getQuotaColor(percent: number): string {
   if (percent >= 95) return "bg-red-600/70"
@@ -147,7 +179,7 @@ function packCirclesInPolygon(
   if (files.length === 0) return []
   const centroid = d3.polygonCentroid(polygon)
   const area = Math.abs(d3.polygonArea(polygon))
-  
+
   const topFiles = files.sort((a, b) => b.value - a.value).slice(0, maxCircles)
   const totalSize = topFiles.reduce((sum, f) => sum + f.value, 0)
 
@@ -157,13 +189,13 @@ function packCirclesInPolygon(
     let r = Math.max(4, Math.min(Math.sqrt(sizeRatio * area / Math.PI) * 0.6, 25))
     let placed = false
     let attempts = 0
-    
+
     while (!placed && attempts < 50) {
       const angle = Math.random() * Math.PI * 2
       const dist = Math.random() * Math.sqrt(area) * 0.4
       const x = centroid[0] + dist * Math.cos(angle)
       const y = centroid[1] + dist * Math.sin(angle)
-      
+
       if (d3.polygonContains(polygon, [x, y])) {
         const collision = circles.some(c => Math.sqrt((x - c.x) ** 2 + (y - c.y) ** 2) < (r + c.r + 2))
         if (!collision) {
@@ -187,7 +219,11 @@ interface PartitionInfo {
   isDirectory: boolean
   isSynthetic: boolean
   quotaPercent: number
+  fileQuotaPercent: number
+  parentSize?: number
+  parentQuotaPercent?: number
   depth: number
+  originalFiles?: VoronoiNode[]
 }
 
 interface VoronoiCache {
@@ -205,15 +241,17 @@ export function HierarchicalVoronoiView() {
   const containerRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const simulationRef = useRef<d3.Simulation<any, undefined> | null>(null)
-  
+  const tooltipRef = useRef<HTMLDivElement>(null)
+
   const [currentNode, setCurrentNode] = useState<VoronoiNode | null>(null)
   const [navigationHistory, setNavigationHistory] = useState<Array<{ node: VoronoiNode | null, path: string }>>([])
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [selectedPartition, setSelectedPartition] = useState<PartitionInfo | null>(null)
   const [hoveredPartition, setHoveredPartition] = useState<PartitionInfo | null>(null)
+  const [selectedFileInPanel, setSelectedFileInPanel] = useState<string | null>(null)
   const zoomRef = useRef<any>(null)
-  
+
   // Voronoi cache for previously computed levels (legacy behavior)
   const voronoiCacheRef = useRef<Map<string, VoronoiCache>>(new Map())
 
@@ -235,10 +273,23 @@ export function HierarchicalVoronoiView() {
   const storageTB = projectSize / (1024 ** 4)
   const storageQuotaPercent = (storageTB / STORAGE_QUOTA_TB) * 100
 
-  // Calculate partition quota percentage
+  // Parent size for relative quota (current directory's size)
+  const parentSize = currentNode ? currentNode.size : projectSize
+
+  // Calculate partition quota percentage (relative to project root)
   const getPartitionQuotaPercent = useCallback((size: number) => {
     return projectSize > 0 ? (size / projectSize) * 100 : 0
   }, [projectSize])
+
+  // Calculate file quota percentage
+  const getFileQuotaPercent = useCallback((fileCount: number) => {
+    return (fileCount / FILE_COUNT_QUOTA) * 100
+  }, [])
+
+  // Calculate parent-relative quota percentage
+  const getParentQuotaPercent = useCallback((size: number) => {
+    return parentSize > 0 ? (size / parentSize) * 100 : 0
+  }, [parentSize])
 
   // LEGACY BEHAVIOR: Only depth-1 partitions are clickable/explorable
   // Deeper partitions are shown in "preview mode" but not interactable
@@ -249,57 +300,60 @@ export function HierarchicalVoronoiView() {
       return
     }
     if (isTransitioning || isFetching || !node.isDirectory || (node as any).isSynthetic) return
-    
+
     console.log('[NAV] Drilling into:', node.path)
     setIsTransitioning(true)
-    
+
     // Save current state to history
     if (currentNode) {
       setNavigationHistory(prev => [...prev, { node: currentNode, path: currentNode.path }])
     } else {
       setNavigationHistory(prev => [...prev, { node: null, path: referencePath || '/project/cil' }])
     }
-    
+
     setCurrentNode(node)
     setSelectedPartition(null)
     setHoveredPartition(null)
+    setSelectedFileInPanel(null)
     setTimeout(() => setIsTransitioning(false), 500)
   }, [currentNode, isTransitioning, isFetching, referencePath])
 
   // Right-click to inspect/select partition
   const handleInspect = useCallback((partitionInfo: PartitionInfo, element: SVGPathElement) => {
     console.log('[UI] Inspecting partition:', partitionInfo.name)
-    
+
     // Clear previous highlights
     d3.selectAll('.voronoi-partition')
       .classed('selected', false)
       .style('filter', 'none')
-    
+
     // Apply persistent highlight
     d3.select(element)
       .classed('selected', true)
       .style('filter', `drop-shadow(0 0 12px ${HOVER_HIGHLIGHT_COLOR})`)
-    
+
     setSelectedPartition(partitionInfo)
+    setSelectedFileInPanel(null)
   }, [])
 
   // Navigate back one level - LEGACY BEHAVIOR
   const navigateBack = useCallback(() => {
     if (isTransitioning || isFetching || navigationHistory.length === 0) return
-    
+
     setIsTransitioning(true)
     const lastEntry = navigationHistory[navigationHistory.length - 1]
     setCurrentNode(lastEntry.node)
     setNavigationHistory(prev => prev.slice(0, -1))
     setSelectedPartition(null)
     setHoveredPartition(null)
+    setSelectedFileInPanel(null)
     setTimeout(() => setIsTransitioning(false), 500)
   }, [navigationHistory, isTransitioning, isFetching])
 
   const navigateToPathIndex = useCallback((index: number, rootPartsCount: number) => {
     if (isTransitioning || isFetching) return
     setIsTransitioning(true)
-    
+
     if (index < rootPartsCount) {
       setNavigationHistory([])
       setCurrentNode(null)
@@ -312,6 +366,7 @@ export function HierarchicalVoronoiView() {
     }
     setSelectedPartition(null)
     setHoveredPartition(null)
+    setSelectedFileInPanel(null)
     setTimeout(() => setIsTransitioning(false), 500)
   }, [navigationHistory, isTransitioning, isFetching])
 
@@ -322,6 +377,7 @@ export function HierarchicalVoronoiView() {
     setNavigationHistory([])
     setSelectedPartition(null)
     setHoveredPartition(null)
+    setSelectedFileInPanel(null)
     setTimeout(() => setIsTransitioning(false), 500)
   }, [isTransitioning, isFetching])
 
@@ -349,6 +405,23 @@ export function HierarchicalVoronoiView() {
       console.error('Fullscreen error:', e)
     }
   }
+
+  // Handle file click in panel - highlight corresponding bubble
+  const handleFileClickInPanel = useCallback((filePath: string) => {
+    setSelectedFileInPanel(filePath)
+
+    // Highlight the bubble
+    d3.selectAll('.file-bubble')
+      .classed('highlighted', false)
+      .attr('stroke-width', 0.5)
+      .attr('stroke', 'rgba(255,255,255,0.4)')
+
+    d3.select(`.file-bubble[data-path="${filePath}"]`)
+      .classed('highlighted', true)
+      .attr('stroke-width', 2.5)
+      .attr('stroke', HOVER_HIGHLIGHT_COLOR)
+      .raise()
+  }, [])
 
   // --- MAIN RENDER EFFECT ---
   useEffect(() => {
@@ -389,16 +462,16 @@ export function HierarchicalVoronoiView() {
     // Transform data with synthetic file containers
     const prepareHierarchy = (n: VoronoiNode, depth: number = 0): any => {
       const uniqueId = `node-${Math.random().toString(36).substr(2, 9)}`
-      
+
       if (!n.children || n.children.length === 0) {
         return { ...n, uniqueId, depth }
       }
-      
+
       const dirs = n.children.filter(c => c.isDirectory)
       const files = n.children.filter(c => !c.isDirectory)
-      
+
       const children = dirs.map(d => prepareHierarchy(d, depth + 1))
-      
+
       // Create synthetic __files__ container for loose files
       if (files.length > 0) {
         const filesSize = files.reduce((acc, f) => acc + f.size, 0)
@@ -414,7 +487,7 @@ export function HierarchicalVoronoiView() {
           uniqueId: `files-${Math.random().toString(36).substr(2, 9)}`
         })
       }
-      
+
       return { ...n, children, uniqueId, depth }
     }
 
@@ -498,7 +571,7 @@ export function HierarchicalVoronoiView() {
       const isSynthetic = node.isSynthetic
       const isTopLevel = nodeDepth === 1
       const isPreview = nodeDepth === 2  // Only depth 2 is preview (depth 3+ not computed)
-      
+
       // Determine colors and opacity based on depth
       let fillColor: string
       let fillOpacity: number
@@ -516,10 +589,11 @@ export function HierarchicalVoronoiView() {
       } else if (node.isDirectory) {
         // Directory styling
         fillColor = getSizeFillColor(node.size)
-        fillOpacity = isTopLevel ? 0.2 : (isPreview ? 0.06 : 0.15)
-        strokeColor = isTopLevel ? fillColor : TERMINAL_COLORS.border
-        strokeWidth = isTopLevel ? 2.5 : (isPreview ? 0.5 : 1)
-        strokeOpacity = isTopLevel ? 0.7 : (isPreview ? 0.25 : 0.5)
+        fillOpacity = isTopLevel ? 0.2 : (isPreview ? 0.03 : 0.15)
+        // CRITICAL: Preview partitions (depth 2) show as bright white veins
+        strokeColor = isTopLevel ? fillColor : (isPreview ? '#ffffff' : TERMINAL_COLORS.border)
+        strokeWidth = isTopLevel ? 2.5 : (isPreview ? 1.5 : 1)
+        strokeOpacity = isTopLevel ? 0.7 : (isPreview ? 0.85 : 0.5)
       } else {
         // Standalone file
         fillColor = getFileColor(node.name)
@@ -538,11 +612,16 @@ export function HierarchicalVoronoiView() {
         isDirectory: node.isDirectory,
         isSynthetic: isSynthetic,
         quotaPercent: getPartitionQuotaPercent(node.size),
-        depth: nodeDepth
+        fileQuotaPercent: getFileQuotaPercent(node.file_count || 0),
+        parentSize: parentSize,
+        parentQuotaPercent: getParentQuotaPercent(node.size),
+        depth: nodeDepth,
+        originalFiles: node.originalFiles
       }
 
-      const partition = g.append('path')
-        .attr('class', cn('voronoi-partition', isTopLevel && 'interactive', isPreview && 'preview'))
+      // CRITICAL: Render partition background first
+      g.append('path')
+        .attr('class', cn('voronoi-partition-bg', isTopLevel && 'interactive', isPreview && 'preview'))
         .attr('d', `M${poly.join('L')}Z`)
         .attr('fill', fillColor)
         .attr('fill-opacity', fillOpacity)
@@ -550,95 +629,54 @@ export function HierarchicalVoronoiView() {
         .attr('stroke-width', strokeWidth)
         .attr('stroke-opacity', strokeOpacity)
         .attr('stroke-dasharray', isSynthetic ? '4,2' : 'none')
-        .style('cursor', (isTopLevel && !isSynthetic) ? 'pointer' : 'default')
-        .style('transition', 'fill 0.15s ease, fill-opacity 0.15s ease, stroke 0.15s ease')
+        .style('pointer-events', 'none') // Background doesn't receive events
         .datum({ ...partitionInfo, baseColor: fillColor, baseFillOpacity: fillOpacity, baseStrokeColor: strokeColor })
 
-      // HOVER & CLICK EVENTS - Only for top-level (depth 1) partitions
-      if (isTopLevel) {
-        partition
-          .on('mouseenter', function(e: MouseEvent) {
-            const el = d3.select(this)
-            const data = el.datum() as any
-            
-            if (!el.classed('selected')) {
-              // Apply hover highlight with specified color #0675af
-              el.attr('fill', HOVER_HIGHLIGHT_COLOR)
-                .attr('fill-opacity', isSynthetic ? 0.2 : 0.35)
-                .attr('stroke', HOVER_HIGHLIGHT_COLOR)
-                .attr('stroke-width', 3.5)
-                .attr('stroke-opacity', 1)
-                .style('filter', `drop-shadow(0 0 8px ${HOVER_HIGHLIGHT_COLOR})`)
-            }
-            
-            setHoveredPartition(data)
-          })
-          .on('mouseleave', function(e: MouseEvent) {
-            const el = d3.select(this)
-            const data = el.datum() as any
-            
-            if (!el.classed('selected')) {
-              el.attr('fill', data.baseColor)
-                .attr('fill-opacity', data.baseFillOpacity)
-                .attr('stroke', data.baseStrokeColor)
-                .attr('stroke-width', isSynthetic ? 1.5 : 2.5)
-                .attr('stroke-opacity', isSynthetic ? 0.6 : 0.7)
-                .style('filter', 'none')
-            }
-            
-            setHoveredPartition(null)
-          })
-
-        // Right-click to inspect
-        partition.on('contextmenu', (e: MouseEvent) => {
-          e.preventDefault()
-          handleInspect(partitionInfo, e.currentTarget as SVGPathElement)
-        })
-
-        // Left-click to drill (only for directories, not synthetic)
-        if (!isSynthetic && node.isDirectory) {
-          partition.on('click', (e: MouseEvent) => {
-            e.stopPropagation()
-            handleDrillDown(node, nodeDepth)
-          })
-        }
-      }
-
-      // Labels - only for top-level with sufficient area
-      const area = Math.abs(d3.polygonArea(poly))
+      // Labels - render for all top-level partitions with minimal size threshold
       const bounds = getPolygonBounds(poly)
-      
-      if (isTopLevel && bounds.width > 50 && bounds.height > 30) {
+
+      // CRITICAL: Reduced threshold from 50x30 to 30x20 to show more labels
+      if (isTopLevel && bounds.width > 30 && bounds.height > 20) {
         const centroid = d3.polygonCentroid(poly)
-        const displayName = isSynthetic 
-          ? `${node.file_count} files` 
-          : (node.name.length > 16 ? node.name.slice(0, 13) + '...' : node.name)
-        
+        const displayName = isSynthetic
+          ? `${node.file_count} files`
+          : (node.name.length > 20 ? node.name.slice(0, 17) + '...' : node.name)
+
+        // CRITICAL: Medium gray fill with white stroke for readability
+        const fontSize = Math.min(13, Math.max(7, bounds.width / displayName.length * 1.2))
+
         g.append('text')
           .attr('x', centroid[0])
           .attr('y', centroid[1])
           .attr('text-anchor', 'middle')
           .attr('dominant-baseline', 'middle')
-          .attr('fill', isSynthetic ? TERMINAL_COLORS.filesContainer : 'white')
-          .attr('font-size', Math.min(13, Math.max(9, bounds.width / displayName.length * 1.2)))
+          .attr('fill', isSynthetic ? TERMINAL_COLORS.filesContainer : '#b0b0b0')
+          .attr('stroke', 'white')
+          .attr('stroke-width', 0.5)
+          .attr('font-size', fontSize)
           .attr('font-weight', '600')
           .attr('font-family', 'monospace')
           .style('pointer-events', 'none')
-          .style('text-shadow', '0 1px 4px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.7)')
-          .style('opacity', isSynthetic ? 0.8 : 1)
+          .style('paint-order', 'stroke fill')
           .text(displayName)
       }
 
-      // Render file bubbles inside synthetic __files__ containers
+      // Render file bubbles inside synthetic __files__ containers with physics
       if (isSynthetic && node.originalFiles && isTopLevel) {
         const fileCircles = packCirclesInPolygon(
-          poly, 
+          poly,
           node.originalFiles.map((f: any) => ({ node: f, value: f.size })),
           20
         )
-        
-        fileCircles.forEach(c => {
-          g.append('circle')
+
+        // Create bubbles with drag and tooltip
+        fileCircles.forEach((c, idx) => {
+          const bubbleId = `bubble-${node.uniqueId}-${idx}`
+
+          const bubble = g.append('circle')
+            .attr('class', 'file-bubble')
+            .attr('id', bubbleId)
+            .attr('data-path', c.node.path)
             .attr('cx', c.x)
             .attr('cy', c.y)
             .attr('r', c.r)
@@ -647,36 +685,250 @@ export function HierarchicalVoronoiView() {
             .attr('stroke', 'rgba(255,255,255,0.4)')
             .attr('stroke-width', 0.5)
             .attr('clip-path', `url(#clip-${node.uniqueId})`)
-            .style('pointer-events', 'none')
+            .style('cursor', 'grab')
+            .style('pointer-events', 'all') // Bubbles are interactive
+            .lower() // CRITICAL: Move bubbles BELOW partition path so partition receives clicks
+            .datum({ ...c, polygon: poly, centroid: d3.polygonCentroid(poly) })
+
+          // Bubble hover with tooltip
+          bubble
+            .on('mouseenter', function(event: MouseEvent) {
+              const tooltip = tooltipRef.current
+              if (!tooltip) return
+
+              tooltip.style.display = 'block'
+              tooltip.style.left = event.pageX + 10 + 'px'
+              tooltip.style.top = event.pageY + 10 + 'px'
+              tooltip.innerHTML = `
+                <div class="font-mono text-xs">
+                  <div class="font-bold text-cyan-400">${c.node.name}</div>
+                  <div class="text-gray-400">${formatBytes(c.node.size)}</div>
+                </div>
+              `
+
+              d3.select(this)
+                .attr('stroke', HOVER_HIGHLIGHT_COLOR)
+                .attr('stroke-width', 2)
+            })
+            .on('mousemove', function(event: MouseEvent) {
+              const tooltip = tooltipRef.current
+              if (!tooltip) return
+              tooltip.style.left = event.pageX + 10 + 'px'
+              tooltip.style.top = event.pageY + 10 + 'px'
+            })
+            .on('mouseleave', function() {
+              const tooltip = tooltipRef.current
+              if (tooltip) tooltip.style.display = 'none'
+
+              const isHighlighted = d3.select(this).classed('highlighted')
+              if (!isHighlighted) {
+                d3.select(this)
+                  .attr('stroke', 'rgba(255,255,255,0.4)')
+                  .attr('stroke-width', 0.5)
+              }
+            })
+        })
+
+        // Physics simulation for bubbles with boundary constraint
+        interface BubbleNode extends d3.SimulationNodeDatum {
+          id: string
+          r: number
+          node: VoronoiNode
+          polygon: any
+        }
+
+        const bubbleNodes: BubbleNode[] = fileCircles.map((c, idx) => ({
+          id: `bubble-${node.uniqueId}-${idx}`,
+          x: c.x,
+          y: c.y,
+          r: c.r,
+          node: c.node,
+          polygon: poly
+        }))
+
+        const simulation = d3.forceSimulation(bubbleNodes)
+          .force('collision', d3.forceCollide<BubbleNode>().radius(d => d.r + 1).strength(0.8))
+          .force('center', d3.forceCenter(d3.polygonCentroid(poly)[0], d3.polygonCentroid(poly)[1]).strength(0.05))
+          .force('charge', d3.forceManyBody<BubbleNode>().strength(-5))
+          .alphaDecay(0.05)
+          .on('tick', () => {
+            bubbleNodes.forEach(b => {
+              // Constrain to polygon
+              const constrained = constrainToPolygon(b.x!, b.y!, b.polygon, b.r)
+              b.x = constrained[0]
+              b.y = constrained[1]
+            })
+
+            g.selectAll<SVGCircleElement, any>('.file-bubble')
+              .each(function(d: any) {
+                const bn = bubbleNodes.find(b => b.node.path === d.node.path)
+                if (bn) {
+                  d3.select(this).attr('cx', bn.x!).attr('cy', bn.y!)
+                }
+              })
+          })
+
+        simulationRef.current = simulation
+
+        // Drag behavior with physics
+        const drag = d3.drag<SVGCircleElement, any>()
+          .on('start', function(event) {
+            if (!event.active && simulationRef.current) simulationRef.current.alphaTarget(0.3).restart()
+            d3.select(this).style('cursor', 'grabbing')
+            const d = d3.select(this).datum() as any
+            const bn = bubbleNodes.find(b => b.node.path === d.node.path)
+            if (bn) {
+              bn.fx = bn.x
+              bn.fy = bn.y
+            }
+          })
+          .on('drag', function(event) {
+            const d = d3.select(this).datum() as any
+            const bn = bubbleNodes.find(b => b.node.path === d.node.path)
+            if (bn) {
+              const constrained = constrainToPolygon(event.x, event.y, d.polygon, bn.r)
+              bn.fx = constrained[0]
+              bn.fy = constrained[1]
+            }
+          })
+          .on('end', function(event) {
+            if (!event.active && simulationRef.current) simulationRef.current.alphaTarget(0)
+            d3.select(this).style('cursor', 'grab')
+            const d = d3.select(this).datum() as any
+            const bn = bubbleNodes.find(b => b.node.path === d.node.path)
+            if (bn) {
+              bn.fx = null
+              bn.fy = null
+            }
+          })
+
+        g.selectAll('.file-bubble').call(drag as any)
+      }
+    })
+
+    // CRITICAL: Second pass - add transparent interaction overlays ABOVE all content
+    // This ensures full-area hover/click works even when bubbles are present
+    allNodes.forEach((d: any) => {
+      const node = d.data
+      const poly = d.polygon
+      if (!poly) return
+
+      const nodeDepth = d.depth
+      const isSynthetic = node.isSynthetic
+      const isTopLevel = nodeDepth === 1
+
+      // Only create interaction overlay for top-level partitions
+      if (!isTopLevel) return
+
+      // Create partition info for events
+      const partitionInfo: PartitionInfo = {
+        name: isSynthetic ? `Files (${node.file_count})` : node.name,
+        path: node.path,
+        size: node.size,
+        file_count: node.file_count || 0,
+        isDirectory: node.isDirectory,
+        isSynthetic: isSynthetic,
+        quotaPercent: getPartitionQuotaPercent(node.size),
+        fileQuotaPercent: getFileQuotaPercent(node.file_count || 0),
+        parentSize: parentSize,
+        parentQuotaPercent: getParentQuotaPercent(node.size),
+        depth: nodeDepth,
+        originalFiles: node.originalFiles
+      }
+
+      // Create transparent interaction overlay
+      const interactionOverlay = g.append('path')
+        .attr('class', 'voronoi-interaction-overlay')
+        .attr('d', `M${poly.join('L')}Z`)
+        .attr('fill', 'transparent')
+        .attr('stroke', 'none')
+        .style('cursor', (!isSynthetic && node.isDirectory) ? 'pointer' : 'default')
+        .style('pointer-events', 'all') // CRITICAL: Full area interaction
+        .datum(partitionInfo)
+
+      // HOVER EVENTS - Update background when hovering overlay
+      interactionOverlay
+        .on('mouseenter', function() {
+          const data = d3.select(this).datum() as any
+          const bg = g.selectAll('.voronoi-partition-bg').filter((bgData: any) => bgData && bgData.path === data.path)
+
+          if (!bg.classed('selected')) {
+            bg.attr('fill', HOVER_HIGHLIGHT_COLOR)
+              .attr('fill-opacity', isSynthetic ? 0.2 : 0.35)
+              .attr('stroke', HOVER_HIGHLIGHT_COLOR)
+              .attr('stroke-width', 3.5)
+              .attr('stroke-opacity', 1)
+              .style('filter', `drop-shadow(0 0 8px ${HOVER_HIGHLIGHT_COLOR})`)
+          }
+
+          setHoveredPartition(data)
+        })
+        .on('mouseleave', function() {
+          const data = d3.select(this).datum() as any
+          const bg = g.selectAll('.voronoi-partition-bg').filter((bgData: any) => bgData && bgData.path === data.path)
+
+          if (!bg.classed('selected')) {
+            bg.attr('fill', (bgData: any) => bgData.baseColor)
+              .attr('fill-opacity', (bgData: any) => bgData.baseFillOpacity)
+              .attr('stroke', (bgData: any) => bgData.baseStrokeColor)
+              .attr('stroke-width', isSynthetic ? 1.5 : 2.5)
+              .attr('stroke-opacity', isSynthetic ? 0.6 : 0.7)
+              .style('filter', 'none')
+          }
+
+          setHoveredPartition(null)
+        })
+
+      // Right-click to inspect
+      interactionOverlay.on('contextmenu', (e: MouseEvent) => {
+        e.preventDefault()
+        const data = d3.select(e.currentTarget as SVGPathElement).datum() as any
+        const bg = g.selectAll('.voronoi-partition-bg').filter((bgData: any) => bgData && bgData.path === data.path)
+
+        // Clear all selections
+        g.selectAll('.voronoi-partition-bg').classed('selected', false).style('filter', 'none')
+
+        // Mark as selected
+        bg.classed('selected', true).style('filter', `drop-shadow(0 0 12px ${HOVER_HIGHLIGHT_COLOR})`)
+
+        setSelectedPartition(partitionInfo)
+        setSelectedFileInPanel(null)
+      })
+
+      // Left-click to drill (only for directories, not synthetic)
+      if (!isSynthetic && node.isDirectory) {
+        interactionOverlay.on('click', (e: MouseEvent) => {
+          e.stopPropagation()
+          handleDrillDown(node, nodeDepth)
         })
       }
     })
 
-  }, [data, currentNode, isTransitioning, isFullscreen, handleDrillDown, handleInspect, getPartitionQuotaPercent])
+  }, [data, currentNode, isTransitioning, isFullscreen, handleDrillDown, handleInspect, getPartitionQuotaPercent, getFileQuotaPercent, getParentQuotaPercent, parentSize, selectedFileInPanel])
 
   // --- BREADCRUMB ---
   const buildBreadcrumb = useCallback(() => {
     const parts: Array<{ name: string; isClickable: boolean; index: number }> = []
     const rootPath = referencePath || '/project/cil'
     const rootPathParts = rootPath === '/' ? ['root'] : rootPath.split('/').filter(Boolean)
-    
+
     rootPathParts.forEach((p, i) => {
       parts.push({ name: p, isClickable: true, index: i })
     })
-    
+
     navigationHistory.forEach((h, i) => {
       if (h.node) {
         parts.push({ name: h.node.name, isClickable: true, index: rootPathParts.length + i })
       }
     })
-    
+
     if (currentNode) {
       parts.push({ name: currentNode.name, isClickable: false, index: parts.length })
     }
-    
+
     return { parts, rootPartsCount: rootPathParts.length }
   }, [referencePath, navigationHistory, currentNode])
-  
+
   const { parts: pathParts, rootPartsCount } = buildBreadcrumb()
   const canGoBack = navigationHistory.length > 0 || currentNode !== null
 
@@ -688,6 +940,12 @@ export function HierarchicalVoronoiView() {
       "space-y-3 font-mono text-xs",
       isFullscreen && "fixed inset-0 z-50 bg-[#0a0e14] p-4"
     )}>
+      {/* Tooltip for bubbles */}
+      <div
+        ref={tooltipRef}
+        className="fixed pointer-events-none z-50 bg-black/90 border border-cyan-600 rounded px-2 py-1 hidden"
+      />
+
       {/* HEADER & QUOTA */}
       <div className="flex flex-col border-b border-gray-800 pb-3 gap-3">
         <div className="flex justify-between items-start">
@@ -695,28 +953,37 @@ export function HierarchicalVoronoiView() {
             <h2 className="text-lg font-bold text-white uppercase tracking-widest">Storage Voronoi Topology</h2>
             <p className="text-gray-500">{selectedSnapshot} · Snapshot Data</p>
           </div>
-          {(isTransitioning || isFetching) && (
-            <div className="bg-cyan-950/30 text-cyan-400 border border-cyan-800 px-3 py-1 rounded flex items-center gap-2 animate-pulse">
-              <Info className="w-3 h-3" />
-              <span>UPDATING TOPOLOGY...</span>
-            </div>
-          )}
         </div>
 
-        <div className="flex gap-6 items-center">
-          <div className="flex-1 flex items-center gap-2">
-            <span className="text-gray-500 whitespace-nowrap">STORAGE QUOTA:</span>
+        {/* DUAL QUOTA BARS */}
+        <div className="space-y-2">
+          {/* Global Storage Quota (always relative to /project/cil) */}
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500 whitespace-nowrap text-[10px]">GLOBAL QUOTA:</span>
             <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden border border-gray-800">
               <div className={cn("h-full transition-all duration-1000", getQuotaColor(storageQuotaPercent))} style={{ width: `${Math.min(storageQuotaPercent, 100)}%` }} />
             </div>
-            <span className={cn("font-bold min-w-[50px] text-right", getQuotaTextColor(storageQuotaPercent))}>{storageQuotaPercent.toFixed(1)}%</span>
+            <span className={cn("font-bold min-w-[50px] text-right text-[10px]", getQuotaTextColor(storageQuotaPercent))}>{storageQuotaPercent.toFixed(1)}%</span>
+            <span className="text-gray-600 text-[9px]">({formatBytes(projectSize)} / {STORAGE_QUOTA_TB}TB)</span>
           </div>
+
+          {/* Parent-Relative Quota */}
+          {currentNode && (
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 whitespace-nowrap text-[10px]">PARENT DIR:</span>
+              <div className="flex-1 h-2 bg-gray-900 rounded-full overflow-hidden border border-gray-800">
+                <div className="h-full bg-cyan-600/70 transition-all duration-1000" style={{ width: '100%' }} />
+              </div>
+              <span className="font-bold min-w-[50px] text-right text-[10px] text-cyan-400">100%</span>
+              <span className="text-gray-600 text-[9px]">({formatBytes(parentSize)})</span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* TOP ROW: Partition Info Panel + Interaction Guide */}
       <div className="flex gap-3">
-        {/* PARTITION INFORMATION PANEL - RESTORED */}
+        {/* PARTITION INFORMATION PANEL - ENHANCED WITH 4 METRICS */}
         <div className="flex-1 bg-[#161b22] border border-gray-800 rounded-lg overflow-hidden">
           <div className="bg-gray-800/50 px-3 py-2 border-b border-gray-700 flex items-center gap-2">
             <Target className="w-4 h-4 text-cyan-400" />
@@ -730,49 +997,118 @@ export function HierarchicalVoronoiView() {
 
           <div className="p-3">
             {activePartition ? (
-              <div className="flex items-start gap-4">
-                <div className="flex items-center gap-2">
-                  {activePartition.isSynthetic ? (
-                    <Files className="w-6 h-6 text-blue-400" />
-                  ) : activePartition.isDirectory ? (
-                    <Folder className="w-6 h-6 text-green-400" />
-                  ) : (
-                    <FileText className="w-6 h-6 text-gray-400" />
-                  )}
+              <div className="space-y-3">
+                {/* Header with icon and name */}
+                <div className="flex items-start gap-4">
+                  <div className="flex items-center gap-2">
+                    {activePartition.isSynthetic ? (
+                      <Files className="w-6 h-6 text-blue-400" />
+                    ) : activePartition.isDirectory ? (
+                      <Folder className="w-6 h-6 text-green-400" />
+                    ) : (
+                      <FileText className="w-6 h-6 text-gray-400" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-bold truncate">{activePartition.name}</p>
+                    <p className="text-gray-500 text-[10px] truncate">{activePartition.path}</p>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-white font-bold truncate">{activePartition.name}</p>
-                  <p className="text-gray-500 text-[10px] truncate">{activePartition.path}</p>
-                </div>
-                
-                {/* RESTORED: Size, Quota %, File Count */}
-                <div className="flex gap-4">
-                  <div className="text-center bg-black/30 px-3 py-1.5 rounded border border-gray-800">
-                    <div className="flex items-center gap-1 mb-0.5">
+
+                {/* 4 KEY METRICS */}
+                <div className="grid grid-cols-2 gap-2">
+                  {/* Size */}
+                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
+                    <div className="flex items-center gap-1 mb-1">
                       <HardDrive className="w-3 h-3 text-gray-600" />
                       <label className="text-gray-600 text-[9px]">SIZE</label>
                     </div>
-                    <span className="text-cyan-400 font-bold text-sm">{formatBytes(activePartition.size)}</span>
+                    <div className="text-cyan-400 font-bold text-sm">{formatBytes(activePartition.size)}</div>
+                    <div className={cn("text-[9px]", getSizeSeverity(activePartition.size).color)}>
+                      {getSizeSeverity(activePartition.size).label}
+                    </div>
                   </div>
-                  <div className="text-center bg-black/30 px-3 py-1.5 rounded border border-gray-800">
-                    <div className="flex items-center gap-1 mb-0.5">
+
+                  {/* Storage Quota % */}
+                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
+                    <div className="flex items-center gap-1 mb-1">
                       <BarChart3 className="w-3 h-3 text-gray-600" />
-                      <label className="text-gray-600 text-[9px]">QUOTA</label>
+                      <label className="text-gray-600 text-[9px]">STORAGE QUOTA</label>
                     </div>
-                    <span className={cn("font-bold text-sm", getQuotaTextColor(activePartition.quotaPercent))}>
+                    <div className={cn("font-bold text-sm", getQuotaTextColor(activePartition.quotaPercent))}>
                       {activePartition.quotaPercent.toFixed(2)}%
-                    </span>
-                  </div>
-                  <div className="text-center bg-black/30 px-3 py-1.5 rounded border border-gray-800">
-                    <div className="flex items-center gap-1 mb-0.5">
-                      <Files className="w-3 h-3 text-gray-600" />
-                      <label className="text-gray-600 text-[9px]">FILES</label>
                     </div>
-                    <span className="text-white font-bold text-sm">
+                    <div className="text-gray-500 text-[9px]">of {STORAGE_QUOTA_TB}TB</div>
+                  </div>
+
+                  {/* File Count */}
+                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
+                    <div className="flex items-center gap-1 mb-1">
+                      <Files className="w-3 h-3 text-gray-600" />
+                      <label className="text-gray-600 text-[9px]">FILE COUNT</label>
+                    </div>
+                    <div className="text-white font-bold text-sm">
                       {activePartition.file_count > 0 ? activePartition.file_count.toLocaleString() : '—'}
-                    </span>
+                    </div>
+                    {activePartition.file_count > 0 && (
+                      <div className={cn("text-[9px]", getFileCountSeverity(activePartition.file_count).color)}>
+                        {getFileCountSeverity(activePartition.file_count).label}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* File Quota % */}
+                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
+                    <div className="flex items-center gap-1 mb-1">
+                      <BarChart3 className="w-3 h-3 text-gray-600" />
+                      <label className="text-gray-600 text-[9px]">FILE QUOTA</label>
+                    </div>
+                    <div className={cn("font-bold text-sm", getQuotaTextColor(activePartition.fileQuotaPercent))}>
+                      {activePartition.fileQuotaPercent.toFixed(3)}%
+                    </div>
+                    <div className="text-gray-500 text-[9px]">of {(FILE_COUNT_QUOTA / 1_000_000).toFixed(0)}M</div>
                   </div>
                 </div>
+
+                {/* Parent-relative quota */}
+                {activePartition.parentQuotaPercent !== undefined && activePartition.parentQuotaPercent < 100 && (
+                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
+                    <div className="flex items-center gap-1 mb-1">
+                      <BarChart3 className="w-3 h-3 text-gray-600" />
+                      <label className="text-gray-600 text-[9px]">% OF PARENT DIR</label>
+                    </div>
+                    <div className={cn("font-bold", getQuotaTextColor(activePartition.parentQuotaPercent))}>
+                      {activePartition.parentQuotaPercent.toFixed(1)}%
+                    </div>
+                  </div>
+                )}
+
+                {/* LOOSE FILES LIST (if synthetic partition) */}
+                {activePartition.isSynthetic && activePartition.originalFiles && activePartition.originalFiles.length > 0 && (
+                  <div className="bg-black/30 px-3 py-2 rounded border border-gray-800 max-h-48 overflow-y-auto">
+                    <div className="text-gray-500 text-[9px] uppercase mb-2">Files in this region:</div>
+                    <div className="space-y-1">
+                      {activePartition.originalFiles.slice(0, 50).map((file, idx) => (
+                        <div
+                          key={idx}
+                          onClick={() => handleFileClickInPanel(file.path)}
+                          className={cn(
+                            "flex items-center justify-between gap-2 p-1 rounded hover:bg-cyan-950/30 cursor-pointer transition-colors",
+                            selectedFileInPanel === file.path && "bg-cyan-950/50 border border-cyan-700"
+                          )}
+                        >
+                          <span className="text-white text-[10px] truncate flex-1">{file.name}</span>
+                          <span className="text-gray-400 text-[9px] whitespace-nowrap">{formatBytes(file.size)}</span>
+                        </div>
+                      ))}
+                      {activePartition.originalFiles.length > 50 && (
+                        <div className="text-gray-600 text-[9px] italic pt-1">
+                          + {activePartition.originalFiles.length - 50} more files
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex items-center gap-3 text-gray-600 py-2">
@@ -803,6 +1139,10 @@ export function HierarchicalVoronoiView() {
               <span className="text-yellow-400 font-bold w-14">DRAG:</span>
               <span className="text-gray-400">Pan view</span>
             </div>
+            <div className="flex gap-2">
+              <span className="text-purple-400 font-bold w-14">BUBBLES:</span>
+              <span className="text-gray-400">Drag files</span>
+            </div>
           </div>
           <div className="mt-2 pt-2 border-t border-gray-800 text-[9px] text-gray-600">
             <span className="text-cyan-600">●</span> Interactive &nbsp;
@@ -827,14 +1167,14 @@ export function HierarchicalVoronoiView() {
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
-        
+
         <span className="text-gray-700">|</span>
         <span className="text-green-500 font-bold">$</span>
-        
+
         {pathParts.map((p, i) => (
           <div key={i} className="flex items-center gap-1">
-            <button 
-              onClick={() => p.isClickable && navigateToPathIndex(p.index, rootPartsCount)} 
+            <button
+              onClick={() => p.isClickable && navigateToPathIndex(p.index, rootPartsCount)}
               disabled={!p.isClickable || isTransitioning || isFetching}
               className={cn(
                 "transition-colors whitespace-nowrap",
@@ -851,27 +1191,27 @@ export function HierarchicalVoronoiView() {
       </div>
 
       {/* MAIN VISUALIZER */}
-      <div 
-        ref={containerRef} 
+      <div
+        ref={containerRef}
         className="relative border border-gray-800 bg-[#0a0e14] rounded-lg overflow-hidden"
         style={{ height: isFullscreen ? 'calc(100vh - 280px)' : '550px' }}
       >
         <svg ref={svgRef} className="w-full h-full cursor-crosshair" />
-        
+
         {/* View Controls - Icons Only */}
         <div className="absolute bottom-3 right-3 flex gap-2">
-          <Button 
-            size="icon" 
-            variant="outline" 
+          <Button
+            size="icon"
+            variant="outline"
             className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700"
             onClick={resetZoom}
             title="Recenter View"
           >
             <Focus className="w-4 h-4" />
           </Button>
-          <Button 
-            size="icon" 
-            variant="outline" 
+          <Button
+            size="icon"
+            variant="outline"
             className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700"
             onClick={toggleFullscreen}
             title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
@@ -887,10 +1227,13 @@ export function HierarchicalVoronoiView() {
           </div>
         )}
 
-        {/* Loading State */}
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-            <div className="text-cyan-400 animate-pulse">Loading topology...</div>
+        {/* Loading State - SINGLE CENTER PANEL WITH PULSE */}
+        {(isLoading || isFetching || isTransitioning) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex items-center gap-3 animate-pulse">
+              <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <div className="text-cyan-400 font-bold">Loading</div>
+            </div>
           </div>
         )}
       </div>
@@ -912,7 +1255,7 @@ export function HierarchicalVoronoiView() {
           </span>
         </div>
         <div className="text-gray-700">
-          Click top-level partitions to explore • Deeper levels shown as preview
+          Hover partitions for full info • Click to explore • Drag bubbles
         </div>
       </div>
     </div>
