@@ -1,0 +1,37 @@
+// Circle packing algorithm for file bubbles in voronoi visualization
+
+import * as d3 from 'd3'
+import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
+
+export function packCirclesInPolygon(polygon: [number, number][], files: Array<{ node: VoronoiNode; value: number }>, maxCircles: number = 25): Array<{ x: number; y: number; r: number; node: VoronoiNode }> {
+  if (files.length === 0) return []
+  const centroid = d3.polygonCentroid(polygon)
+  const area = Math.abs(d3.polygonArea(polygon))
+  const topFiles = files.sort((a, b) => b.value - a.value).slice(0, maxCircles)
+  const totalSize = topFiles.reduce((sum, f) => sum + f.value, 0)
+
+  const circles: any[] = []
+  for (const file of topFiles) {
+    const sizeRatio = file.value / totalSize
+    let r = Math.max(4, Math.min(Math.sqrt(sizeRatio * area / Math.PI) * 0.6, 25))
+    let placed = false
+    let attempts = 0
+
+    while (!placed && attempts < 50) {
+      const angle = Math.random() * Math.PI * 2
+      const dist = Math.random() * Math.sqrt(area) * 0.4
+      const x = centroid[0] + dist * Math.cos(angle)
+      const y = centroid[1] + dist * Math.sin(angle)
+
+      if (d3.polygonContains(polygon, [x, y])) {
+        const collision = circles.some(c => Math.sqrt((x - c.x) ** 2 + (y - c.y) ** 2) < (r + c.r + 2))
+        if (!collision) {
+          circles.push({ x, y, r, node: file.node })
+          placed = true
+        }
+      }
+      attempts++
+    }
+  }
+  return circles
+}

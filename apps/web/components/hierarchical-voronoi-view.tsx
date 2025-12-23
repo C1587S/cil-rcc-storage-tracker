@@ -10,208 +10,32 @@ import { buildVoronoiTree, type VoronoiNode } from '@/lib/voronoi-data-adapter'
 import * as d3 from 'd3'
 // @ts-ignore - d3-voronoi-treemap types may not be available
 import { voronoiTreemap } from 'd3-voronoi-treemap'
-import { formatBytes, getFileExtension } from '@/lib/utils/formatters'
+import { formatBytes } from '@/lib/utils/formatters'
 import { getSizeFillColor } from '@/lib/utils/icon-helpers'
 import { Button } from '@/components/ui/button'
 import { Maximize2, Minimize2, Focus, Target, Folder, FileText, ChevronLeft, HardDrive, Files, BarChart3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
-
-// --- CONSTANTS & STYLES ---
-
-const TERMINAL_COLORS = {
-  background: '#0a0e14',
-  backgroundLight: '#161b22',
-  folder: '#00ff88',
-  file: '#808080',
-  text: '#c0c0c0',
-  textBright: '#ffffff',
-  textDim: '#606060',
-  border: '#30363d',
-  borderBright: '#58a6ff',
-  executable: '#ff6b6b',
-  archive: '#ffd700',
-  filesContainer: '#4a9eff',
-}
-
-const HOVER_HIGHLIGHT_COLOR = '#0675af'
-
-const FILE_TYPE_COLORS: Record<string, string> = {
-  'sh': TERMINAL_COLORS.executable,
-  'exe': TERMINAL_COLORS.executable,
-  'zip': TERMINAL_COLORS.archive,
-  'tar': TERMINAL_COLORS.archive,
-  'gz': TERMINAL_COLORS.archive,
-  'rar': TERMINAL_COLORS.archive,
-  'default': TERMINAL_COLORS.file
-}
-
-const STORAGE_QUOTA_TB = 500
-const FILE_COUNT_QUOTA = 77_000_000
-
-const SIZE_SEVERITY = {
-  NEGLIGIBLE: 10 * 1024 * 1024,
-  SMALL: 1024 * 1024 * 1024,
-  MEDIUM: 10 * 1024 * 1024 * 1024,
-  LARGE: 50 * 1024 * 1024 * 1024,
-}
-
-const FILE_COUNT_SEVERITY = {
-  NEGLIGIBLE: 100,
-  SMALL: 1000,
-  MEDIUM: 10000,
-  LARGE: 100000,
-}
-
-// --- HELPER FUNCTIONS ---
-
-function getSizeSeverity(size: number): { label: string; color: string } {
-  if (size < SIZE_SEVERITY.NEGLIGIBLE) return { label: 'Negligible', color: 'text-gray-500' }
-  if (size < SIZE_SEVERITY.SMALL) return { label: 'Small', color: 'text-blue-400' }
-  if (size < SIZE_SEVERITY.MEDIUM) return { label: 'Medium', color: 'text-yellow-400' }
-  if (size < SIZE_SEVERITY.LARGE) return { label: 'Large', color: 'text-orange-500' }
-  return { label: 'Very Large', color: 'text-red-500' }
-}
-
-function getFileCountSeverity(count: number): { label: string; color: string } {
-  if (count < FILE_COUNT_SEVERITY.NEGLIGIBLE) return { label: 'Negligible', color: 'text-gray-500' }
-  if (count < FILE_COUNT_SEVERITY.SMALL) return { label: 'Small', color: 'text-blue-400' }
-  if (count < FILE_COUNT_SEVERITY.MEDIUM) return { label: 'Medium', color: 'text-yellow-400' }
-  if (count < FILE_COUNT_SEVERITY.LARGE) return { label: 'Large', color: 'text-orange-500' }
-  return { label: 'Very Large', color: 'text-red-500' }
-}
-
-function getQuotaColor(percent: number): string {
-  if (percent >= 95) return "bg-red-600/70"
-  if (percent >= 85) return "bg-red-500/65"
-  if (percent >= 75) return "bg-orange-500/65"
-  if (percent >= 50) return "bg-yellow-400/60"
-  return "bg-green-600/70"
-}
-
-function getQuotaTextColor(percent: number): string {
-  if (percent >= 95) return "text-red-600"
-  if (percent >= 75) return "text-orange-500"
-  if (percent >= 50) return "text-yellow-400"
-  return "text-green-600"
-}
-
-function getFileColor(name: string): string {
-  const ext = getFileExtension(name).toLowerCase()
-  return FILE_TYPE_COLORS[ext] || FILE_TYPE_COLORS['default']
-}
-
-function isValidPolygon(polygon: [number, number][]): boolean {
-  if (!polygon || polygon.length < 3) return false
-  const area = Math.abs(d3.polygonArea(polygon))
-  return area > 10
-}
-
-function getPolygonBounds(polygon: [number, number][]): { x: number; y: number; width: number; height: number } {
-  const xs = polygon.map(p => p[0])
-  const ys = polygon.map(p => p[1])
-  return {
-    x: Math.min(...xs),
-    y: Math.min(...ys),
-    width: Math.max(...xs) - Math.min(...xs),
-    height: Math.max(...ys) - Math.min(...ys)
-  }
-}
-
-function constrainToPolygon(x: number, y: number, polygon: [number, number][], padding: number = 0): [number, number] {
-  if (d3.polygonContains(polygon, [x, y])) return [x, y]
-
-  let minDist = Infinity
-  let nearest: [number, number] = [x, y]
-
-  for (let i = 0; i < polygon.length; i++) {
-    const p1 = polygon[i]
-    const p2 = polygon[(i + 1) % polygon.length]
-    const dx = p2[0] - p1[0]
-    const dy = p2[1] - p1[1]
-    const len2 = dx * dx + dy * dy
-    if (len2 === 0) continue
-
-    let t = ((x - p1[0]) * dx + (y - p1[1]) * dy) / len2
-    t = Math.max(0, Math.min(1, t))
-
-    const projX = p1[0] + t * dx
-    const projY = p1[1] + t * dy
-    const dist = Math.hypot(x - projX, y - projY)
-
-    if (dist < minDist) {
-      minDist = dist
-      nearest = [projX, projY]
-    }
-  }
-
-  const centroid = d3.polygonCentroid(polygon)
-  const toCentroid = [centroid[0] - nearest[0], centroid[1] - nearest[1]]
-  const len = Math.hypot(toCentroid[0], toCentroid[1])
-
-  if (len > 0) {
-    nearest[0] += (toCentroid[0] / len) * (padding + 2)
-    nearest[1] += (toCentroid[1] / len) * (padding + 2)
-  }
-
-  return nearest
-}
-
-function packCirclesInPolygon(polygon: [number, number][], files: Array<{ node: VoronoiNode; value: number }>, maxCircles: number = 25): Array<{ x: number; y: number; r: number; node: VoronoiNode }> {
-  if (files.length === 0) return []
-  const centroid = d3.polygonCentroid(polygon)
-  const area = Math.abs(d3.polygonArea(polygon))
-  const topFiles = files.sort((a, b) => b.value - a.value).slice(0, maxCircles)
-  const totalSize = topFiles.reduce((sum, f) => sum + f.value, 0)
-
-  const circles: any[] = []
-  for (const file of topFiles) {
-    const sizeRatio = file.value / totalSize
-    let r = Math.max(4, Math.min(Math.sqrt(sizeRatio * area / Math.PI) * 0.6, 25))
-    let placed = false
-    let attempts = 0
-
-    while (!placed && attempts < 50) {
-      const angle = Math.random() * Math.PI * 2
-      const dist = Math.random() * Math.sqrt(area) * 0.4
-      const x = centroid[0] + dist * Math.cos(angle)
-      const y = centroid[1] + dist * Math.sin(angle)
-
-      if (d3.polygonContains(polygon, [x, y])) {
-        const collision = circles.some(c => Math.sqrt((x - c.x) ** 2 + (y - c.y) ** 2) < (r + c.r + 2))
-        if (!collision) {
-          circles.push({ x, y, r, node: file.node })
-          placed = true
-        }
-      }
-      attempts++
-    }
-  }
-  return circles
-}
-
-// --- TYPES ---
-
-interface PartitionInfo {
-  name: string
-  path: string
-  size: number
-  file_count: number
-  isDirectory: boolean
-  isSynthetic: boolean
-  quotaPercent: number
-  fileQuotaPercent: number
-  parentSize?: number
-  parentQuotaPercent?: number
-  depth: number
-  originalFiles?: VoronoiNode[]
-}
-
-interface VoronoiCacheEntry {
-  path: string
-  hierarchyData: any
-  timestamp: number
-}
+import {
+  TERMINAL_COLORS,
+  HOVER_HIGHLIGHT_COLOR,
+  STORAGE_QUOTA_TB,
+  FILE_COUNT_QUOTA,
+} from '@/lib/voronoi/utils/constants'
+import {
+  getSizeSeverity,
+  getFileCountSeverity,
+  getQuotaColor,
+  getQuotaTextColor,
+  getFileColor,
+} from '@/lib/voronoi/utils/colors'
+import {
+  isValidPolygon,
+  getPolygonBounds,
+  constrainToPolygon,
+} from '@/lib/voronoi/utils/geometry'
+import { packCirclesInPolygon } from '@/lib/voronoi/utils/circle-packing'
+import { type PartitionInfo, type VoronoiCacheEntry } from '@/lib/voronoi/utils/types'
 
 // --- COMPONENT ---
 
