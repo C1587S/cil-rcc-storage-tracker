@@ -9,12 +9,15 @@ import { BubbleLayer } from './layers/BubbleLayer'
 import { LabelLayer } from './layers/LabelLayer'
 import { InteractionLayer } from './layers/InteractionLayer'
 
+/**
+ * Options for configuring the VoronoiRenderer
+ */
 export interface VoronoiRendererOptions {
   svgRef: React.RefObject<SVGSVGElement>
   containerRef: React.RefObject<HTMLDivElement>
   tooltipRef: React.RefObject<HTMLDivElement>
   voronoiCacheRef: React.RefObject<Map<string, VoronoiCacheEntry>>
-  zoomRef: React.RefObject<any>
+  zoomRef: React.MutableRefObject<any>
   isFullscreen: boolean
   getPartitionQuotaPercent: (size: number) => number
   getFileQuotaPercent: (fileCount: number) => number
@@ -26,6 +29,11 @@ export interface VoronoiRendererOptions {
   performDrillDown: (path: string) => void
 }
 
+/**
+ * Orchestrates the rendering of voronoi treemap visualization.
+ * Manages multiple rendering layers (background, preview, bubbles, labels, interaction)
+ * and handles the complete rendering pipeline from data computation to SVG output.
+ */
 export class VoronoiRenderer {
   private options: VoronoiRendererOptions
   private computer: VoronoiComputer | null = null
@@ -38,13 +46,14 @@ export class VoronoiRenderer {
 
   /**
    * Main render method - orchestrates the entire rendering pipeline
+   *
+   * @param data - The hierarchical voronoi data to render
+   * @param effectivePath - Current path being visualized
    */
   render(data: VoronoiNode, effectivePath: string): void {
     const { svgRef, containerRef, voronoiCacheRef, zoomRef, isFullscreen } = this.options
 
     if (!svgRef.current || !containerRef.current || !voronoiCacheRef.current) return
-
-    console.log('[RENDER] For:', effectivePath)
 
     // Stop previous simulation
     if (this.simulation) {
@@ -142,7 +151,7 @@ export class VoronoiRenderer {
   }
 
   /**
-   * Cleanup method - stops simulations
+   * Cleanup method - stops physics simulations and releases resources
    */
   cleanup(): void {
     if (this.bubbleLayer) {
@@ -156,7 +165,9 @@ export class VoronoiRenderer {
   }
 
   /**
-   * Returns the current simulation (for ref storage)
+   * Returns the current D3 physics simulation instance
+   *
+   * @returns The active simulation or null if not initialized
    */
   getSimulation(): d3.Simulation<any, undefined> | null {
     return this.simulation

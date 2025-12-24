@@ -63,7 +63,7 @@ export class BubbleLayer {
           .style('pointer-events', 'all')
           .datum({ ...c, polygon: poly, centroid: d3.polygonCentroid(poly) })
 
-        this.attachBubbleEventHandlers(bubble)
+        this.attachBubbleEventHandlers(bubble as any)
       })
 
       // Setup physics simulation

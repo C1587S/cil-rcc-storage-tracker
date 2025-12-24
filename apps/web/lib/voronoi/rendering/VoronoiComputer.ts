@@ -5,6 +5,9 @@ import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
 import { type VoronoiCacheEntry } from '@/lib/voronoi/utils/types'
 import { isValidPolygon } from '@/lib/voronoi/utils/geometry'
 
+/**
+ * Result of voronoi treemap computation
+ */
 export interface ComputedVoronoiResult {
   hierarchy: d3.HierarchyNode<any>
   allNodes: d3.HierarchyNode<any>[]
@@ -12,6 +15,11 @@ export interface ComputedVoronoiResult {
   previewNodes: d3.HierarchyNode<any>[]
 }
 
+/**
+ * Computes voronoi treemap layout with caching support.
+ * Separates directories and files into hierarchical structure,
+ * applies recursive voronoi computation up to depth 2.
+ */
 export class VoronoiComputer {
   private cache: Map<string, VoronoiCacheEntry>
 
@@ -95,7 +103,13 @@ export class VoronoiComputer {
   }
 
   /**
-   * Computes or retrieves voronoi hierarchy.
+   * Computes or retrieves cached voronoi hierarchy
+   *
+   * @param data - The hierarchical data to compute voronoi for
+   * @param effectivePath - Current path (used as cache key)
+   * @param width - SVG container width
+   * @param height - SVG container height
+   * @returns Computed hierarchy with all nodes at different depths
    */
   compute(
     data: VoronoiNode,
@@ -153,8 +167,6 @@ export class VoronoiComputer {
     )
     const topLevelNodes = allNodes.filter(d => d.depth === 1)
     const previewNodes = allNodes.filter(d => d.depth === 2)
-
-    console.log('[RENDER] Top-level:', topLevelNodes.length, 'paths:', topLevelNodes.map(d => d.data.path))
 
     return {
       hierarchy,

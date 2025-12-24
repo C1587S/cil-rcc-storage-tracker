@@ -6,7 +6,7 @@ export interface VoronoiNode {
   path: string;
   children?: VoronoiNode[];
   isDirectory: boolean;
-  is_directory?: boolean; // For compatibility with legacy component
+  is_directory?: boolean; // Alias for backward compatibility
   file_count?: number;
   depth?: number;
 }
@@ -31,16 +31,12 @@ export async function buildVoronoiTree(
   previewDepth: number = 2,
   maxNodes: number = 500
 ): Promise<VoronoiNode> {
-  console.log(`[buildVoronoiTree] Starting build for path="${path}", previewDepth=${previewDepth}, maxNodes=${maxNodes}`);
-
   // Fetch root directory folders (ONLY folders from /api/browse)
   const browseResult = await getBrowse({
     snapshot_date: snapshotDate,
     parent_path: path,
     limit: 1000,
   });
-
-  console.log(`[buildVoronoiTree] Fetched ${browseResult.folders.length} folders from browse API`);
 
   // Sort by recursive_size (descending) and take top N
   const sortedFolders = browseResult.folders
@@ -50,8 +46,6 @@ export async function buildVoronoiTree(
     }))
     .sort((a, b) => b.effectiveSize - a.effectiveSize)
     .slice(0, maxNodes);
-
-  console.log(`[buildVoronoiTree] Top ${sortedFolders.length} folders by size (after limiting to ${maxNodes})`);
 
   // Build children recursively up to preview depth
   const children: VoronoiNode[] = await Promise.all(
@@ -80,8 +74,7 @@ export async function buildVoronoiTree(
             node.children = childNodes;
           }
         } catch (error) {
-          console.warn(`[buildVoronoiTree] Failed to fetch children for ${folder.path}:`, error);
-          // Continue without children
+          // Continue without children on error
         }
       }
 
@@ -110,10 +103,8 @@ export async function buildVoronoiTree(
         is_directory: false,
         depth: 1,
       }));
-
-    console.log(`[buildVoronoiTree] Added ${rootFiles.length} files at root level`);
   } catch (error) {
-    console.warn(`[buildVoronoiTree] Failed to fetch root files:`, error);
+    // Continue without root files on error
   }
 
   // Calculate root size (sum of all children)
@@ -131,8 +122,6 @@ export async function buildVoronoiTree(
     file_count: browseResult.total_count,
     depth: 0,
   };
-
-  console.log(`[buildVoronoiTree] Built root node with ${rootNode.children?.length || 0} children (${children.length} folders, ${rootFiles.length} files), total size: ${totalSize}`);
 
   return rootNode;
 }
@@ -152,8 +141,6 @@ async function fetchChildren(
   previewDepth: number,
   nodeBudget: number
 ): Promise<VoronoiNode[]> {
-  console.log(`[fetchChildren] path="${parentPath}", depth=${currentDepth}/${previewDepth}, budget=${nodeBudget}`);
-
   const children: VoronoiNode[] = [];
 
   // Fetch subdirectories (ONLY folders, guaranteed by /api/browse)
@@ -171,8 +158,6 @@ async function fetchChildren(
     }))
     .sort((a, b) => b.effectiveSize - a.effectiveSize)
     .slice(0, Math.max(10, Math.floor(nodeBudget / 2))); // At least 10, up to half the budget
-
-  console.log(`[fetchChildren] Found ${topFolders.length} subdirectories at depth ${currentDepth}`);
 
   // Add subdirectories
   for (const folder of topFolders) {
@@ -200,7 +185,7 @@ async function fetchChildren(
           node.children = grandchildren;
         }
       } catch (error) {
-        console.warn(`[fetchChildren] Failed to fetch grandchildren for ${folder.path}:`, error);
+        // Continue without grandchildren on error
       }
     }
     // CRITICAL: Do NOT add files as children here at preview depth
@@ -231,10 +216,9 @@ async function fetchChildren(
         depth: currentDepth,
       }));
 
-    console.log(`[fetchChildren] Added ${files.length} files at path ${parentPath}, depth ${currentDepth}`);
     children.push(...files);
   } catch (error) {
-    console.warn(`[fetchChildren] Failed to fetch files for ${parentPath}:`, error);
+    // Continue without files on error
   }
 
   return children.filter(child => child.size > 0);

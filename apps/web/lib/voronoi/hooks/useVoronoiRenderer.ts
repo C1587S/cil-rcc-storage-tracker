@@ -3,6 +3,9 @@ import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
 import { type PartitionInfo, type VoronoiCacheEntry } from '@/lib/voronoi/utils/types'
 import { VoronoiRenderer } from '@/lib/voronoi/rendering/VoronoiRenderer'
 
+/**
+ * Options for useVoronoiRenderer hook
+ */
 export interface UseVoronoiRendererOptions {
   data: VoronoiNode | undefined
   effectivePath: string
@@ -13,8 +16,8 @@ export interface UseVoronoiRendererOptions {
   containerRef: React.RefObject<HTMLDivElement>
   tooltipRef: React.RefObject<HTMLDivElement>
   voronoiCacheRef: React.RefObject<Map<string, VoronoiCacheEntry>>
-  zoomRef: React.RefObject<any>
-  simulationRef: React.RefObject<d3.Simulation<any, undefined> | null>
+  zoomRef: React.MutableRefObject<any>
+  simulationRef: React.MutableRefObject<d3.Simulation<any, undefined> | null>
   getPartitionQuotaPercent: (size: number) => number
   getFileQuotaPercent: (fileCount: number) => number
   getParentQuotaPercent: (size: number) => number
@@ -26,7 +29,11 @@ export interface UseVoronoiRendererOptions {
 }
 
 /**
- * React hook that manages voronoi rendering lifecycle
+ * React hook that manages voronoi rendering lifecycle.
+ * Creates and manages VoronoiRenderer instances, handles cleanup,
+ * and coordinates re-rendering when dependencies change.
+ *
+ * @param options - Rendering configuration and callbacks
  */
 export function useVoronoiRenderer(options: UseVoronoiRendererOptions): void {
   const {

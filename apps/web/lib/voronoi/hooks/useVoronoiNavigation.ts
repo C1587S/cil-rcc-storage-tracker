@@ -1,10 +1,21 @@
 import { useState, useCallback, useRef } from 'react'
 
+/**
+ * Options for useVoronoiNavigation hook
+ */
 interface UseVoronoiNavigationOptions {
   basePath: string
   onNavigate?: () => void
 }
 
+/**
+ * React hook for managing voronoi visualization navigation state.
+ * Handles drill-down navigation, history, breadcrumb navigation, and locking.
+ * Uses ref pattern to prevent stale closures in D3 event handlers.
+ *
+ * @param options - Configuration options
+ * @returns Navigation state and control functions
+ */
 export function useVoronoiNavigation({ basePath, onNavigate }: UseVoronoiNavigationOptions) {
   const [viewingPath, setViewingPath] = useState<string | null>(null)
   const [history, setHistory] = useState<string[]>([])
@@ -19,25 +30,18 @@ export function useVoronoiNavigation({ basePath, onNavigate }: UseVoronoiNavigat
   const effectivePathRef = useRef(effectivePath)
   effectivePathRef.current = effectivePath
 
-  console.log('[STATE] effectivePath:', effectivePath, '| viewingPath:', viewingPath, '| history:', history.length, '| locked:', navigationLock)
-
   // DRILL DOWN - reads from ref for current path
   const performDrillDown = useCallback((targetPath: string) => {
     const currentPath = effectivePathRef.current
 
-    console.log('[DRILL] Target:', targetPath, '| Current (ref):', currentPath, '| Locked:', navigationLockRef.current)
-
     if (navigationLockRef.current) {
-      console.log('[DRILL] BLOCKED - locked')
       return
     }
 
     if (!targetPath || targetPath === currentPath) {
-      console.log('[DRILL] BLOCKED - invalid or same')
       return
     }
 
-    console.log('[DRILL] ✓ NAVIGATING to:', targetPath)
     navigationLockRef.current = true
     setNavigationLock(true)
 
@@ -54,8 +58,6 @@ export function useVoronoiNavigation({ basePath, onNavigate }: UseVoronoiNavigat
 
     const newHistory = [...history]
     const previousPath = newHistory.pop()!
-
-    console.log('[BACK] To:', previousPath)
 
     setHistory(newHistory)
     setViewingPath(previousPath === basePath ? null : previousPath)
@@ -82,7 +84,6 @@ export function useVoronoiNavigation({ basePath, onNavigate }: UseVoronoiNavigat
   }, [history, basePath, effectivePath])
 
   const unlockNavigation = useCallback(() => {
-    console.log('[DATA] Ready, unlocking')
     setNavigationLock(false)
     navigationLockRef.current = false
   }, [])

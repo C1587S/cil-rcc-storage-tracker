@@ -1,7 +1,14 @@
 'use client'
 
-// DEBUG: Confirm file loaded
-console.log('[VORONOI] file loaded - v8 PHASE 4 RENDERING LAYER', new Date().toISOString())
+/**
+ * Hierarchical Voronoi Treemap Visualization
+ *
+ * Production-ready visualization component with clean architecture:
+ * - Custom hooks for data, navigation, selection, and zoom
+ * - Class-based rendering layers (Background, Preview, Bubble, Label, Interaction)
+ * - VoronoiComputer for computation with caching
+ * - Separated concerns for maintainability and scalability
+ */
 
 import { useEffect, useRef, useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'

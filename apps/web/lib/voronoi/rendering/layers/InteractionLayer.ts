@@ -120,7 +120,6 @@ export class InteractionLayer {
         const clickedPath = d3.select(e.currentTarget as SVGPathElement).attr('data-path')
         const isDir = d3.select(e.currentTarget as SVGPathElement).attr('data-is-directory') === 'true'
         const isSyn = d3.select(e.currentTarget as SVGPathElement).attr('data-is-synthetic') === 'true'
-        console.log('[CLICK] path:', clickedPath, '| isDir:', isDir, '| isSyn:', isSyn)
         if (clickedPath && isDir && !isSyn) {
           this.options.performDrillDown(clickedPath)
         }
