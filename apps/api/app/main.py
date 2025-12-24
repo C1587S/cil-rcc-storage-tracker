@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.settings import get_settings
-from app.routers import snapshots, browse, contents, search, query
+from app.routers import snapshots, browse, contents, search, query, voronoi
 
 # Get settings
 settings = get_settings()
@@ -32,6 +32,7 @@ app.include_router(browse.router)
 app.include_router(contents.router)
 app.include_router(search.router)
 app.include_router(query.router)
+app.include_router(voronoi.router)
 
 
 @app.get("/")
