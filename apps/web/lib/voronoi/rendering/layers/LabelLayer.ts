@@ -5,16 +5,27 @@ import { getPolygonBounds } from '@/lib/voronoi/utils/geometry'
 export interface LabelLayerOptions {
   gLabels: d3.Selection<SVGGElement, unknown, null, undefined>
   topLevelNodes: d3.HierarchyNode<any>[]
+  viewportWidth: number
 }
 
 export class LabelLayer {
   private gLabels: d3.Selection<SVGGElement, unknown, null, undefined>
+  private viewportWidth: number
 
   constructor(options: LabelLayerOptions) {
     this.gLabels = options.gLabels
+    this.viewportWidth = options.viewportWidth
   }
 
   render(topLevelNodes: d3.HierarchyNode<any>[]): void {
+    // Scale font size based on viewport width
+    // Base width (1278px) uses max font size of 13px
+    // Larger widths scale up proportionally
+    const baseWidth = 1278
+    const baseFontSizeMax = 13
+    const fontSizeScale = Math.max(1, this.viewportWidth / baseWidth)
+    const maxFontSize = baseFontSizeMax * fontSizeScale
+
     topLevelNodes.forEach((d: any) => {
       const node = d.data
       const poly = d.polygon
@@ -26,7 +37,7 @@ export class LabelLayer {
         const displayName = node.isSynthetic
           ? `${node.file_count} files`
           : (node.name.length > 20 ? node.name.slice(0, 17) + '...' : node.name)
-        const fontSize = Math.min(13, Math.max(7, bounds.width / displayName.length * 1.2))
+        const fontSize = Math.min(maxFontSize, Math.max(7, bounds.width / displayName.length * 1.2 * fontSizeScale))
 
         this.gLabels.append('text')
           .attr('x', centroid[0])

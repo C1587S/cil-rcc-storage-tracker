@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
 import { type PartitionInfo, type VoronoiCacheEntry } from '@/lib/voronoi/utils/types'
 import { VoronoiRenderer } from '@/lib/voronoi/rendering/VoronoiRenderer'
@@ -35,8 +35,9 @@ export interface UseVoronoiRendererOptions {
  * and coordinates re-rendering when dependencies change.
  *
  * @param options - Rendering configuration and callbacks
+ * @returns Object containing isRendering flag for loading states
  */
-export function useVoronoiRenderer(options: UseVoronoiRendererOptions): void {
+export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRendering: boolean } {
   const {
     data,
     effectivePath,
@@ -61,10 +62,31 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): void {
   } = options
 
   const rendererRef = useRef<VoronoiRenderer | null>(null)
+  const [isRendering, setIsRendering] = useState(false)
 
   useEffect(() => {
-    if (!data || !svgRef.current || !containerRef.current) return
-    if (navigationLock && isFetching) return
+    console.log('[useVoronoiRenderer] useEffect triggered:', {
+      hasData: !!data,
+      effectivePath,
+      isFullscreen,
+      isExpanded,
+      navigationLock,
+      isFetching,
+      hasSvgRef: !!svgRef.current,
+      hasContainerRef: !!containerRef.current
+    })
+
+    if (!data || !svgRef.current || !containerRef.current) {
+      console.log('[useVoronoiRenderer] Early return - missing data or refs')
+      return
+    }
+    if (navigationLock && isFetching) {
+      console.log('[useVoronoiRenderer] Early return - navigation locked and fetching')
+      return
+    }
+
+    // Set rendering state
+    setIsRendering(true)
 
     // Cleanup previous renderer
     if (rendererRef.current) {
@@ -86,7 +108,8 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): void {
       selectedPartition,
       setHoveredPartition,
       handleInspect,
-      performDrillDown
+      performDrillDown,
+      onRenderComplete: () => setIsRendering(false)
     })
 
     // Render
@@ -125,4 +148,6 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): void {
     voronoiCacheRef,
     simulationRef
   ])
+
+  return { isRendering }
 }

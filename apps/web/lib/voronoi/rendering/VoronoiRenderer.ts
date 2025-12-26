@@ -27,6 +27,7 @@ export interface VoronoiRendererOptions {
   setHoveredPartition: (info: PartitionInfo | null) => void
   handleInspect: (info: PartitionInfo) => void
   performDrillDown: (path: string) => void
+  onRenderComplete?: () => void
 }
 
 /**
@@ -51,21 +52,71 @@ export class VoronoiRenderer {
    * @param effectivePath - Current path being visualized
    */
   render(data: VoronoiNode, effectivePath: string): void {
-    const { svgRef, containerRef, voronoiCacheRef, zoomRef, isFullscreen } = this.options
+    const { svgRef, containerRef, voronoiCacheRef, isFullscreen } = this.options
 
-    if (!svgRef.current || !containerRef.current || !voronoiCacheRef.current) return
-
-    // Stop previous simulation
-    if (this.simulation) {
-      this.simulation.stop()
-      this.simulation = null
+    if (!svgRef.current || !containerRef.current || !voronoiCacheRef.current) {
+      console.log('[VoronoiRenderer] render() - refs not ready')
+      return
     }
 
-    // Calculate dimensions
-    const container = containerRef.current
-    const width = container.clientWidth
-    const height = isFullscreen ? window.innerHeight - 280 : 550
-    if (width === 0) return
+    // Log initial state
+    const initialWidth = containerRef.current.clientWidth
+    const initialHeight = containerRef.current.clientHeight
+    console.log('[VoronoiRenderer] render() called:', {
+      effectivePath,
+      isFullscreen,
+      initialWidth,
+      initialHeight,
+      containerElement: containerRef.current
+    })
+
+    // Wait for CSS transition to complete (duration-300 = 300ms)
+    // Use setTimeout to ensure layout is fully settled after transition
+    setTimeout(() => {
+      if (!svgRef.current || !containerRef.current || !voronoiCacheRef.current) {
+        console.log('[VoronoiRenderer] setTimeout - refs not ready')
+        return
+      }
+
+      // Stop previous simulation
+      if (this.simulation) {
+        this.simulation.stop()
+        this.simulation = null
+      }
+
+      // Calculate dimensions (after transition complete)
+      const container = containerRef.current
+      const width = container.clientWidth
+      const height = isFullscreen ? window.innerHeight - 280 : 550
+
+      console.log('[VoronoiRenderer] setTimeout - dimensions after wait:', {
+        width,
+        height,
+        isFullscreen,
+        windowHeight: window.innerHeight,
+        containerClientWidth: container.clientWidth,
+        containerClientHeight: container.clientHeight,
+        containerOffsetWidth: container.offsetWidth,
+        containerOffsetHeight: container.offsetHeight,
+        containerBoundingRect: container.getBoundingClientRect()
+      })
+
+      if (width === 0) {
+        console.warn('[VoronoiRenderer] setTimeout - width is 0, skipping render')
+        return
+      }
+
+      this.renderInternal(data, effectivePath, width, height)
+    }, 320) // Slightly longer than transition-duration-300 (300ms)
+  }
+
+  /**
+   * Internal render method with calculated dimensions
+   */
+  private renderInternal(data: VoronoiNode, effectivePath: string, width: number, height: number): void {
+    const { svgRef, voronoiCacheRef, zoomRef } = this.options
+
+    if (!svgRef.current || !voronoiCacheRef.current) return
 
     // Setup SVG
     const svg = d3.select(svgRef.current)
@@ -122,7 +173,7 @@ export class VoronoiRenderer {
     const nodesForBubbles = [...topLevelNodes, ...previewNodes]
     this.simulation = this.bubbleLayer.render(nodesForBubbles)
 
-    const labelLayer = new LabelLayer({ gLabels, topLevelNodes })
+    const labelLayer = new LabelLayer({ gLabels, topLevelNodes, viewportWidth: width })
     labelLayer.render(topLevelNodes)
 
     const interactionLayer = new InteractionLayer({
@@ -139,6 +190,11 @@ export class VoronoiRenderer {
       performDrillDown: this.options.performDrillDown
     })
     interactionLayer.render(topLevelNodes)
+
+    // Notify that rendering is complete
+    if (this.options.onRenderComplete) {
+      this.options.onRenderComplete()
+    }
   }
 
   private createClipPaths(

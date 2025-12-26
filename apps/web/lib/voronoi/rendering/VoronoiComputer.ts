@@ -196,7 +196,8 @@ export class VoronoiComputer {
     width: number,
     height: number
   ): ComputedVoronoiResult {
-    const cacheKey = effectivePath
+    // CRITICAL: Include width and height in cache key so layout recomputes on resize
+    const cacheKey = `${effectivePath}:${width}x${height}`
     const cached = this.cache.get(cacheKey)
 
     console.log('[VoronoiComputer] compute() called:', {
@@ -204,7 +205,8 @@ export class VoronoiComputer {
       dataPath: data.path,
       dataChildCount: data.children?.length || 0,
       cacheHit: !!cached,
-      cacheKey
+      cacheKey,
+      dimensions: `${width}x${height}`
     })
 
     // CRITICAL: Validate that data matches effectivePath

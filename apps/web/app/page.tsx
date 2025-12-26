@@ -5,24 +5,15 @@ import { SnapshotSelector } from "@/components/snapshot-selector";
 import { DiskUsageExplorerV2 } from "@/components/disk-usage-explorer-v2";
 import { HierarchicalVoronoiView } from "@/components/hierarchical-voronoi-view";
 import { SearchConsole } from "@/components/search-console";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useState } from "react";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState("tree");
-  const [prevTab, setPrevTab] = useState("tree");
 
   const handleTabChange = (newTab: string) => {
-    setPrevTab(activeTab);
     setActiveTab(newTab);
   };
-
-  const tabIndex = { tree: 0, voronoi: 1 };
-  const slideDirection =
-    tabIndex[activeTab as keyof typeof tabIndex] >
-    tabIndex[prevTab as keyof typeof tabIndex]
-      ? "left"
-      : "right";
 
   return (
     <main className="min-h-screen p-8">
@@ -51,7 +42,7 @@ export default function Home() {
           </p>
 
           <div className="mt-2 p-2 bg-green-900/20 border border-green-600 rounded text-sm text-green-400">
-            ✅ Production Mode: Using ClickHouse precomputed voronoi data
+            Using ClickHouse precomputed voronoi data
           </div>
         </header>
 
@@ -66,32 +57,15 @@ export default function Home() {
           </TabsList>
 
           <div className="relative">
-            <TabsContent
-              value="tree"
-              className={`space-y-6 transition-all duration-300 ${
-                activeTab === "tree"
-                  ? slideDirection === "right"
-                    ? "animate-slide-in-from-left"
-                    : "animate-slide-in-from-right"
-                  : "hidden"
-              }`}
-            >
+            {/* Keep both tabs mounted but toggle visibility to preserve state */}
+            <div className={`space-y-6 ${activeTab !== "tree" ? "hidden" : ""}`}>
               <DiskUsageExplorerV2 />
               <SearchConsole />
-            </TabsContent>
+            </div>
 
-            <TabsContent
-              value="voronoi"
-              className={`space-y-6 transition-all duration-300 ${
-                activeTab === "voronoi"
-                  ? slideDirection === "left"
-                    ? "animate-slide-in-from-right"
-                    : "animate-slide-in-from-left"
-                  : "hidden"
-              }`}
-            >
+            <div className={`space-y-6 ${activeTab !== "voronoi" ? "hidden" : ""}`}>
               <HierarchicalVoronoiView />
-            </TabsContent>
+            </div>
           </div>
         </Tabs>
       </div>

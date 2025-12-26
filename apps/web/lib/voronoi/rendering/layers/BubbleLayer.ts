@@ -70,6 +70,12 @@ export class BubbleLayer {
       )
 
       circles.forEach((c) => {
+        // Validate circle coordinates before creating SVG element
+        if (!isFinite(c.x) || !isFinite(c.y) || !isFinite(c.r)) {
+          console.warn('[BubbleLayer] Invalid circle data:', c)
+          return
+        }
+
         const bubble = this.gBubbles.append('circle')
           .attr('class', 'file-bubble')
           .attr('data-path', c.node.path)

@@ -126,7 +126,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
   const getParentQuotaPercent = useCallback((size: number) => parentSize > 0 ? (size / parentSize) * 100 : 0, [parentSize])
 
   // --- RENDERING ---
-  useVoronoiRenderer({
+  const { isRendering } = useVoronoiRenderer({
     data: data ?? undefined,
     effectivePath,
     isFullscreen,
@@ -210,8 +210,14 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
 
         <div className="absolute bottom-3 right-3 flex gap-2">
           <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => resetZoom(svgRef)} disabled={isLocked} title="Recenter View"><Focus className="w-4 h-4" /></Button>
-          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => setIsExpanded(!isExpanded)} disabled={isLocked} title={isExpanded ? 'Return to Original Width' : 'Expand Horizontally'}>{isExpanded ? <Minimize className="w-4 h-4" /> : <ArrowLeftRight className="w-4 h-4" />}</Button>
-          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => toggleFullscreen(wrapperRef)} title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}>{isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</Button>
+          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => {
+            console.log('[HierarchicalVoronoiView] Expand button clicked:', { currentExpanded: isExpanded, willBe: !isExpanded })
+            setIsExpanded(!isExpanded)
+          }} disabled={isLocked} title={isExpanded ? 'Return to Original Width' : 'Expand Horizontally'}>{isExpanded ? <Minimize className="w-4 h-4" /> : <ArrowLeftRight className="w-4 h-4" />}</Button>
+          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => {
+            console.log('[HierarchicalVoronoiView] Fullscreen button clicked:', { currentFullscreen: isFullscreen })
+            toggleFullscreen(wrapperRef)
+          }} title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}>{isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</Button>
         </div>
 
         {error && <div className="absolute inset-0 flex items-center justify-center bg-black/80"><p className="text-red-500 font-bold">Failed to compute Voronoi: {error.toString()}</p></div>}
@@ -221,6 +227,15 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
             <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex items-center gap-3 animate-pulse">
               <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
               <div className="text-cyan-400 font-bold">{navigationLock ? 'Navigating...' : 'Loading...'}</div>
+            </div>
+          </div>
+        )}
+
+        {!isLocked && isRendering && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
+            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex items-center gap-3 animate-pulse">
+              <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <div className="text-cyan-400 font-bold">Resizing...</div>
             </div>
           </div>
         )}
