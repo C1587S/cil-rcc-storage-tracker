@@ -9,6 +9,8 @@ export interface VoronoiNode {
   is_directory?: boolean; // Alias for backward compatibility
   file_count?: number;
   depth?: number;
+  originalFiles?: VoronoiNode[]; // Files stored directly on directory nodes (precomputed mode)
+  isSynthetic?: boolean; // Synthetic __files__ nodes (on-the-fly mode)
 }
 
 /**
@@ -112,16 +114,34 @@ export async function buildVoronoiTree(
 
   // Build root node
   const rootName = path === "/" ? "root" : path.split("/").filter(Boolean).pop() || "root";
+  const allChildren = [...children, ...rootFiles].filter(child => child.size > 0);
   const rootNode: VoronoiNode = {
     name: rootName,
     size: totalSize,
     path: path,
     isDirectory: true,
     is_directory: true,
-    children: [...children, ...rootFiles].filter(child => child.size > 0), // CRITICAL: Include files
+    children: allChildren, // CRITICAL: Include files
     file_count: browseResult.total_count,
     depth: 0,
   };
+
+  // DEBUG: Log on-the-fly root structure for comparison
+  console.log('🔍 [buildVoronoiTree] ON-THE-FLY ROOT STRUCTURE:', {
+    path: path,
+    totalChildren: allChildren.length,
+    directoryChildren: children.length,
+    fileChildren: rootFiles.length,
+    totalSize: totalSize,
+    totalSizeTB: (totalSize / (1024**4)).toFixed(2) + ' TB',
+    childrenSample: allChildren.slice(0, 5).map(c => ({
+      name: c.name,
+      isDirectory: c.isDirectory,
+      size: c.size,
+      sizeTB: (c.size / (1024**4)).toFixed(2) + ' TB',
+      hasChildren: c.children ? c.children.length : 0
+    }))
+  });
 
   return rootNode;
 }

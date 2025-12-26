@@ -36,9 +36,29 @@ export class BubbleLayer {
       this.simulation = null
     }
 
-    topLevelNodes.forEach((d: any) => {
+    console.log('[BubbleLayer] render() called:', {
+      topLevelNodesCount: topLevelNodes.length,
+      nodesWithOriginalFiles: topLevelNodes.filter(d => d.data.originalFiles?.length > 0).length
+    })
+
+    // Collect all bubble nodes across all partitions for a unified simulation
+    const allBubbleNodes: BubbleNode[] = []
+
+    // Render bubbles for top-level nodes (depth=1)
+    // These are the main partitions visible on screen
+    topLevelNodes.forEach((d: any, idx: number) => {
       const node = d.data
       const poly = d.polygon
+
+      console.log(`[BubbleLayer] Processing node ${idx}:`, {
+        path: node.path,
+        name: node.name,
+        hasPoly: !!poly,
+        hasOriginalFiles: !!node.originalFiles,
+        originalFilesCount: node.originalFiles?.length || 0,
+        isSynthetic: node.isSynthetic
+      })
+
       // Render bubbles for ANY node with originalFiles (not just synthetic nodes)
       // This handles both on-the-fly mode (__files__ synthetic nodes) and precomputed mode (regular directories with files)
       if (!poly || !node.originalFiles || node.originalFiles.length === 0) return
@@ -68,7 +88,7 @@ export class BubbleLayer {
         this.attachBubbleEventHandlers(bubble as any)
       })
 
-      // Setup physics simulation
+      // Add bubbles from this partition to the global collection
       const bubbleNodes: BubbleNode[] = circles.map((c, i) => ({
         id: `b-${node.uniqueId}-${i}`,
         x: c.x,
@@ -78,11 +98,15 @@ export class BubbleLayer {
         polygon: poly
       }))
 
-      if (bubbleNodes.length > 0) {
-        this.simulation = this.createSimulation(bubbleNodes, poly)
-        this.attachDragBehavior(bubbleNodes)
-      }
+      allBubbleNodes.push(...bubbleNodes)
     })
+
+    // Create ONE simulation for ALL bubbles across all partitions
+    if (allBubbleNodes.length > 0) {
+      console.log('[BubbleLayer] Creating unified simulation with', allBubbleNodes.length, 'bubbles')
+      this.simulation = this.createMultiPartitionSimulation(allBubbleNodes)
+      this.attachDragBehavior(allBubbleNodes)
+    }
 
     return this.simulation
   }
@@ -92,7 +116,7 @@ export class BubbleLayer {
   ): void {
     bubble
       .on('mouseenter', (event: MouseEvent, d: any) => {
-        event.stopPropagation()
+        // Don't stop propagation - let drag events pass through
         const tooltip = this.tooltipRef.current
         if (tooltip) {
           tooltip.style.display = 'block'
@@ -121,24 +145,30 @@ export class BubbleLayer {
       })
   }
 
-  private createSimulation(
-    bubbleNodes: BubbleNode[],
-    poly: any
+  /**
+   * Create a unified physics simulation for bubbles across multiple partitions.
+   * Each bubble is constrained to its own partition polygon.
+   */
+  private createMultiPartitionSimulation(
+    bubbleNodes: BubbleNode[]
   ): d3.Simulation<any, undefined> {
     const simulation = d3.forceSimulation(bubbleNodes)
+      // Collision force: Prevent bubbles from overlapping
       .force('collision', d3.forceCollide<BubbleNode>().radius(d => d.r + 1).strength(0.8))
-      .force('center', d3.forceCenter(
-        d3.polygonCentroid(poly)[0],
-        d3.polygonCentroid(poly)[1]
-      ).strength(0.05))
+      // Charge force: Create repulsion between bubbles (negative = repel)
       .force('charge', d3.forceManyBody<BubbleNode>().strength(-5))
+      // Custom positioning force: Each bubble gravitates toward its partition centroid
+      .force('position', d3.forceX<BubbleNode>().x(d => d3.polygonCentroid(d.polygon)[0]).strength(0.05))
+      .force('positionY', d3.forceY<BubbleNode>().y(d => d3.polygonCentroid(d.polygon)[1]).strength(0.05))
       .alphaDecay(0.05)
       .on('tick', () => {
+        // Constrain each bubble to its partition polygon
         bubbleNodes.forEach(b => {
           const c = constrainToPolygon(b.x!, b.y!, b.polygon, b.r)
           b.x = c[0]
           b.y = c[1]
         })
+        // Update SVG circle positions
         this.gBubbles.selectAll<SVGCircleElement, any>('.file-bubble').each(function(datum: any) {
           const bn = bubbleNodes.find(b => b.node.path === datum.node.path)
           if (bn) {

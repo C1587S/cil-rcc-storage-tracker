@@ -207,11 +207,15 @@ export function useVoronoiData({ selectedSnapshot, effectivePath }: UseVoronoiDa
       // OPTIMIZED: Fetch entire subtree in ONE request (only if cache incomplete)
       if (!cacheComplete) {
         try {
-          const subtreeUrl = `/api/voronoi/node/${selectedSnapshot}/subtree?path=${encodeURIComponent(node.path)}&max_depth=${targetDepth}`
+          // CRITICAL: Fetch ONE EXTRA DEPTH beyond targetDepth
+          // If targetDepth=2, we need depths 0,1,2,3 so that depth-2 nodes can have their children loaded for preview
+          const fetchDepth = targetDepth + 1
+          const subtreeUrl = `/api/voronoi/node/${selectedSnapshot}/subtree?path=${encodeURIComponent(node.path)}&max_depth=${fetchDepth}`
           console.log('[expandToPreviewDepth] Fetching subtree:', {
             url: subtreeUrl,
             nodePath: node.path,
-            targetDepth
+            targetDepth,
+            fetchDepth
           })
 
           const response = await fetch(subtreeUrl)
@@ -279,14 +283,20 @@ export function useVoronoiData({ selectedSnapshot, effectivePath }: UseVoronoiDa
         console.log(`[buildTree] Building node at depth ${currentDepth}:`, {
           path: currentNode.path,
           childrenIdsCount: currentNode.childrenIds?.length || 0,
+          originalFilesCount: currentNode.originalFiles?.length || 0,
           isDirectory: currentNode.isDirectory
         })
 
-        if (!currentNode.childrenIds || currentNode.childrenIds.length === 0) {
-          return { ...currentNode, children: [] } as VoronoiNode
+        // Handle leaf nodes with no children and no files
+        // Omit children property so d3 treats them as leaves
+        if ((!currentNode.childrenIds || currentNode.childrenIds.length === 0) &&
+            (!currentNode.originalFiles || currentNode.originalFiles.length === 0)) {
+          const { childrenIds, ...nodeWithoutChildrenIds } = currentNode
+          return nodeWithoutChildrenIds as VoronoiNode
         }
 
-        const children: VoronoiNode[] = currentNode.childrenIds
+        // Build directory children from childrenIds
+        const directoryChildren: VoronoiNode[] = (currentNode.childrenIds || [])
           .map(id => getCachedNode(id))
           .filter((child): child is VoronoiNodeExtended => child !== undefined)
           .map(child => {
@@ -305,19 +315,51 @@ export function useVoronoiData({ selectedSnapshot, effectivePath }: UseVoronoiDa
               const previewChildren: VoronoiNode[] = child.childrenIds
                 .map(childId => getCachedNode(childId))
                 .filter((c): c is VoronoiNodeExtended => c !== undefined)
-                .map(c => ({ ...c, children: [] } as VoronoiNode))
+                .map(c => {
+                  // CRITICAL: Preview children are NOT leaves - they have subtrees beneath them!
+                  // DON'T set children: [] because that makes d3.hierarchy think they're leaves
+                  // and it will only count their direct size, not their recursive subtree size.
+                  // Instead, omit the children property entirely (undefined) so d3 uses their size value.
+                  const { childrenIds, ...nodeWithoutChildrenIds } = c
+                  return nodeWithoutChildrenIds as VoronoiNode
+                })
 
               console.log(`[buildTree] Preview children paths:`, previewChildren.slice(0, 3).map(c => c.path))
+              // Keep child's originalFiles property - DON'T add to children
               return { ...child, children: previewChildren } as VoronoiNode
             }
 
-            // Regular leaf node (no children)
+            // Regular leaf node - omit children property so d3 treats it as a leaf
             console.log(`[buildTree] Leaf node: ${child.path}`)
-            return { ...child, children: [] } as VoronoiNode
+            const { childrenIds, ...nodeWithoutChildrenIds } = child
+            return nodeWithoutChildrenIds as VoronoiNode
           })
 
-        console.log(`[buildTree] Built ${children.length} children for ${currentNode.path}`)
-        return { ...currentNode, children } as VoronoiNode
+        // DON'T add originalFiles to children - keep them separate to avoid duplication
+        // VoronoiComputer.prepareHierarchy() will handle originalFiles
+        const allChildren = directoryChildren
+
+        console.log(`[buildTree] Built ${allChildren.length} children for ${currentNode.path} (${directoryChildren.length} dirs + 0 files - files kept in originalFiles)`)
+
+        // DEBUG: Extra logging for root level
+        if (currentDepth === 0) {
+          console.log('🔍 [buildTree] ROOT LEVEL TREE STRUCTURE:', {
+            path: currentNode.path,
+            totalChildren: allChildren.length,
+            directoryChildren: directoryChildren.length,
+            originalFilesCount: currentNode.originalFiles?.length || 0,
+            childrenSample: allChildren.slice(0, 5).map(c => ({
+              name: c.name,
+              isDirectory: c.isDirectory,
+              size: c.size,
+              sizeTB: (c.size / (1024**4)).toFixed(2) + ' TB',
+              hasChildren: c.children ? c.children.length : 0,
+              hasOriginalFiles: !!c.originalFiles && c.originalFiles.length > 0
+            }))
+          })
+        }
+
+        return { ...currentNode, children: allChildren } as VoronoiNode
       }
 
       const result = buildTree(node, 0)

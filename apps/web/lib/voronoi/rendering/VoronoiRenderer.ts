@@ -117,7 +117,10 @@ export class VoronoiRenderer {
       topLevelNodes,
       tooltipRef: this.options.tooltipRef
     })
-    this.simulation = this.bubbleLayer.render(topLevelNodes)
+    // Render bubbles for BOTH top-level AND preview nodes
+    // This ensures bubbles are visible in preview partitions before clicking
+    const nodesForBubbles = [...topLevelNodes, ...previewNodes]
+    this.simulation = this.bubbleLayer.render(nodesForBubbles)
 
     const labelLayer = new LabelLayer({ gLabels, topLevelNodes })
     labelLayer.render(topLevelNodes)
