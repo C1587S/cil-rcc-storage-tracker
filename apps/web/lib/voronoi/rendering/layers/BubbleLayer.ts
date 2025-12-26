@@ -39,7 +39,9 @@ export class BubbleLayer {
     topLevelNodes.forEach((d: any) => {
       const node = d.data
       const poly = d.polygon
-      if (!poly || !node.isSynthetic || !node.originalFiles) return
+      // Render bubbles for ANY node with originalFiles (not just synthetic nodes)
+      // This handles both on-the-fly mode (__files__ synthetic nodes) and precomputed mode (regular directories with files)
+      if (!poly || !node.originalFiles || node.originalFiles.length === 0) return
 
       const circles = packCirclesInPolygon(
         poly,

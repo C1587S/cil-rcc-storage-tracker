@@ -34,14 +34,23 @@ export function useVoronoiNavigation({ basePath, onNavigate }: UseVoronoiNavigat
   const performDrillDown = useCallback((targetPath: string) => {
     const currentPath = effectivePathRef.current
 
+    console.log('[useVoronoiNavigation] performDrillDown called:', {
+      targetPath,
+      currentPath,
+      locked: navigationLockRef.current
+    })
+
     if (navigationLockRef.current) {
+      console.log('[useVoronoiNavigation] Navigation locked, ignoring click')
       return
     }
 
     if (!targetPath || targetPath === currentPath) {
+      console.log('[useVoronoiNavigation] Same path or empty, ignoring')
       return
     }
 
+    console.log('[useVoronoiNavigation] Navigating from', currentPath, 'to', targetPath)
     navigationLockRef.current = true
     setNavigationLock(true)
 

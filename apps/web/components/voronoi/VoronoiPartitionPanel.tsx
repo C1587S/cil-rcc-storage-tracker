@@ -66,7 +66,8 @@ export function VoronoiPartitionPanel({
               </div>
             )}
 
-            {activePartition.isSynthetic && activePartition.originalFiles && activePartition.originalFiles.length > 0 && (
+            {/* Show files for ANY node with originalFiles (not just synthetic nodes) */}
+            {activePartition.originalFiles && activePartition.originalFiles.length > 0 && (
               <div className="bg-black/30 px-3 py-2 rounded border border-gray-800 max-h-48 overflow-y-auto">
                 <div className="text-gray-500 text-[9px] uppercase mb-2">Files in this region:</div>
                 <div className="space-y-1">

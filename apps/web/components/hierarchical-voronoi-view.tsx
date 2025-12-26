@@ -28,6 +28,7 @@ import { VoronoiControlPanel } from '@/components/voronoi/VoronoiControlPanel'
 import { VoronoiBreadcrumb } from '@/components/voronoi/VoronoiBreadcrumb'
 import { VoronoiPartitionPanel } from '@/components/voronoi/VoronoiPartitionPanel'
 import { useVoronoiData } from '@/lib/voronoi/hooks/useVoronoiData'
+import { useVoronoiDataOnTheFly } from '@/lib/voronoi/hooks/useVoronoiDataOnTheFly'
 import { useVoronoiNavigation } from '@/lib/voronoi/hooks/useVoronoiNavigation'
 import { useVoronoiSelection } from '@/lib/voronoi/hooks/useVoronoiSelection'
 import { useVoronoiZoom } from '@/lib/voronoi/hooks/useVoronoiZoom'
@@ -35,7 +36,16 @@ import { useVoronoiRenderer } from '@/lib/voronoi/hooks/useVoronoiRenderer'
 
 // --- COMPONENT ---
 
-export function HierarchicalVoronoiView() {
+export interface HierarchicalVoronoiViewProps {
+  /**
+   * Data loading mode:
+   * - 'precomputed': Load from ClickHouse precomputed data (default, production)
+   * - 'on-the-fly': Compute voronoi tree on-the-fly using buildVoronoiTree (legacy/debug)
+   */
+  mode?: 'precomputed' | 'on-the-fly'
+}
+
+export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVoronoiViewProps = {}) {
   const { selectedSnapshot, referencePath } = useAppStore()
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -81,10 +91,19 @@ export function HierarchicalVoronoiView() {
 
   const { isFullscreen, zoomRef, resetZoom, toggleFullscreen } = useVoronoiZoom()
 
-  const { data, isLoading, isFetching, error } = useVoronoiData({
+  // Choose data loading strategy based on mode
+  const precomputedResult = useVoronoiData({
     selectedSnapshot,
     effectivePath,
   })
+
+  const onTheFlyResult = useVoronoiDataOnTheFly({
+    selectedSnapshot,
+    effectivePath,
+  })
+
+  // Select the appropriate result based on mode
+  const { data, isLoading, isFetching, error } = mode === 'on-the-fly' ? onTheFlyResult : precomputedResult
 
   // Unlock when data arrives
   useEffect(() => {
@@ -105,7 +124,7 @@ export function HierarchicalVoronoiView() {
 
   // --- RENDERING ---
   useVoronoiRenderer({
-    data,
+    data: data ?? undefined,
     effectivePath,
     isFullscreen,
     navigationLock,

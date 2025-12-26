@@ -30,11 +30,15 @@ export class VoronoiComputer {
   /**
    * Prepares hierarchy by separating directories and files.
    * Groups files into synthetic "__files__" nodes.
+   *
+   * IMPORTANT: The 'depth' parameter is the RELATIVE depth in the d3 hierarchy,
+   * NOT the global ClickHouse depth. We preserve the original paths from data.
    */
   private prepareHierarchy(n: VoronoiNode, depth: number = 0): any {
     const uniqueId = `node-${Math.random().toString(36).substr(2, 9)}`
     if (!n.children || n.children.length === 0) {
-      return { ...n, uniqueId, depth }
+      // Preserve original path, set relative depth
+      return { ...n, uniqueId, depth, hierarchyDepth: depth }
     }
 
     const dirs = n.children.filter(c => c.isDirectory)
@@ -52,11 +56,13 @@ export class VoronoiComputer {
         originalFiles: files,
         file_count: files.length,
         depth: depth + 1,
+        hierarchyDepth: depth + 1,
         uniqueId: `files-${Math.random().toString(36).substr(2, 9)}`
       })
     }
 
-    return { ...n, children, uniqueId, depth }
+    // Preserve original path from n, set relative hierarchy depth
+    return { ...n, children, uniqueId, depth, hierarchyDepth: depth }
   }
 
   /**
@@ -120,11 +126,36 @@ export class VoronoiComputer {
     const cacheKey = effectivePath
     const cached = this.cache.get(cacheKey)
 
+    console.log('[VoronoiComputer] compute() called:', {
+      effectivePath,
+      dataPath: data.path,
+      dataChildCount: data.children?.length || 0,
+      cacheHit: !!cached,
+      cacheKey
+    })
+
+    // CRITICAL: Validate that data matches effectivePath
+    // During navigation, React may render with stale data before new data arrives
+    // If paths don't match, we MUST recompute to avoid rendering wrong partitions
+    const dataMatchesPath = data.path === effectivePath
+    if (!dataMatchesPath) {
+      console.warn('[VoronoiComputer] DATA MISMATCH! dataPath:', data.path, 'effectivePath:', effectivePath)
+      console.warn('[VoronoiComputer] Skipping computation - waiting for correct data')
+      // Return empty result to prevent rendering wrong partitions
+      return {
+        hierarchy: null as any,
+        allNodes: [],
+        topLevelNodes: [],
+        previewNodes: []
+      }
+    }
+
     let hierarchyData: any
     let hierarchy: d3.HierarchyNode<any>
 
     if (cached?.hierarchyData) {
       // Use cached data
+      console.log('[VoronoiComputer] Using CACHED hierarchy')
       hierarchyData = cached.hierarchyData
       hierarchy = d3.hierarchy(hierarchyData)
         .sum(d => (!d.children || d.children.length === 0) ? Math.max(d.size || 1, 1) : 0)
@@ -132,6 +163,7 @@ export class VoronoiComputer {
 
       this.restorePolygonsFromCache(hierarchy)
     } else {
+      console.log('[VoronoiComputer] Computing FRESH hierarchy')
       // Compute fresh
       hierarchyData = this.prepareHierarchy(data)
       hierarchy = d3.hierarchy(hierarchyData)
@@ -165,8 +197,22 @@ export class VoronoiComputer {
     const allNodes = hierarchy.descendants().filter(d =>
       d.depth > 0 && isValidPolygon((d as any).polygon)
     )
+
+    // CRITICAL FIX: Use relative depth from hierarchy root, not global ClickHouse depth
+    // When viewing /project/cil/gcp, that node is depth=0 in d3 hierarchy
+    // Its children are depth=1 (top level partitions)
+    // Their children are depth=2 (preview partitions)
     const topLevelNodes = allNodes.filter(d => d.depth === 1)
     const previewNodes = allNodes.filter(d => d.depth === 2)
+
+    console.log('[VoronoiComputer] Computed nodes:', {
+      effectivePath,
+      totalNodes: allNodes.length,
+      topLevelCount: topLevelNodes.length,
+      previewCount: previewNodes.length,
+      topLevelPaths: topLevelNodes.slice(0, 3).map(d => d.data.path),
+      previewPaths: previewNodes.slice(0, 3).map(d => d.data.path),
+    })
 
     return {
       hierarchy,
