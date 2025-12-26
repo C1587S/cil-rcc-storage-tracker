@@ -63,11 +63,6 @@ export function SnapshotSelector() {
             </option>
           ))}
         </Select>
-        {selectedSnapshot && (
-          <div className="mt-2 text-xs text-muted-foreground">
-            Selected: {selectedSnapshot}
-          </div>
-        )}
       </CardContent>
     </Card>
   );

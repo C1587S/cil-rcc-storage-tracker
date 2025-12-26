@@ -206,23 +206,42 @@ class VoronoiComputer:
     def compute(self) -> Dict[str, Any]:
         self.storage.ensure_table_exists()
         client = Client(**self.db_config)
-        
-        # Query optimizada: Ya no dependemos de recursive_sizes para la exactitud,
-        # pero lo dejamos para tener el tamaño de los archivos individuales.
+
+        # Get root file count BEFORE starting stream
+        root_file_count_result = client.execute(
+            """
+            SELECT COALESCE(recursive_file_count, 0) as file_count
+            FROM filesystem.directory_recursive_sizes
+            WHERE snapshot_date = %(date)s AND path = %(path)s
+            """,
+            {"date": self.snapshot_date.isoformat(), "path": self.root_path}
+        )
+        root_file_count = root_file_count_result[0][0] if root_file_count_result else 0
+
+        # Query with recursive file counts from directory_recursive_sizes
         query = """
-        SELECT e.path, e.name, e.size, e.is_directory
+        SELECT
+            e.path,
+            e.name,
+            e.size,
+            e.is_directory,
+            CASE
+                WHEN e.is_directory = 1 THEN COALESCE(r.recursive_file_count, 0)
+                ELSE 0
+            END AS recursive_file_count
         FROM filesystem.entries AS e
+        LEFT JOIN filesystem.directory_recursive_sizes AS r
+            ON e.snapshot_date = r.snapshot_date AND e.path = r.path
         WHERE e.snapshot_date = %(date)s
           AND e.path LIKE %(root)s
         ORDER BY e.path ASC
         """
-        
+
         stream = client.execute_iter(
-            query, 
+            query,
             {"date": self.snapshot_date.isoformat(), "root": self.root_path + "%"}
         )
 
-        # Root Manual
         root_id = self._generate_id(self.root_path, True)
         root_node = {
             "id": root_id,
@@ -231,7 +250,7 @@ class VoronoiComputer:
             "size": 0, # Se calculará sumando
             "is_directory": True,
             "depth": 0,  # Root always has depth 0
-            "file_count": 0,
+            "file_count": root_file_count,
             "children_ids": [],
             "files": [],
             "parent_id": "",  # Root has no parent
@@ -241,18 +260,18 @@ class VoronoiComputer:
         nodes_processed = 0
 
         for row in stream:
-            path, name, size, is_directory = row
+            path, name, size, is_directory, recursive_file_count = row
             nodes_processed += 1
 
             # 1. Stack Management: Cerrar nodos terminados y SUMAR tamaños
             while stack and not path.startswith(stack[-1][0] + "/"):
                 _, finished_node = stack.pop()
-                
+
                 # BUBBLE UP SIZE: Sumar al padre
                 if stack:
                     parent_path, parent_node = stack[-1]
                     parent_node['size'] += finished_node['size']
-                
+
                 self._finalize_and_insert(finished_node)
 
             if not stack: continue
@@ -260,6 +279,8 @@ class VoronoiComputer:
             parent_path, parent_node = stack[-1]
 
             if path == self.root_path:
+                # Update root with its recursive file count
+                parent_node['file_count'] = recursive_file_count
                 continue
 
             # 2. Process New Item
@@ -270,19 +291,18 @@ class VoronoiComputer:
                 new_node = {
                     "id": node_id, "name": name, "path": path,
                     "size": 0, # Inicia en 0, sumará hijos y archivos
-                    "is_directory": True, "depth": depth, "file_count": 0,
+                    "is_directory": True, "depth": depth, "file_count": recursive_file_count,
                     "children_ids": [], "files": [],
                     "parent_id": parent_node["id"]  # Track parent
                 }
                 parent_node["children_ids"].append(node_id)
                 stack.append((path, new_node))
-                parent_node["file_count"] += 1 # Cuenta carpetas como hijos
             else:
                 # Archivo
                 parent_node["files"].append({
                     "name": name, "path": path, "size": size
                 })
-                parent_node["file_count"] += 1
+                # Don't manually increment - using pre-calculated recursive_file_count
                 parent_node["size"] += size # Sumar tamaño al directorio actual
 
         client.disconnect()
@@ -293,7 +313,8 @@ class VoronoiComputer:
             if stack:
                 parent_path, parent_node = stack[-1]
                 parent_node['size'] += finished_node['size']
-            
+                # Don't propagate file_count - using pre-calculated recursive values
+
             self._finalize_and_insert(finished_node)
 
         self.storage.flush()
@@ -308,9 +329,8 @@ class VoronoiComputer:
 
         client = Client(**self.db_config)
         
-        # Optimized Query: Streaming + Pre-calculated Sizes
-        # We assume `filesystem.directory_recursive_sizes` exists and is populated.
-        # If not, size logic might need adjustment.
+        # Optimized Query: Streaming + Pre-calculated Sizes and File Counts
+        # Uses `filesystem.directory_recursive_sizes` for accurate recursive metrics
         query = """
         SELECT
             e.path,
@@ -319,7 +339,11 @@ class VoronoiComputer:
                 WHEN e.is_directory = 1 THEN COALESCE(r.recursive_size_bytes, 0)
                 ELSE e.size
             END AS size,
-            e.is_directory
+            e.is_directory,
+            CASE
+                WHEN e.is_directory = 1 THEN COALESCE(r.recursive_file_count, 0)
+                ELSE 0
+            END AS recursive_file_count
         FROM filesystem.entries AS e
         LEFT JOIN filesystem.directory_recursive_sizes AS r
             ON e.snapshot_date = r.snapshot_date AND e.path = r.path
@@ -353,13 +377,14 @@ class VoronoiComputer:
         nodes_processed = 0
 
         for row in stream:
-            path, name, size, is_directory = row
+            path, name, size, is_directory, recursive_file_count = row
             nodes_processed += 1
 
             # 1. Stack Management: Close nodes that are done
             # While current path is NOT a child of stack top...
             while stack and not path.startswith(stack[-1][0] + "/"):
                 _, finished_node = stack.pop()
+                # Don't propagate - we're using pre-calculated recursive counts
                 self._finalize_and_insert(finished_node)
 
             if not stack: continue # Should not happen
@@ -369,6 +394,7 @@ class VoronoiComputer:
             # If row IS the root itself (due to LIKE match), update info
             if path == self.root_path:
                 parent_node['size'] = size
+                parent_node['file_count'] = recursive_file_count
                 continue
 
             # 2. Process New Item
@@ -379,25 +405,25 @@ class VoronoiComputer:
             if is_directory:
                 new_node = {
                     "id": node_id, "name": name, "path": path, "size": size,
-                    "is_directory": True, "depth": depth, "file_count": 0,
+                    "is_directory": True, "depth": depth, "file_count": recursive_file_count,
                     "children_ids": [], "files": [],
                     "parent_id": parent_node["id"]  # Track parent
                 }
                 parent_node["children_ids"].append(node_id)
                 stack.append((path, new_node)) # Push to stack
-                parent_node["file_count"] += 1
             else:
                 # File: Don't create DB node yet, just add to parent's file list
                 parent_node["files"].append({
                     "name": name, "path": path, "size": size
                 })
-                parent_node["file_count"] += 1
+                # Don't increment file_count - using pre-calculated recursive count
 
         client.disconnect()
 
         # Finalize remaining stack
         while stack:
             _, node = stack.pop()
+            # Don't propagate - we're using pre-calculated recursive counts
             self._finalize_and_insert(node)
 
         # Flush final batch

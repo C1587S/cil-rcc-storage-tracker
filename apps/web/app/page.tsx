@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { SnapshotSelector } from "@/components/snapshot-selector";
 import { DiskUsageExplorerV2 } from "@/components/disk-usage-explorer-v2";
 import { HierarchicalVoronoiView } from "@/components/hierarchical-voronoi-view";
@@ -16,16 +17,39 @@ export default function Home() {
     setActiveTab(newTab);
   };
 
-  // Determine slide direction: tree (0) → voronoi (1) or vice versa
   const tabIndex = { tree: 0, voronoi: 1 };
-  const slideDirection = tabIndex[activeTab as keyof typeof tabIndex] > tabIndex[prevTab as keyof typeof tabIndex] ? "left" : "right";
+  const slideDirection =
+    tabIndex[activeTab as keyof typeof tabIndex] >
+    tabIndex[prevTab as keyof typeof tabIndex]
+      ? "left"
+      : "right";
 
   return (
     <main className="min-h-screen p-8">
       <div className="max-w-7xl mx-auto">
         <header className="mb-8">
-          <h1 className="text-3xl font-bold text-primary mb-2">CIL-rcc-tracker</h1>
-          <p className="text-muted-foreground">Filesystem snapshot explorer</p>
+
+          {/* Título + Logo juntos */}
+          <div className="flex items-center gap-3 mb-2">
+            <h1 className="text-3xl font-bold text-primary">
+              CIL-rcc-tracker
+            </h1>
+
+            {/* LOGO reflejado */}
+            <Image
+              src="/logo_tracker.png"
+              alt="Tracker Logo"
+              width={55}
+              height={55}
+              className="object-contain"
+              style={{ transform: "scaleX(-1)" }}
+            />
+          </div>
+
+          <p className="text-muted-foreground">
+            Filesystem snapshot explorer
+          </p>
+
           <div className="mt-2 p-2 bg-green-900/20 border border-green-600 rounded text-sm text-green-400">
             ✅ Production Mode: Using ClickHouse precomputed voronoi data
           </div>

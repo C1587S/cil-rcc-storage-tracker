@@ -10,6 +10,7 @@ export interface UseVoronoiRendererOptions {
   data: VoronoiNode | undefined
   effectivePath: string
   isFullscreen: boolean
+  isExpanded: boolean
   navigationLock: boolean
   isFetching: boolean
   svgRef: React.RefObject<SVGSVGElement>
@@ -40,6 +41,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): void {
     data,
     effectivePath,
     isFullscreen,
+    isExpanded,
     navigationLock,
     isFetching,
     svgRef,
@@ -105,6 +107,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): void {
     data,
     effectivePath,
     isFullscreen,
+    isExpanded,
     performDrillDown,
     handleInspect,
     getPartitionQuotaPercent,

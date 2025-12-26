@@ -1,9 +1,21 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import * as d3 from 'd3'
 
 export function useVoronoiZoom() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const zoomRef = useRef<any>(null)
+
+  // Listen to browser fullscreen change events
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    }
+  }, [])
 
   const resetZoom = useCallback((svgRef: React.RefObject<SVGSVGElement>) => {
     if (zoomRef.current && svgRef.current) {
@@ -14,17 +26,15 @@ export function useVoronoiZoom() {
   const toggleFullscreen = useCallback(async (wrapperRef: React.RefObject<HTMLDivElement>) => {
     if (!wrapperRef.current) return
     try {
-      if (!isFullscreen) {
+      if (!document.fullscreenElement) {
         await wrapperRef.current.requestFullscreen()
-        setIsFullscreen(true)
       } else {
         await document.exitFullscreen()
-        setIsFullscreen(false)
       }
     } catch (e) {
       console.error('Fullscreen error:', e)
     }
-  }, [isFullscreen])
+  }, [])
 
   return {
     isFullscreen,

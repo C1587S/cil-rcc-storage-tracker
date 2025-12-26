@@ -1,8 +1,8 @@
-import { Target, Folder, Files, FileText, HardDrive, BarChart3, Focus } from 'lucide-react'
+import { Target, Folder, Files, FileText, HardDrive, BarChart3, Focus, Circle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatBytes } from '@/lib/utils/formatters'
 import { getSizeSeverity, getFileCountSeverity, getQuotaTextColor } from '@/lib/voronoi/utils/colors'
-import { FILE_COUNT_QUOTA, STORAGE_QUOTA_TB } from '@/lib/voronoi/utils/constants'
+import { FILE_COUNT_QUOTA } from '@/lib/voronoi/utils/constants'
 import { type PartitionInfo } from '@/lib/voronoi/utils/types'
 
 interface VoronoiPartitionPanelProps {
@@ -44,8 +44,8 @@ export function VoronoiPartitionPanel({
               </div>
               <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
                 <div className="flex items-center gap-1 mb-1"><BarChart3 className="w-3 h-3 text-gray-600" /><label className="text-gray-600 text-[9px]">STORAGE QUOTA</label></div>
-                <div className={cn("font-bold text-sm", getQuotaTextColor(activePartition.quotaPercent))}>{activePartition.quotaPercent.toFixed(2)}%</div>
-                <div className="text-gray-500 text-[9px]">of {STORAGE_QUOTA_TB}TB</div>
+                <div className={cn("font-bold text-sm", getQuotaTextColor(activePartition.parentQuotaPercent ?? activePartition.quotaPercent))}>{(activePartition.parentQuotaPercent ?? activePartition.quotaPercent).toFixed(2)}%</div>
+                <div className="text-gray-500 text-[9px]">of current view</div>
               </div>
               <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
                 <div className="flex items-center gap-1 mb-1"><Files className="w-3 h-3 text-gray-600" /><label className="text-gray-600 text-[9px]">FILE COUNT</label></div>
@@ -67,20 +67,50 @@ export function VoronoiPartitionPanel({
             )}
 
             {/* Show files for ANY node with originalFiles (not just synthetic nodes) */}
-            {activePartition.originalFiles && activePartition.originalFiles.length > 0 && (
-              <div className="bg-black/30 px-3 py-2 rounded border border-gray-800 max-h-48 overflow-y-auto">
-                <div className="text-gray-500 text-[9px] uppercase mb-2">Files in this region:</div>
-                <div className="space-y-1">
-                  {activePartition.originalFiles.slice(0, 50).map((file, idx) => (
-                    <div key={idx} onClick={() => onFileClick(file.path)} className={cn("flex items-center justify-between gap-2 p-1 rounded hover:bg-cyan-950/30 cursor-pointer transition-colors", selectedFileInPanel === file.path && "bg-cyan-950/50 border border-cyan-700")}>
-                      <span className="text-white text-[10px] truncate flex-1">{file.name}</span>
-                      <span className="text-gray-400 text-[9px] whitespace-nowrap">{formatBytes(file.size)}</span>
-                    </div>
-                  ))}
-                  {activePartition.originalFiles.length > 50 && <div className="text-gray-600 text-[9px] italic pt-1">+ {activePartition.originalFiles.length - 50} more files</div>}
+            {activePartition.originalFiles && activePartition.originalFiles.length > 0 && (() => {
+              const maxFileSize = Math.max(...activePartition.originalFiles.map(f => f.size))
+              return (
+                <div className="bg-black/30 px-3 py-2 rounded border border-gray-800 max-h-48 overflow-y-auto">
+                  <div className="text-gray-500 text-[9px] uppercase mb-2">Files in this region:</div>
+                  <div className="space-y-1">
+                    {activePartition.originalFiles.slice(0, 50).map((file, idx) => {
+                      const sizePercent = maxFileSize > 0 ? (file.size / maxFileSize) * 100 : 0
+                      return (
+                        <div key={idx} onClick={() => onFileClick(file.path)} className={cn("flex flex-col gap-1 p-1 rounded hover:bg-cyan-950/30 cursor-pointer transition-colors", selectedFileInPanel === file.path && "bg-cyan-950/50 border border-cyan-700")}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-white text-[10px] truncate flex-1">{file.name}</span>
+                            <span className="text-gray-400 text-[9px] whitespace-nowrap">{formatBytes(file.size)}</span>
+                          </div>
+                          <div className="h-1 bg-gray-900/50 rounded-full overflow-hidden">
+                            <div className="h-full bg-cyan-500/60 transition-all" style={{ width: `${sizePercent}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {activePartition.originalFiles.length > 50 && <div className="text-gray-600 text-[9px] italic pt-1">+ {activePartition.originalFiles.length - 50} more files</div>}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Bubble Color Legend */}
+            <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
+              <div className="text-gray-500 text-[9px] uppercase mb-2">Bubble Color Legend:</div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Circle className="w-3 h-3 fill-[#ff6b6b] stroke-white/40" style={{ strokeWidth: 0.5 }} />
+                  <span className="text-gray-400 text-[10px]">Executable (.sh, .exe)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Circle className="w-3 h-3 fill-[#ffd700] stroke-white/40" style={{ strokeWidth: 0.5 }} />
+                  <span className="text-gray-400 text-[10px]">Archive (.zip, .tar, .gz, .rar)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Circle className="w-3 h-3 fill-[#808080] stroke-white/40" style={{ strokeWidth: 0.5 }} />
+                  <span className="text-gray-400 text-[10px]">Other files</span>
                 </div>
               </div>
-            )}
+            </div>
           </div>
         ) : (
           <div className="flex items-center gap-3 text-gray-600 py-2"><Focus className="w-5 h-5" /><span className="italic">Hover or right-click a partition to view details</span></div>

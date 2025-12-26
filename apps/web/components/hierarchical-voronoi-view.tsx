@@ -10,11 +10,11 @@
  * - Separated concerns for maintainability and scalability
  */
 
-import { useEffect, useRef, useCallback, useMemo } from 'react'
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
-import { Maximize2, Minimize2, Focus } from 'lucide-react'
+import { Maximize2, Minimize2, Focus, ArrowLeftRight, Minimize } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
 import {
@@ -53,6 +53,9 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
   const simulationRef = useRef<d3.Simulation<any, undefined> | null>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const voronoiCacheRef = useRef<Map<string, VoronoiCacheEntry>>(new Map())
+
+  // Horizontal expansion state
+  const [isExpanded, setIsExpanded] = useState(false)
 
   const { data: snapshots } = useQuery({ queryKey: ['snapshots'], queryFn: getSnapshots })
 
@@ -127,6 +130,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
     data: data ?? undefined,
     effectivePath,
     isFullscreen,
+    isExpanded,
     navigationLock,
     isFetching,
     svgRef,
@@ -172,7 +176,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
   const isLocked = isLoading || isFetching || navigationLock
 
   return (
-    <div ref={wrapperRef} className={cn("space-y-3 font-mono text-xs", isFullscreen && "fixed inset-0 z-50 bg-[#0a0e14] p-4")}>
+    <div ref={wrapperRef} className={cn("space-y-3 font-mono text-xs transition-all duration-300", isFullscreen && "fixed inset-0 z-50 bg-[#0a0e14] p-4", isExpanded && !isFullscreen && "mx-[-200px]")}>
       <div ref={tooltipRef} className="fixed pointer-events-none z-50 bg-black/90 border border-cyan-600 rounded px-2 py-1 hidden" />
 
       {/* HEADER */}
@@ -185,20 +189,11 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
       />
 
       {/* PANELS */}
-      <div className="flex gap-3">
-        <VoronoiPartitionPanel
-          activePartition={activePartition}
-          selectedFileInPanel={selectedFileInPanel}
-          onFileClick={handleFileClickInPanel}
-        />
-
-        <VoronoiControlPanel
-          cacheSize={voronoiCacheRef.current.size}
-          effectivePath={effectivePath}
-          historyLength={history.length}
-          navigationLock={navigationLock}
-        />
-      </div>
+      <VoronoiPartitionPanel
+        activePartition={activePartition}
+        selectedFileInPanel={selectedFileInPanel}
+        onFileClick={handleFileClickInPanel}
+      />
 
       {/* BREADCRUMB */}
       <VoronoiBreadcrumb
@@ -215,6 +210,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
 
         <div className="absolute bottom-3 right-3 flex gap-2">
           <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => resetZoom(svgRef)} disabled={isLocked} title="Recenter View"><Focus className="w-4 h-4" /></Button>
+          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => setIsExpanded(!isExpanded)} disabled={isLocked} title={isExpanded ? 'Return to Original Width' : 'Expand Horizontally'}>{isExpanded ? <Minimize className="w-4 h-4" /> : <ArrowLeftRight className="w-4 h-4" />}</Button>
           <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => toggleFullscreen(wrapperRef)} title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}>{isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</Button>
         </div>
 
@@ -229,6 +225,14 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           </div>
         )}
       </div>
+
+      {/* CONTROLS */}
+      <VoronoiControlPanel
+        cacheSize={voronoiCacheRef.current.size}
+        effectivePath={effectivePath}
+        historyLength={history.length}
+        navigationLock={navigationLock}
+      />
 
       {/* LEGEND */}
       <VoronoiLegend />
