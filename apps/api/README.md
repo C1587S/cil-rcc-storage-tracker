@@ -407,13 +407,14 @@ curl http://localhost:8000/api/voronoi/artifacts
 
 ### Integration with Frontend
 
-The frontend will use a **priority cascade** loading strategy:
+The frontend uses a **priority cascade** loading strategy:
 
-1. **Primary:** Hugging Face CDN (Task 4 - planned)
-2. **Secondary:** Local backend via `/api/voronoi/artifact/{date}`
-3. **Tertiary:** On-the-fly computation (existing fallback)
+1. **Primary:** Precomputed artifact from backend via `/api/voronoi/artifact/{date}`
+2. **Secondary:** On-the-fly computation (existing fallback)
 
 This ensures the frontend always works, even without precomputed artifacts.
+
+**Note:** Originally planned HuggingFace CDN integration (Task 4) was cancelled as artifacts are lightweight (~30KB) and fast enough to serve directly from backend storage.
 
 ### Known Limitations
 
@@ -422,13 +423,13 @@ This ensures the frontend always works, even without precomputed artifacts.
 - **Single root path:** Currently hardcoded to `/project/cil`
 - **No incremental updates:** Must recompute entire hierarchy on changes
 
-### Future Enhancements (Task 4+)
+### Future Enhancements
 
-- Hugging Face upload integration for public CDN access
 - Support for custom root paths via API parameter
 - Incremental computation for updated snapshots
 - Polygon precomputation using Python voronoi libraries
-- Compression for large artifacts
+- Compression for large artifacts (if needed at scale)
+- Hugging Face upload integration (if global CDN becomes necessary)
 
 ## Deployment
 
