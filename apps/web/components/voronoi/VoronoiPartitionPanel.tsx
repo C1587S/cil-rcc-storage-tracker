@@ -32,44 +32,67 @@ export function VoronoiPartitionPanel({
 
       <div className="p-3 overflow-y-auto flex-1">
         {activePartition ? (
-          <div className="space-y-3">
-            <div className="flex items-start gap-4">
-              <div className="flex items-center gap-2">
-                {activePartition.isSynthetic ? <Files className="w-6 h-6 text-blue-400" /> : activePartition.isDirectory ? <Folder className="w-6 h-6 text-green-400" /> : <FileText className="w-6 h-6 text-gray-400" />}
-              </div>
+          <div className="space-y-2">
+            {/* Header with name and path inline */}
+            <div className="flex items-center gap-2">
+              {activePartition.isSynthetic ? <Files className="w-5 h-4 text-blue-400" /> : activePartition.isDirectory ? <Folder className="w-5 h-5 text-green-400" /> : <FileText className="w-5 h-5 text-gray-400" />}
               <div className="flex-1 min-w-0">
-                <p className="text-white font-bold truncate" style={{ fontSize: `${14 * textScale}px` }}>{activePartition.name}</p>
-                <p className="text-gray-500 truncate" style={{ fontSize: `${10 * textScale}px` }}>{activePartition.path}</p>
+                <p className="text-white font-bold truncate" style={{ fontSize: `${13 * textScale}px` }}>
+                  {activePartition.name} <span className="text-gray-500 font-normal">({activePartition.path})</span>
+                </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                <div className="flex items-center gap-1 mb-1"><HardDrive className="w-3 h-3 text-gray-600" /><label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>SIZE</label></div>
-                <div className={cn("font-bold", getSizeSeverity(activePartition.size).color)} style={{ fontSize: `${14 * textScale}px` }}>{formatBytes(activePartition.size)}</div>
+            {/* Compact inline metrics */}
+            <div className="bg-black/30 px-3 py-2 rounded border border-gray-800 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <HardDrive className="w-3 h-3 text-gray-600" />
+                  <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>SIZE:</label>
+                </div>
+                <div className={cn("font-bold", getSizeSeverity(activePartition.size).color)} style={{ fontSize: `${12 * textScale}px` }}>{formatBytes(activePartition.size)}</div>
               </div>
-              <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                <div className="flex items-center gap-1 mb-1"><BarChart3 className="w-3 h-3 text-gray-600" /><label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>STORAGE QUOTA</label></div>
-                <div className={cn("font-bold", getQuotaTextColor(activePartition.quotaPercent))} style={{ fontSize: `${14 * textScale}px` }}>{activePartition.quotaPercent.toFixed(2)}%</div>
-                <div className="text-gray-500" style={{ fontSize: `${9 * textScale}px` }}>of 500 TB</div>
-              </div>
-              <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                <div className="flex items-center gap-1 mb-1"><Files className="w-3 h-3 text-gray-600" /><label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILE COUNT</label></div>
-                <div className={cn("font-bold", getFileCountSeverity(activePartition.file_count).color)} style={{ fontSize: `${14 * textScale}px` }}>{activePartition.file_count > 0 ? activePartition.file_count.toLocaleString() : '—'}</div>
-              </div>
-              <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                <div className="flex items-center gap-1 mb-1"><BarChart3 className="w-3 h-3 text-gray-600" /><label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILE QUOTA</label></div>
-                <div className={cn("font-bold", getQuotaTextColor(activePartition.fileQuotaPercent))} style={{ fontSize: `${14 * textScale}px` }}>{activePartition.fileQuotaPercent.toFixed(3)}%</div>
-                <div className="text-gray-500" style={{ fontSize: `${9 * textScale}px` }}>of {(FILE_COUNT_QUOTA / 1_000_000).toFixed(0)}M</div>
-              </div>
-            </div>
 
-            {activePartition.parentQuotaPercent !== undefined && activePartition.parentQuotaPercent < 100 && (
-              <div className="bg-black/30 px-3 py-2 rounded border border-gray-800">
-                <div className="flex items-center gap-1 mb-1"><BarChart3 className="w-3 h-3 text-gray-600" /><label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>% OF CURRENT DIR</label></div>
-                <div className={cn("font-bold", getQuotaTextColor(activePartition.parentQuotaPercent))} style={{ fontSize: `${14 * textScale}px` }}>{activePartition.parentQuotaPercent.toFixed(1)}%</div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <BarChart3 className="w-3 h-3 text-gray-600" />
+                  <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>STORAGE QUOTA:</label>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <div className={cn("font-bold", getQuotaTextColor(activePartition.quotaPercent))} style={{ fontSize: `${12 * textScale}px` }}>{activePartition.quotaPercent.toFixed(2)}%</div>
+                  <div className="text-gray-500" style={{ fontSize: `${8 * textScale}px` }}>of 500 TB</div>
+                </div>
               </div>
-            )}
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Files className="w-3 h-3 text-gray-600" />
+                  <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILE COUNT:</label>
+                </div>
+                <div className={cn("font-bold", getFileCountSeverity(activePartition.file_count).color)} style={{ fontSize: `${12 * textScale}px` }}>{activePartition.file_count > 0 ? activePartition.file_count.toLocaleString() : '—'}</div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <BarChart3 className="w-3 h-3 text-gray-600" />
+                  <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILE QUOTA:</label>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <div className={cn("font-bold", getQuotaTextColor(activePartition.fileQuotaPercent))} style={{ fontSize: `${12 * textScale}px` }}>{activePartition.fileQuotaPercent.toFixed(3)}%</div>
+                  <div className="text-gray-500" style={{ fontSize: `${8 * textScale}px` }}>of {(FILE_COUNT_QUOTA / 1_000_000).toFixed(0)}M</div>
+                </div>
+              </div>
+
+              {activePartition.parentQuotaPercent !== undefined && activePartition.parentQuotaPercent < 100 && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <BarChart3 className="w-3 h-3 text-gray-600" />
+                    <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>% OF CURRENT DIR:</label>
+                  </div>
+                  <div className={cn("font-bold", getQuotaTextColor(activePartition.parentQuotaPercent))} style={{ fontSize: `${12 * textScale}px` }}>{activePartition.parentQuotaPercent.toFixed(1)}%</div>
+                </div>
+              )}
+            </div>
 
             {/* Show files for ANY node with originalFiles (not just synthetic nodes) */}
             {activePartition.originalFiles && activePartition.originalFiles.length > 0 && (() => {

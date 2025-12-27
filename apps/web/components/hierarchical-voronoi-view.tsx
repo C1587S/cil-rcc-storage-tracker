@@ -222,8 +222,10 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         breadcrumbParts={breadcrumbParts}
         canGoBack={canGoBack}
         isLocked={isLocked}
+        currentData={data}
         onNavigateBack={navigateBack}
         onNavigateToBreadcrumb={navigateToBreadcrumb}
+        onDrillDown={performDrillDown}
       />
 
       {/* VISUALIZER */}
