@@ -215,7 +215,7 @@ interface SQLTemplate {
   description: string;
   category: "files" | "directories" | "storage" | "hygiene";
   params: { name: string; label: string; type: "text" | "number"; default: any; placeholder?: string }[];
-  generateSQL: (params: Record<string, any>, snapshotDate: string) => string;
+  generateSQL: (params: Record<string, any>) => string;
 }
 
 const SQL_TEMPLATES: SQLTemplate[] = [
@@ -226,17 +226,17 @@ const SQL_TEMPLATES: SQLTemplate[] = [
     category: "files",
     params: [
       { name: "path", label: "Directory Path", type: "text", default: "/project/cil/gcp", placeholder: "/project/cil/gcp" },
-      { name: "limit", label: "Limit", type: "number", default: 10 },
+      { name: "limit", label: "Limit", type: "number", default: 15 },
     ],
-    generateSQL: (params, snapshotDate) => `SELECT
+    generateSQL: (params) => `SELECT
   path,
   name,
   formatReadableSize(size) AS size,
   owner,
   toDateTime(modified_time) AS modified
 FROM filesystem.entries
-WHERE snapshot_date = '${snapshotDate}'
-  AND path LIKE '${params.path}/%'
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('${params.path}', '/%')
   AND is_directory = 0
 ORDER BY size DESC
 LIMIT ${params.limit}`,
@@ -251,7 +251,7 @@ LIMIT ${params.limit}`,
       { name: "days", label: "Days", type: "number", default: 180 },
       { name: "limit", label: "Limit", type: "number", default: 100 },
     ],
-    generateSQL: (params, snapshotDate) => `SELECT
+    generateSQL: (params) => `SELECT
   path,
   name,
   formatReadableSize(size) AS size,
@@ -259,8 +259,8 @@ LIMIT ${params.limit}`,
   toDateTime(accessed_time) AS last_accessed,
   dateDiff('day', toDateTime(accessed_time), now()) AS days_since_access
 FROM filesystem.entries
-WHERE snapshot_date = '${snapshotDate}'
-  AND path LIKE '${params.path}/%'
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('${params.path}', '/%')
   AND is_directory = 0
   AND accessed_time < toUnixTimestamp(now() - INTERVAL ${params.days} DAY)
 ORDER BY size DESC
@@ -275,13 +275,13 @@ LIMIT ${params.limit}`,
       { name: "path", label: "Scope Path", type: "text", default: "/project/cil", placeholder: "/project/cil" },
       { name: "limit", label: "Limit", type: "number", default: 20 },
     ],
-    generateSQL: (params, snapshotDate) => `SELECT
+    generateSQL: (params) => `SELECT
   parent_path,
   count() AS empty_file_count,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
-WHERE snapshot_date = '${snapshotDate}'
-  AND path LIKE '${params.path}/%'
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('${params.path}', '/%')
   AND is_directory = 0
   AND size = 0
 GROUP BY parent_path
@@ -296,12 +296,12 @@ LIMIT ${params.limit}`,
     params: [
       { name: "path", label: "Scope Path", type: "text", default: "/project/cil", placeholder: "/project/cil" },
     ],
-    generateSQL: (params, snapshotDate) => `SELECT
+    generateSQL: (params) => `SELECT
   count() AS total_empty_files,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
-WHERE snapshot_date = '${snapshotDate}'
-  AND path LIKE '${params.path}/%'
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('${params.path}', '/%')
   AND is_directory = 0
   AND size = 0`,
   },
@@ -313,12 +313,12 @@ WHERE snapshot_date = '${snapshotDate}'
     params: [
       { name: "limit", label: "Limit", type: "number", default: 10 },
     ],
-    generateSQL: (params, snapshotDate) => `SELECT
+    generateSQL: (params) => `SELECT
   splitByChar('/', path)[3] AS top_level_dir,
   count() AS file_count,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
-WHERE snapshot_date = '${snapshotDate}'
+WHERE snapshot_date = %(snapshot_date)s
   AND is_directory = 0
   AND length(splitByChar('/', path)) >= 4
 GROUP BY top_level_dir
@@ -334,17 +334,39 @@ LIMIT ${params.limit}`,
       { name: "path", label: "Directory Path", type: "text", default: "/project/cil/sacagawea_shares", placeholder: "/project/cil/sacagawea_shares" },
       { name: "limit", label: "Limit", type: "number", default: 20 },
     ],
-    generateSQL: (params, snapshotDate) => `SELECT
+    generateSQL: (params) => `SELECT
   file_type,
   count() AS file_count,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
-WHERE snapshot_date = '${snapshotDate}'
-  AND path LIKE '${params.path}/%'
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('${params.path}', '/%')
   AND is_directory = 0
   AND file_type != ''
 GROUP BY file_type
 ORDER BY sum(size) DESC
+LIMIT ${params.limit}`,
+  },
+  {
+    id: "shapefile-outputs-gcp",
+    name: "Top shapefile outputs in /gcp",
+    description: "Top 15 largest shapefile-related files under /project/cil/gcp",
+    category: "files",
+    params: [
+      { name: "limit", label: "Limit", type: "number", default: 15 },
+    ],
+    generateSQL: (params) => `SELECT
+  path,
+  name,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(modified_time) AS modified
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('/project/cil/gcp', '/%')
+  AND is_directory = 0
+  AND (name LIKE concat('%.shp', '%') OR name LIKE concat('%shapefile', '%') OR parent_path LIKE concat('%output', '%'))
+ORDER BY size DESC
 LIMIT ${params.limit}`,
   },
 ];
@@ -352,8 +374,10 @@ LIMIT ${params.limit}`,
 // Guided SQL Mode Component
 function GuidedSQLMode({
   selectedSnapshot,
+  onAddToReport,
 }: {
   selectedSnapshot: string | null;
+  onAddToReport: (entry: Omit<ReportEntry, "id" | "timestamp">) => void;
 }) {
   const [selectedTemplate, setSelectedTemplate] = useState<SQLTemplate | null>(null);
   const [templateParams, setTemplateParams] = useState<Record<string, any>>({});
@@ -370,7 +394,7 @@ function GuidedSQLMode({
       setTemplateParams(defaultParams);
 
       if (selectedSnapshot) {
-        const sql = selectedTemplate.generateSQL(defaultParams, selectedSnapshot);
+        const sql = selectedTemplate.generateSQL(defaultParams);
         setGeneratedSQL(sql);
       }
     }
@@ -382,7 +406,7 @@ function GuidedSQLMode({
     setTemplateParams(updated);
 
     if (selectedTemplate && selectedSnapshot) {
-      const sql = selectedTemplate.generateSQL(updated, selectedSnapshot);
+      const sql = selectedTemplate.generateSQL(updated);
       setGeneratedSQL(sql);
     }
   };
@@ -436,8 +460,8 @@ function GuidedSQLMode({
       </div>
 
       {/* Template Selector */}
-      <div className="border border-border/30 rounded-sm">
-        <div className="bg-muted/10 border-b border-border/30 px-3 py-2">
+      <div className="border border-border/50 rounded-sm bg-muted/5">
+        <div className="bg-muted/10 border-b border-border/50 px-3 py-2">
           <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
             Query Templates
           </div>
@@ -567,76 +591,100 @@ function GuidedSQLMode({
       {/* Results */}
       {hasExecuted && queryResult && (
         <div className="border-t border-border/20 pt-4">
-          <QueryResultsTable result={queryResult} isLoading={isLoading} />
+          <QueryResultsTable
+            result={queryResult}
+            isLoading={isLoading}
+            sql={generatedSQL}
+            mode="guided"
+            onAddToReport={onAddToReport}
+          />
         </div>
       )}
     </div>
   );
 }
 
-// Example queries for Raw SQL mode (from clickhouse/docs)
+// Example queries for Raw SQL mode
 const EXAMPLE_RAW_QUERIES = [
   {
-    id: "exact-filename",
-    name: "Exact filename search",
+    id: "largest-gcp-files",
+    name: "Largest files in /gcp",
+    description: "Top 15 largest files under /project/cil/gcp",
     sql: `SELECT
   path,
-  parent_path,
+  name,
   formatReadableSize(size) AS size,
   owner,
   toDateTime(modified_time) AS modified
 FROM filesystem.entries
-WHERE snapshot_date = 'SNAPSHOT_DATE'
-  AND name = 'example.csv'
-ORDER BY modified_time DESC`,
-  },
-  {
-    id: "substring-search",
-    name: "Files containing keyword",
-    sql: `SELECT
-  path,
-  formatReadableSize(size) AS size,
-  owner,
-  toDateTime(modified_time) AS modified
-FROM filesystem.entries
-WHERE snapshot_date = 'SNAPSHOT_DATE'
-  AND positionCaseInsensitive(name, 'weights') > 0
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('/project/cil/gcp', '/%')
   AND is_directory = 0
 ORDER BY size DESC
-LIMIT 100`,
+LIMIT 15`,
   },
   {
-    id: "duplicate-filenames",
-    name: "Duplicate filenames",
-    sql: `SELECT
-  name,
-  count() AS occurrences,
-  groupArray(path) AS locations
-FROM filesystem.entries
-WHERE snapshot_date = 'SNAPSHOT_DATE'
-  AND is_directory = 0
-GROUP BY name
-HAVING occurrences > 1
-ORDER BY occurrences DESC
-LIMIT 100`,
-  },
-  {
-    id: "large-csv-files",
-    name: "Large CSV files (>1GB)",
+    id: "shapefile-outputs",
+    name: "Shapefile-related outputs",
+    description: "Find shapefile outputs in /gcp (by size)",
     sql: `SELECT
   path,
+  name,
   formatReadableSize(size) AS size,
-  owner
+  owner,
+  toDateTime(modified_time) AS modified
 FROM filesystem.entries
-WHERE snapshot_date = 'SNAPSHOT_DATE'
-  AND name LIKE '%.csv'
-  AND size > 1 * 1024 * 1024 * 1024
-ORDER BY size DESC`,
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('/project/cil/gcp', '/%')
+  AND is_directory = 0
+  AND (name LIKE concat('%.shp', '%') OR name LIKE concat('%shapefile', '%') OR parent_path LIKE concat('%output', '%'))
+ORDER BY size DESC
+LIMIT 15`,
+  },
+  {
+    id: "dirs-with-empty-files",
+    name: "Directories with empty files",
+    description: "Directories containing the most 0-byte files",
+    sql: `SELECT
+  parent_path,
+  count() AS empty_file_count,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('/project/cil', '/%')
+  AND is_directory = 0
+  AND size = 0
+GROUP BY parent_path
+ORDER BY empty_file_count DESC
+LIMIT 20`,
+  },
+  {
+    id: "file-type-breakdown",
+    name: "File type breakdown",
+    description: "Count files by extension in a directory",
+    sql: `SELECT
+  file_type,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('/project/cil/gcp', '/%')
+  AND is_directory = 0
+  AND file_type != ''
+GROUP BY file_type
+ORDER BY sum(size) DESC
+LIMIT 20`,
   },
 ];
 
 // Raw SQL Mode Component
-function RawSQLMode({ selectedSnapshot }: { selectedSnapshot: string | null }) {
+function RawSQLMode({
+  selectedSnapshot,
+  onAddToReport,
+}: {
+  selectedSnapshot: string | null;
+  onAddToReport: (entry: Omit<ReportEntry, "id" | "timestamp">) => void;
+}) {
   const [sql, setSQL] = useState("");
   const [limit, setLimit] = useState(100);
   const [hasExecuted, setHasExecuted] = useState(false);
@@ -662,9 +710,8 @@ function RawSQLMode({ selectedSnapshot }: { selectedSnapshot: string | null }) {
   };
 
   const loadExample = (exampleSQL: string) => {
-    // Replace SNAPSHOT_DATE placeholder with actual snapshot
-    const finalSQL = exampleSQL.replace(/SNAPSHOT_DATE/g, selectedSnapshot || 'YYYY-MM-DD');
-    setSQL(finalSQL);
+    // Load the SQL template directly (snapshot_date is handled by backend)
+    setSQL(exampleSQL);
     setHasExecuted(false);
     setShowExamples(false);
   };
@@ -680,13 +727,13 @@ function RawSQLMode({ selectedSnapshot }: { selectedSnapshot: string | null }) {
       </div>
 
       {/* Example Queries */}
-      <div className="border border-border/30 rounded-sm">
+      <div className="border border-border/50 rounded-sm bg-muted/5">
         <button
           onClick={() => setShowExamples(!showExamples)}
-          className="w-full flex items-center justify-between p-3 hover:bg-muted/5 transition-colors"
+          className="w-full flex items-center justify-between p-3 hover:bg-muted/10 transition-colors"
         >
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            Example Queries (from clickhouse/docs)
+            Example Queries
           </h4>
           {showExamples ? (
             <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
@@ -696,16 +743,16 @@ function RawSQLMode({ selectedSnapshot }: { selectedSnapshot: string | null }) {
         </button>
 
         {showExamples && (
-          <div className="px-3 pb-3 border-t border-border/30">
-            <div className="grid grid-cols-2 gap-2 mt-3">
+          <div className="px-3 pb-3 border-t border-border/50">
+            <div className="grid grid-cols-1 gap-2 mt-3">
               {EXAMPLE_RAW_QUERIES.map((example) => (
                 <button
                   key={example.id}
                   onClick={() => loadExample(example.sql)}
-                  className="text-left p-2.5 border border-border/20 rounded-sm hover:bg-muted/10 transition-colors"
+                  className="text-left p-2.5 border border-border/20 rounded-sm hover:bg-muted/10 hover:border-primary/30 transition-colors"
                 >
                   <div className="text-xs font-medium text-foreground">{example.name}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">Click to load</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{example.description}</div>
                 </button>
               ))}
             </div>
@@ -723,8 +770,9 @@ function RawSQLMode({ selectedSnapshot }: { selectedSnapshot: string | null }) {
           onChange={(e) => setSQL(e.target.value)}
           placeholder={`SELECT path, name, formatReadableSize(size) AS size, owner
 FROM filesystem.entries
-WHERE snapshot_date = '${selectedSnapshot || "YYYY-MM-DD"}'
-  AND name LIKE '%pattern%'
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE concat('/project/cil/gcp', '/%')
+  AND is_directory = 0
 ORDER BY size DESC
 LIMIT 100`}
           className="w-full px-3 py-2 text-xs bg-background border border-border rounded-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 min-h-[200px] resize-y"
@@ -776,7 +824,13 @@ LIMIT 100`}
       {/* Results */}
       {hasExecuted && queryResult && (
         <div className="border-t border-border/20 pt-4">
-          <QueryResultsTable result={queryResult} isLoading={isLoading} />
+          <QueryResultsTable
+            result={queryResult}
+            isLoading={isLoading}
+            sql={sql}
+            mode="sql"
+            onAddToReport={onAddToReport}
+          />
         </div>
       )}
 
@@ -794,10 +848,16 @@ LIMIT 100`}
 // Query Results Table Component
 function QueryResultsTable({
   result,
-  isLoading
+  isLoading,
+  sql,
+  mode,
+  onAddToReport,
 }: {
   result: QueryResponse;
   isLoading: boolean;
+  sql?: string;
+  mode?: ConsoleMode;
+  onAddToReport?: (entry: Omit<ReportEntry, "id" | "timestamp">) => void;
 }) {
   const [showAggregation, setShowAggregation] = useState(false);
   const [aggGroupByColumns, setAggGroupByColumns] = useState<string[]>([]);
@@ -823,6 +883,42 @@ function QueryResultsTable({
     link.href = URL.createObjectURL(blob);
     link.download = `query-results-${Date.now()}.csv`;
     link.click();
+  };
+
+  const downloadTXT = () => {
+    // Calculate column widths
+    const colWidths = result.columns.map((col, idx) => {
+      const cellWidths = result.rows.map(row => String(row[idx] || "").length);
+      return Math.max(col.length, ...cellWidths);
+    });
+
+    // Create header
+    const header = result.columns.map((col, idx) => col.padEnd(colWidths[idx])).join(" | ");
+    const separator = colWidths.map(w => "-".repeat(w)).join("-+-");
+
+    // Create rows
+    const rows = result.rows.map(row =>
+      row.map((cell, idx) => String(cell || "").padEnd(colWidths[idx])).join(" | ")
+    );
+
+    const txtContent = [header, separator, ...rows].join("\n");
+
+    const blob = new Blob([txtContent], { type: "text/plain;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `query-results-${Date.now()}.txt`;
+    link.click();
+  };
+
+  const generateMarkdown = () => {
+    const header = `| ${result.columns.join(" | ")} |`;
+    const separator = `| ${result.columns.map(() => "---").join(" | ")} |`;
+    const rows = result.rows.map(row => `| ${row.map(cell => String(cell || "")).join(" | ")} |`);
+    return [header, separator, ...rows].join("\n");
+  };
+
+  const copyMarkdown = () => {
+    navigator.clipboard.writeText(generateMarkdown());
   };
 
   // Build aggregations
@@ -887,9 +983,9 @@ function QueryResultsTable({
   });
 
   return (
-    <div className="border border-border/30 rounded-sm overflow-hidden">
+    <div className="border border-border/50 rounded-sm overflow-hidden shadow-sm">
       {/* Header */}
-      <div className="bg-muted/10 border-b border-border/30 px-3 py-2">
+      <div className="bg-muted/10 border-b border-border/50 px-3 py-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="text-[10px] font-mono text-muted-foreground">
@@ -911,15 +1007,51 @@ function QueryResultsTable({
             )}
           </div>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={downloadCSV}
-            className="h-6 px-2 text-[10px] font-mono"
-          >
-            <Download className="h-3 w-3 mr-1" />
-            CSV
-          </Button>
+          <div className="flex gap-2">
+            {onAddToReport && sql && mode && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => onAddToReport({
+                  mode,
+                  sql,
+                  columns: result.columns,
+                  rows: result.rows,
+                  rowCount: result.row_count,
+                })}
+                className="h-6 px-2 text-[10px] font-mono bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30"
+              >
+                <FileText className="h-3 w-3 mr-1" />
+                Add to Report
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={downloadCSV}
+              className="h-6 px-2 text-[10px] font-mono"
+            >
+              <Download className="h-3 w-3 mr-1" />
+              CSV
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={downloadTXT}
+              className="h-6 px-2 text-[10px] font-mono"
+            >
+              <Download className="h-3 w-3 mr-1" />
+              TXT
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={copyMarkdown}
+              className="h-6 px-2 text-[10px] font-mono"
+            >
+              Copy MD
+            </Button>
+          </div>
         </div>
 
         {/* Aggregation Controls */}
@@ -1020,6 +1152,104 @@ function QueryResultsTable({
   );
 }
 
+// Report Builder types
+interface ReportEntry {
+  id: string;
+  timestamp: Date;
+  mode: ConsoleMode;
+  sql: string;
+  columns: string[];
+  rows: any[][];
+  rowCount: number;
+}
+
+// Report Panel Component
+function ReportPanel({
+  entries,
+  onRemove,
+  onDownload,
+  isExpanded,
+  onToggle,
+}: {
+  entries: ReportEntry[];
+  onRemove: (id: string) => void;
+  onDownload: () => void;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const reportDate = new Date().toISOString().split('T')[0];
+  const reportName = `rcc_report_${reportDate}`;
+
+  return (
+    <div className="border-2 border-primary/40 rounded-sm bg-primary/5 mt-4 shadow-sm">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between p-3 hover:bg-primary/10 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <FileText className="h-3.5 w-3.5 text-primary" />
+          <h4 className="text-xs font-semibold text-primary uppercase tracking-wide">
+            Report Builder: {reportName}
+          </h4>
+          <span className="text-[10px] text-primary/70 font-mono">({entries.length} queries)</span>
+        </div>
+        {isExpanded ? (
+          <ChevronUp className="h-3.5 w-3.5 text-primary" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 text-primary" />
+        )}
+      </button>
+
+      {isExpanded && (
+        <div className="border-t-2 border-primary/30 p-3">
+          {entries.length === 0 ? (
+            <div className="text-xs text-muted-foreground text-center py-4">
+              No queries added yet. Execute a query and click "Add to Report" to get started.
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2 mb-3">
+                {entries.map((entry, idx) => (
+                  <div key={entry.id} className="flex items-start gap-2 p-2 bg-background/50 border border-border/20 rounded-sm">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono text-muted-foreground">Query {idx + 1}</span>
+                        <span className="text-[9px] text-muted-foreground/70">{entry.timestamp.toLocaleTimeString()}</span>
+                        <span className="text-[9px] text-primary/70 font-mono">{entry.mode}</span>
+                      </div>
+                      <div className="text-[10px] font-mono text-foreground mt-1 truncate">
+                        {entry.sql.substring(0, 80)}...
+                      </div>
+                      <div className="text-[9px] text-muted-foreground mt-0.5">
+                        {entry.rowCount} rows
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => onRemove(entry.id)}
+                      className="text-red-400 hover:text-red-300 text-[10px] px-2 py-1"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <Button
+                size="sm"
+                onClick={onDownload}
+                className="w-full text-xs"
+              >
+                <Download className="h-3.5 w-3.5 mr-1.5" />
+                Download Report ({reportName}.md)
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SearchConsole() {
   const { selectedSnapshot } = useAppStore();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -1028,6 +1258,68 @@ export function SearchConsole() {
   const [hasSearched, setHasSearched] = useState(false);
   const [isExamplesExpanded, setIsExamplesExpanded] = useState(true);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  // Report Builder state
+  const [reportEntries, setReportEntries] = useState<ReportEntry[]>([]);
+  const [showReport, setShowReport] = useState(false);
+
+  const addToReport = (entry: Omit<ReportEntry, "id" | "timestamp">) => {
+    // Check if exact same query already exists
+    const duplicate = reportEntries.find(e => e.sql === entry.sql);
+    if (duplicate) {
+      alert("This query is already in the report");
+      return;
+    }
+
+    const newEntry: ReportEntry = {
+      ...entry,
+      id: `entry-${Date.now()}`,
+      timestamp: new Date(),
+    };
+
+    setReportEntries([...reportEntries, newEntry]);
+  };
+
+  const removeFromReport = (id: string) => {
+    setReportEntries(reportEntries.filter(e => e.id !== id));
+  };
+
+  const downloadReport = () => {
+    const reportDate = new Date().toISOString().split('T')[0];
+    const reportName = `rcc_report_${reportDate}`;
+
+    // Generate markdown content
+    let content = `# RCC Storage Report\n\n`;
+    content += `**Snapshot:** ${selectedSnapshot}\n`;
+    content += `**Generated:** ${new Date().toLocaleString()}\n`;
+    content += `**Queries:** ${reportEntries.length}\n\n`;
+    content += `---\n\n`;
+
+    reportEntries.forEach((entry, idx) => {
+      content += `## Query ${idx + 1} (${entry.mode})\n\n`;
+      content += `**Executed:** ${entry.timestamp.toLocaleString()}\n\n`;
+      content += `### SQL\n\n\`\`\`sql\n${entry.sql}\n\`\`\`\n\n`;
+      content += `### Results (${entry.rowCount} rows)\n\n`;
+
+      // Add markdown table
+      const header = `| ${entry.columns.join(" | ")} |`;
+      const separator = `| ${entry.columns.map(() => "---").join(" | ")} |`;
+      const rows = entry.rows.slice(0, 100).map(row => `| ${row.map(cell => String(cell || "")).join(" | ")} |`);
+      content += [header, separator, ...rows].join("\n");
+
+      if (entry.rowCount > 100) {
+        content += `\n\n_Showing first 100 of ${entry.rowCount} rows_\n`;
+      }
+
+      content += `\n\n---\n\n`;
+    });
+
+    const blob = new Blob([content], { type: "text/markdown;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${reportName}.md`;
+    link.click();
+  };
 
   const updateFilter = <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -1455,6 +1747,8 @@ export function SearchConsole() {
                       results={searchResults?.results || []}
                       isLoading={isSearching}
                       totalCount={searchResults?.total_count || 0}
+                      onAddToReport={addToReport}
+                      searchFilters={filters}
                     />
                   )}
                 </div>
@@ -1476,13 +1770,26 @@ export function SearchConsole() {
           {mode === "guided" && (
             <GuidedSQLMode
               selectedSnapshot={selectedSnapshot}
+              onAddToReport={addToReport}
             />
           )}
 
           {/* Raw SQL Mode */}
           {mode === "sql" && (
-            <RawSQLMode selectedSnapshot={selectedSnapshot} />
+            <RawSQLMode
+              selectedSnapshot={selectedSnapshot}
+              onAddToReport={addToReport}
+            />
           )}
+
+          {/* Report Builder Panel */}
+          <ReportPanel
+            entries={reportEntries}
+            onRemove={removeFromReport}
+            onDownload={downloadReport}
+            isExpanded={showReport}
+            onToggle={() => setShowReport(!showReport)}
+          />
         </CardContent>
       )}
     </Card>

@@ -119,3 +119,14 @@ export async function executeQuery(params: {
     body: JSON.stringify(params),
   });
 }
+
+
+export const foldersApi = {
+  async getTree(path: string, snapshot: string) {
+    return getContents({
+      snapshot_date: snapshot,
+      parent_path: path,
+      limit: 5000
+    })
+  }
+}
