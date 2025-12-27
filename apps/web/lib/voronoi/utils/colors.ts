@@ -1,7 +1,8 @@
 // Color utility functions for voronoi visualization
 
 import { getFileExtension } from '@/lib/utils/formatters'
-import { SIZE_SEVERITY, FILE_COUNT_SEVERITY, FILE_TYPE_COLORS } from './constants'
+import { SIZE_SEVERITY, FILE_COUNT_SEVERITY } from './constants'
+import { getFileCategoryColor } from './file-categories'
 
 export function getSizeSeverity(size: number): { label: string; color: string } {
   if (size < SIZE_SEVERITY.NEGLIGIBLE) return { label: 'Negligible', color: 'text-gray-500' }
@@ -35,6 +36,6 @@ export function getQuotaTextColor(percent: number): string {
 }
 
 export function getFileColor(name: string): string {
-  const ext = getFileExtension(name).toLowerCase()
-  return FILE_TYPE_COLORS[ext] || FILE_TYPE_COLORS['default']
+  // Use new category-based color system
+  return getFileCategoryColor(name)
 }

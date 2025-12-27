@@ -9,7 +9,6 @@ export function VoronoiLegend() {
         <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: TERMINAL_COLORS.file }} />Files</span>
         <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded border" style={{ borderColor: '#ffffff', opacity: 0.5 }} />Preview</span>
       </div>
-      <div className="text-gray-700">Hover partitions • Click to explore • Drag bubbles</div>
     </div>
   )
 }

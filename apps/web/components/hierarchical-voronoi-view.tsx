@@ -24,6 +24,9 @@ import {
 import { type VoronoiCacheEntry } from '@/lib/voronoi/utils/types'
 import { VoronoiHeader } from '@/components/voronoi/VoronoiHeader'
 import { VoronoiLegend } from '@/components/voronoi/VoronoiLegend'
+import { VoronoiCategoryLegend } from '@/components/voronoi/VoronoiCategoryLegend'
+import { VoronoiBubbleSizeLegend } from '@/components/voronoi/VoronoiBubbleSizeLegend'
+import { VoronoiTrafficLightLegend } from '@/components/voronoi/VoronoiTrafficLightLegend'
 import { VoronoiControlPanel } from '@/components/voronoi/VoronoiControlPanel'
 import { VoronoiBreadcrumb } from '@/components/voronoi/VoronoiBreadcrumb'
 import { VoronoiPartitionPanel } from '@/components/voronoi/VoronoiPartitionPanel'
@@ -115,13 +118,30 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
     }
   }, [data, isLoading, isFetching, unlockNavigation])
 
+  // Current view size (changes with navigation)
   const viewRootSize = data?.size || 0
-  const projectSize = viewRootSize
-  const storageTB = projectSize / (1024 ** 4)
-  const storageQuotaPercent = (storageTB / STORAGE_QUOTA_TB) * 100
   const parentSize = viewRootSize
 
-  const getPartitionQuotaPercent = useCallback((size: number) => projectSize > 0 ? (size / projectSize) * 100 : 0, [projectSize])
+  // Global project size (always the root, doesn't change with navigation)
+  // We need to track this separately from current view
+  const [globalRootSize, setGlobalRootSize] = useState(0)
+
+  // Update global root size only when we're at the base path
+  useEffect(() => {
+    if (data && effectivePath === basePath) {
+      setGlobalRootSize(data.size)
+    }
+  }, [data, effectivePath, basePath])
+
+  const projectSize = globalRootSize || viewRootSize  // Fallback to viewRootSize initially
+  const storageTB = projectSize / (1024 ** 4)
+  const storageQuotaPercent = (storageTB / STORAGE_QUOTA_TB) * 100
+
+  // Calculate percentage relative to 500 TB quota (not current view)
+  const getPartitionQuotaPercent = useCallback((size: number) => {
+    const sizeInTB = size / (1024 ** 4)
+    return (sizeInTB / STORAGE_QUOTA_TB) * 100
+  }, [])
   const getFileQuotaPercent = useCallback((fileCount: number) => (fileCount / FILE_COUNT_QUOTA) * 100, [])
   const getParentQuotaPercent = useCallback((size: number) => parentSize > 0 ? (size / parentSize) * 100 : 0, [parentSize])
 
@@ -193,6 +213,8 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         activePartition={activePartition}
         selectedFileInPanel={selectedFileInPanel}
         onFileClick={handleFileClickInPanel}
+        isExpanded={isExpanded}
+        isFullscreen={isFullscreen}
       />
 
       {/* BREADCRUMB */}
@@ -205,7 +227,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
       />
 
       {/* VISUALIZER */}
-      <div ref={containerRef} className={cn("relative border border-gray-800 bg-[#0a0e14] rounded-lg overflow-hidden", isLocked && "pointer-events-none")} style={{ height: isFullscreen ? 'calc(100vh - 280px)' : '550px' }}>
+      <div ref={containerRef} className={cn("relative border border-gray-800 bg-[#0a0e14] rounded-lg overflow-hidden", isLocked && "pointer-events-none")} style={{ height: isFullscreen ? 'calc(100vh - 900px)' : '550px' }}>
         <svg ref={svgRef} className={cn("w-full h-full cursor-crosshair", isLocked && "pointer-events-none")} />
 
         <div className="absolute bottom-3 right-3 flex gap-2">
@@ -240,6 +262,15 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           </div>
         )}
       </div>
+
+      {/* FILE CATEGORY LEGEND */}
+      <VoronoiCategoryLegend isExpanded={isExpanded} isFullscreen={isFullscreen} />
+
+      {/* BUBBLE SIZE LEGEND */}
+      <VoronoiBubbleSizeLegend isExpanded={isExpanded} isFullscreen={isFullscreen} />
+
+      {/* TRAFFIC LIGHT LEGEND */}
+      <VoronoiTrafficLightLegend isExpanded={isExpanded} isFullscreen={isFullscreen} />
 
       {/* CONTROLS */}
       <VoronoiControlPanel

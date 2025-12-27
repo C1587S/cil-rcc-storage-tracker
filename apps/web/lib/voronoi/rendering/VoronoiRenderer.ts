@@ -87,7 +87,7 @@ export class VoronoiRenderer {
       // Calculate dimensions (after transition complete)
       const container = containerRef.current
       const width = container.clientWidth
-      const height = isFullscreen ? window.innerHeight - 280 : 550
+      const height = container.clientHeight
 
       console.log('[VoronoiRenderer] setTimeout - dimensions after wait:', {
         width,
@@ -114,7 +114,7 @@ export class VoronoiRenderer {
    * Internal render method with calculated dimensions
    */
   private renderInternal(data: VoronoiNode, effectivePath: string, width: number, height: number): void {
-    const { svgRef, voronoiCacheRef, zoomRef } = this.options
+    const { svgRef, voronoiCacheRef, zoomRef, isFullscreen } = this.options
 
     if (!svgRef.current || !voronoiCacheRef.current) return
 
@@ -173,7 +173,7 @@ export class VoronoiRenderer {
     const nodesForBubbles = [...topLevelNodes, ...previewNodes]
     this.simulation = this.bubbleLayer.render(nodesForBubbles)
 
-    const labelLayer = new LabelLayer({ gLabels, topLevelNodes, viewportWidth: width })
+    const labelLayer = new LabelLayer({ gLabels, topLevelNodes, viewportWidth: width, isFullscreen })
     labelLayer.render(topLevelNodes)
 
     const interactionLayer = new InteractionLayer({

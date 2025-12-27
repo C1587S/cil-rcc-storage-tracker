@@ -2,6 +2,7 @@
 
 import * as d3 from 'd3'
 import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
+import { getBubbleRadius } from './bubble-sizes'
 
 export function packCirclesInPolygon(polygon: [number, number][], files: Array<{ node: VoronoiNode; value: number }>, maxCircles: number = 25): Array<{ x: number; y: number; r: number; node: VoronoiNode }> {
   if (files.length === 0) return []
@@ -15,31 +16,29 @@ export function packCirclesInPolygon(polygon: [number, number][], files: Array<{
     console.warn('[packCirclesInPolygon] Invalid polygon:', { polygon, centroid, area })
     return []
   }
-  const topFiles = files.sort((a, b) => b.value - a.value).slice(0, maxCircles)
-  const totalSize = topFiles.reduce((sum, f) => sum + f.value, 0)
 
-  // If totalSize is 0 or invalid, cannot compute circles
-  if (totalSize === 0 || !isFinite(totalSize)) {
-    console.warn('[packCirclesInPolygon] Invalid totalSize:', { totalSize, filesCount: files.length })
-    return []
-  }
+  // Sort by size descending - try to place all files, not just maxCircles
+  const sortedFiles = files.sort((a, b) => b.value - a.value)
 
   const circles: any[] = []
-  for (const file of topFiles) {
-    const sizeRatio = file.value / totalSize
-    let r = Math.max(4, Math.min(Math.sqrt(sizeRatio * area / Math.PI) * 0.6, 25))
+
+  // Try to place all files (up to maxCircles successfully placed)
+  for (const file of sortedFiles) {
+    // Use global size categorization instead of partition-relative sizing
+    const r = getBubbleRadius(file.value)
 
     // Validate radius
     if (!isFinite(r) || r <= 0) {
-      console.warn('[packCirclesInPolygon] Invalid radius for file:', { file, sizeRatio, area, r })
+      console.warn('[packCirclesInPolygon] Invalid radius for file:', { file, r })
       continue // Skip this file
     }
+
     let placed = false
     let attempts = 0
 
-    while (!placed && attempts < 50) {
+    while (!placed && attempts < 100) {  // Increased attempts for better packing
       const angle = Math.random() * Math.PI * 2
-      const dist = Math.random() * Math.sqrt(area) * 0.4
+      const dist = Math.random() * Math.sqrt(area) * 0.45  // Slightly larger search area
       const x = centroid[0] + dist * Math.cos(angle)
       const y = centroid[1] + dist * Math.sin(angle)
 
@@ -52,6 +51,14 @@ export function packCirclesInPolygon(polygon: [number, number][], files: Array<{
       }
       attempts++
     }
+
+    // If we've placed maxCircles successfully, we can stop
+    // (but continue trying if we have space and more files)
+    if (circles.length >= maxCircles && !placed) {
+      break
+    }
   }
+
+  console.log(`[packCirclesInPolygon] Placed ${circles.length} of ${sortedFiles.length} bubbles`)
   return circles
 }

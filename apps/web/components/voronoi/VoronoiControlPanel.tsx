@@ -17,12 +17,16 @@ export function VoronoiControlPanel({
         {/* Controls */}
         <div className="flex items-center gap-4">
           <span className="text-gray-600 font-bold uppercase text-[9px]">Controls:</span>
-          <div className="flex gap-3">
-            <span className="text-gray-500">L-Click: Drill</span>
+          <div className="flex gap-2">
+            <span className="text-gray-500">Hover partitions</span>
+            <span className="text-gray-600">•</span>
+            <span className="text-gray-500">Click to explore</span>
+            <span className="text-gray-600">•</span>
+            <span className="text-gray-500">Drag bubbles</span>
+            <span className="text-gray-600">•</span>
             <span className="text-gray-500">R-Click: Select</span>
+            <span className="text-gray-600">•</span>
             <span className="text-gray-500">Scroll: Zoom</span>
-            <span className="text-gray-500">Drag: Pan</span>
-            <span className="text-gray-500">Bubbles: Draggable</span>
           </div>
         </div>
 
