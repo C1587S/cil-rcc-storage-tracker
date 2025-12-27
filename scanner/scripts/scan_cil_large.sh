@@ -7,14 +7,14 @@
 #SBATCH --mem=16G
 #SBATCH --time=18:00:00
 #SBATCH --array=0-6
-#SBATCH -o /project/cil/home_dirs/scadavidsanchez/projects/cil-rcc-storage-tracker/OUTPUTS/cil_scans/slurm_out/scan_large_%a.out
-#SBATCH -e /project/cil/home_dirs/scadavidsanchez/projects/cil-rcc-storage-tracker/OUTPUTS/cil_scans/slurm_out/scan_large_%a.err
+#SBATCH -o /project/cil/home_dirs/rcc/cil_scans/slurm_out/scan_large_%a.out
+#SBATCH -e /project/cil/home_dirs/rcc/cil_scans/slurm_out/scan_large_%a.err
 
-### Total time with this config is 30 minutos to scan /projects/cil fully 
+### Total time with this config is 30 minuts to scan /projects/cil fully 
 ################################################################################
 #
 # Usage:
-#   mkdir -p /project/cil/home_dirs/scadavidsanchez/projects/cil-rcc-storage-tracker/OUTPUTS/cil_scans/slurm_out
+#   mkdir -p /project/cil/home_dirs/rcc/cil_scans/slurm_out
 #   sbatch scanner/scripts/scan_cil_large.sh
 ################################################################################
 
@@ -82,6 +82,13 @@ echo "Starting optimized scan for large directory..."
 
 EXIT_CODE=$?
 
+
+/usr/bin/time -v ${SCANNER_BIN} scan aggregate \
+    --input "${OUTPUT_DIR}/${DIR}_${DATE} \
+    --output ${OUTPUT_DIR}/${DIR}_aggregated_scan.parquet \
+    --delete-chunks
+
+    
 echo ""
 echo "================================================"
 echo "Scan Summary"

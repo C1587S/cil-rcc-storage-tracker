@@ -1286,7 +1286,7 @@ The voronoi visualization system uses a **streaming ClickHouse storage approach*
 ┌────────────────────────────────────────────────────────┐
 │         Offline Computation (Batch/Nightly)            │
 │                                                         │
-│  python compute_voronoi.py 2025-12-12                  │
+│  python compute_voronoi_unified.py 2025-12-12          │
 │                                                         │
 │  1. Streams 42M filesystem entries from ClickHouse     │
 │  2. Builds complete hierarchy using stack algorithm    │
@@ -1358,13 +1358,13 @@ SETTINGS index_granularity = 8192;
 #### 1. Create the table
 
 ```bash
-docker exec tracker-clickhouse clickhouse-client < clickhouse/migrations/003_voronoi_precomputed.sql
+docker exec tracker-clickhouse clickhouse-client < clickhouse/schema/04_voronoi_precomputed.sql
 ```
 
 Or if running ClickHouse locally:
 
 ```bash
-clickhouse-client < clickhouse/migrations/003_voronoi_precomputed.sql
+clickhouse-client < clickhouse/schema/04_voronoi_precomputed.sql
 ```
 
 #### 2. Compute voronoi data for a snapshot
@@ -1373,25 +1373,25 @@ clickhouse-client < clickhouse/migrations/003_voronoi_precomputed.sql
 
 ```bash
 cd clickhouse/scripts
-python compute_voronoi.py 2025-12-12
+python compute_voronoi_unified.py 2025-12-12
 ```
 
 **With force recomputation:**
 
 ```bash
-python compute_voronoi.py 2025-12-12 --force
+python compute_voronoi_unified.py 2025-12-12 --force
 ```
 
 **All available snapshots:**
 
 ```bash
-python compute_voronoi.py --all
+python compute_voronoi_unified.py --all
 ```
 
 **Custom ClickHouse connection:**
 
 ```bash
-python compute_voronoi.py 2025-12-12 \
+python compute_voronoi_unified.py 2025-12-12 \
   --host localhost \
   --port 9000 \
   --user default \
@@ -1402,7 +1402,7 @@ python compute_voronoi.py 2025-12-12 \
 **With custom root path:**
 
 ```bash
-python compute_voronoi.py 2025-12-12 --root /project/cil
+python compute_voronoi_unified.py 2025-12-12 --root /project/cil
 ```
 
 #### 3. Verify computation
@@ -1524,7 +1524,7 @@ DELETE WHERE snapshot_date = '2025-12-12';
 **2. Recompute:**
 
 ```bash
-python compute_voronoi.py 2025-12-12 --force
+python compute_voronoi_unified.py 2025-12-12 --force
 ```
 
 ### Scripts Reference
@@ -1552,10 +1552,10 @@ python compute_voronoi.py 2025-12-12 --force
   - No dependency on API runtime
 - Usage examples:
   ```bash
-  python compute_voronoi.py 2025-12-12
-  python compute_voronoi.py 2025-12-12 --force
-  python compute_voronoi.py --all
-  python compute_voronoi.py 2025-12-12 --host localhost --port 9000
+  python compute_voronoi_unified.py 2025-12-12
+  python compute_voronoi_unified.py 2025-12-12 --force
+  python compute_voronoi_unified.py --all
+  python compute_voronoi_unified.py 2025-12-12 --host localhost --port 9000
   ```
 
 ### Frontend Integration
@@ -1610,5 +1610,5 @@ curl http://localhost:8000/api/voronoi/node/2025-12-12/root
 
 # If missing, recompute:
 cd clickhouse/scripts
-python compute_voronoi.py 2025-12-12 --force
+python compute_voronoi_unified.py 2025-12-12 --force
 ```

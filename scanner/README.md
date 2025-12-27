@@ -1,22 +1,22 @@
 # Storage Scanner
 
-High-performance filesystem scanner written in Rust for storage analytics. Efficiently scans large filesystem hierarchies and outputs results in Apache Parquet format.
+Filesystem scanner written in Rust for storage analytics. Scans large filesystem hierarchies and outputs results in Apache Parquet format.
 
 ## Features
 
-- High-performance parallel directory traversal
-- Efficient Parquet output format with compression
+- Parallel directory traversal
+- Parquet output format with compression
 - Incremental output mode for long-running scans
 - Resume capability for interrupted scans
 - Slurm integration for HPC cluster job arrays
-- Comprehensive metadata capture (size, timestamps, permissions, hierarchy)
-- Robust error handling for permission errors and broken symlinks
+- Metadata capture (size, timestamps, permissions, hierarchy)
+- Error handling for permission errors and broken symlinks
 
 ## Performance
 
 - Throughput: Over 50,000 files/second on NVMe storage
 - Memory: Less than 500MB RAM for scanning 1M+ files
-- Scales efficiently to 400+ TB filesystems
+- Scales to 400+ TB filesystems
 
 ## Installation
 
