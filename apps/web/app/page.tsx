@@ -42,7 +42,7 @@ export default function Home() {
           </p>
 
           <div className="mt-2 p-2 bg-green-900/20 border border-green-600 rounded text-sm text-green-400">
-            Using ClickHouse precomputed voronoi data
+            Precomputed voronoi data
           </div>
         </header>
 
