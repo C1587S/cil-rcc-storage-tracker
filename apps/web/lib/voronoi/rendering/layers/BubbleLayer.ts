@@ -166,11 +166,11 @@ export class BubbleLayer {
     bubbleNodes: BubbleNode[]
   ): d3.Simulation<any, undefined> {
     const simulation = d3.forceSimulation(bubbleNodes)
-      // Collision force: STRONG prevention of overlap (increased padding and strength)
+      // Collision force: STRONG prevention of overlap (optimized for performance)
       .force('collision', d3.forceCollide<BubbleNode>()
         .radius(d => d.r + 2)  // Increased padding from 1.5 to 2
         .strength(1.0)  // Maximum strength for no overlap
-        .iterations(3))  // Multiple iterations for better separation
+        .iterations(1))  // OPTIMIZED: Reduced from 3 to 1 for faster performance
       // Charge force: Create repulsion between bubbles (negative = repel)
       .force('charge', d3.forceManyBody<BubbleNode>().strength(-10))  // Increased from -8
       // Category clustering: Bubbles of same category attract each other (ENHANCED)
@@ -180,7 +180,7 @@ export class BubbleLayer {
       // Custom positioning force: Each bubble gravitates toward its partition centroid
       .force('position', d3.forceX<BubbleNode>().x(d => d3.polygonCentroid(d.polygon)[0]).strength(0.02))  // Reduced from 0.03
       .force('positionY', d3.forceY<BubbleNode>().y(d => d3.polygonCentroid(d.polygon)[1]).strength(0.02))  // Reduced from 0.03
-      .alphaDecay(0.03)  // Slower decay for smoother settling
+      .alphaDecay(0.05)  // OPTIMIZED: Increased from 0.03 for faster convergence
       .on('tick', () => {
         // Constrain each bubble to its partition polygon with ENHANCED border repulsion
         bubbleNodes.forEach(b => {

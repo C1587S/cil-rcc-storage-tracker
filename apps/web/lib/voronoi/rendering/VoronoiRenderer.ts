@@ -70,8 +70,8 @@ export class VoronoiRenderer {
       containerElement: containerRef.current
     })
 
-    // Wait for CSS transition to complete (duration-300 = 300ms)
-    // Use setTimeout to ensure layout is fully settled after transition
+    // OPTIMIZED: Reduced delay from 320ms to 50ms for faster perceived performance
+    // Just enough time for layout to stabilize without waiting for full CSS transition
     setTimeout(() => {
       if (!svgRef.current || !containerRef.current || !voronoiCacheRef.current) {
         console.log('[VoronoiRenderer] setTimeout - refs not ready')
@@ -107,7 +107,7 @@ export class VoronoiRenderer {
       }
 
       this.renderInternal(data, effectivePath, width, height)
-    }, 320) // Slightly longer than transition-duration-300 (300ms)
+    }, 50) // OPTIMIZED: Reduced from 320ms - layout stabilization only
   }
 
   /**

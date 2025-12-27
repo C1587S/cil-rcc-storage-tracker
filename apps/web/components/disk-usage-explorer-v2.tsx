@@ -5,7 +5,6 @@ import { getBrowse, getContents, getSnapshots } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { FileTypeTreemap } from "@/components/file-type-treemap";
 import {
   ChevronRight,
   File,
@@ -22,42 +21,40 @@ import type { DirectoryEntry } from "@/lib/types";
 type SortMode = "name" | "size" | "modified";
 
 interface DiskUsageState {
-  referencePath: string | null;  // Single reference directory path
-  referenceSize: number | null;  // Size of reference directory
+  referencePath: string | null;
+  referenceSize: number | null;
   sortMode: SortMode;
-  selectedPath: string | null;  // Currently selected file/folder for context card
+  selectedPath: string | null;
 }
 
-// Hard-coded quotas (as per requirements)
+// Hard-coded quotas
 const STORAGE_QUOTA_TB = 500;
 const FILE_COUNT_QUOTA = 77_000_000;
 
-// Get smooth color gradient for quota bars (10-step scale)
 function getQuotaColor(percent: number): string {
-  if (percent >= 95) return "bg-red-600/70";        // 95-100%: dark red
-  if (percent >= 85) return "bg-red-500/65";        // 85-95%: red
-  if (percent >= 75) return "bg-orange-500/65";     // 75-85%: orange
-  if (percent >= 65) return "bg-orange-400/60";     // 65-75%: light orange
-  if (percent >= 50) return "bg-yellow-400/60";     // 50-65%: yellow
-  if (percent >= 35) return "bg-yellow-300/55";     // 35-50%: light yellow
-  if (percent >= 25) return "bg-lime-400/55";       // 25-35%: lime
-  if (percent >= 15) return "bg-green-400/60";      // 15-25%: light green
-  if (percent >= 5) return "bg-green-500/65";       // 5-15%: green
-  return "bg-green-600/70";                         // 0-5%: dark green
+  if (percent >= 95) return "bg-red-600/70";
+  if (percent >= 85) return "bg-red-500/65";
+  if (percent >= 75) return "bg-orange-500/65";
+  if (percent >= 65) return "bg-orange-400/60";
+  if (percent >= 50) return "bg-yellow-400/60";
+  if (percent >= 35) return "bg-yellow-300/55";
+  if (percent >= 25) return "bg-lime-400/55";
+  if (percent >= 15) return "bg-green-400/60";
+  if (percent >= 5) return "bg-green-500/65";
+  return "bg-green-600/70";
 }
 
-// Get text color for quota percentage (matches bar color scale)
 function getQuotaTextColor(percent: number): string {
-  if (percent >= 95) return "text-red-600";         // 95-100%: dark red
-  if (percent >= 85) return "text-red-500";         // 85-95%: red
-  if (percent >= 75) return "text-orange-500";      // 75-85%: orange
-  if (percent >= 65) return "text-orange-400";      // 65-75%: light orange
-  if (percent >= 50) return "text-yellow-400";      // 50-65%: yellow
-  if (percent >= 35) return "text-yellow-300";      // 35-50%: light yellow
-  if (percent >= 25) return "text-lime-400";        // 25-35%: lime
-  if (percent >= 15) return "text-green-400";       // 15-25%: light green
-  if (percent >= 5) return "text-green-500";        // 5-15%: green
-  return "text-green-600";                          // 0-5%: dark green
+  if (percent >= 95) return "text-red-600";
+  if (percent >= 85) return "text-red-500";
+  if (percent >= 75) return "text-orange-500";
+  if (percent >= 65) return "text-orange-400";
+  if (percent >= 50) return "text-yellow-400";
+  if (percent >= 35) return "text-yellow-300";
+  if (percent >= 25) return "text-lime-400";
+  if (percent >= 15) return "text-green-400";
+  if (percent >= 5) return "text-green-500";
+  return "text-green-600";
 }
 
 interface TreeNodeProps {
@@ -66,9 +63,9 @@ interface TreeNodeProps {
   snapshotDate: string;
   level: number;
   isDirectory: boolean;
-  size: number;  // Direct size
+  size: number;
   sizeFormatted: string;
-  recursiveSize?: number;  // Recursive subtree size (dirs only)
+  recursiveSize?: number;
   recursiveSizeFormatted?: string;
   fileCount?: number;
   dirCount?: number;
@@ -76,15 +73,15 @@ interface TreeNodeProps {
   modifiedTime?: number;
   accessedTime?: number;
   fileType?: string;
-  referenceSize: number;  // For percentage calculation
+  referenceSize: number;
   state: DiskUsageState;
   setState: React.Dispatch<React.SetStateAction<DiskUsageState>>;
   onSetReference?: (path: string, size: number) => void;
-  isInsideReference: boolean;  // Whether this node is inside the reference directory
-  parentPath: string;  // Parent directory path
+  isInsideReference: boolean;
+  parentPath: string;
+  preLoadedFolders?: DirectoryEntry[];
+  onDataLoaded?: (totalSize: number) => void; 
 }
-
-// Icon and color logic moved to shared utility: lib/utils/icon-helpers.tsx
 
 function formatDate(timestamp?: number): string {
   if (!timestamp) return "";
@@ -111,19 +108,17 @@ function sortEntries(entries: DirectoryEntry[], sortMode: SortMode): DirectoryEn
       sorted.sort((a, b) => {
         const aSize = a.recursive_size || a.size;
         const bSize = b.recursive_size || b.size;
-        return bSize - aSize;  // Descending (largest first)
+        return bSize - aSize; 
       });
       break;
     case "modified":
       sorted.sort((a, b) => {
         const aTime = a.modified_time || 0;
         const bTime = b.modified_time || 0;
-        return bTime - aTime;  // Descending (newest first)
+        return bTime - aTime; 
       });
       break;
   }
-
-  // Always keep folders before files
   const folders = sorted.filter((e) => e.is_directory);
   const files = sorted.filter((e) => !e.is_directory);
   return [...folders, ...files];
@@ -151,8 +146,9 @@ function TreeNode({
   onSetReference,
   isInsideReference,
   parentPath,
+  preLoadedFolders,
+  onDataLoaded,
 }: TreeNodeProps) {
-  // Auto-expand if this node is the reference directory or an ancestor of it
   const shouldAutoExpand = state.referencePath && (
     path === state.referencePath ||
     state.referencePath.startsWith(path + '/')
@@ -161,91 +157,93 @@ function TreeNode({
   const [isExpanded, setIsExpanded] = useState(shouldAutoExpand || false);
   const { setSelectedPath } = useAppStore();
 
-  // Auto-expand when this node becomes part of the reference path
   useEffect(() => {
     if (shouldAutoExpand && !isExpanded) {
       setIsExpanded(true);
     }
   }, [shouldAutoExpand, isExpanded]);
 
-  // Fetch folders (with recursive sizes) from browse endpoint
-  const { data: foldersData, isLoading: foldersLoading } = useQuery({
-    queryKey: ["browse", snapshotDate, path],
-    queryFn: () =>
-      getBrowse({
-        snapshot_date: snapshotDate,
-        parent_path: path,
-        limit: 1000,
-      }),
+  const { data, isLoading } = useQuery({
+    queryKey: ["node-data", snapshotDate, path],
+    queryFn: async () => {
+      if (preLoadedFolders) {
+        const filesData = await getContents({
+          snapshot_date: snapshotDate,
+          parent_path: path,
+          limit: 1000,
+          sort: "size_desc",
+        });
+        return {
+          folders: preLoadedFolders,
+          files: filesData.entries.filter((e: DirectoryEntry) => !e.is_directory),
+        };
+      }
+
+      const [foldersRes, filesRes] = await Promise.all([
+        getBrowse({
+          snapshot_date: snapshotDate,
+          parent_path: path,
+          limit: 1000,
+        }),
+        getContents({
+          snapshot_date: snapshotDate,
+          parent_path: path,
+          limit: 1000,
+          sort: "size_desc",
+        }),
+      ]);
+
+      return {
+        folders: foldersRes.folders || [],
+        files: filesRes.entries.filter((e: DirectoryEntry) => !e.is_directory) || [],
+      };
+    },
     enabled: isExpanded && isDirectory,
+    staleTime: 1000 * 60 * 5, 
   });
 
-  // Fetch files from contents endpoint
-  const { data: filesData, isLoading: filesLoading } = useQuery({
-    queryKey: ["files", snapshotDate, path],
-    queryFn: () =>
-      getContents({
-        snapshot_date: snapshotDate,
-        parent_path: path,
-        limit: 1000,
-        sort: "size_desc",
-      }),
-    enabled: isExpanded && isDirectory,
-  });
+  useEffect(() => {
+    if (data && onDataLoaded) {
+      const foldersSize = (data.folders || []).reduce((acc, curr) => acc + (curr.recursive_size || curr.size), 0);
+      const filesSize = (data.files || []).reduce((acc, curr) => acc + curr.size, 0);
+      const totalSize = foldersSize + filesSize;
+      onDataLoaded(totalSize);
+    }
+  }, [data, onDataLoaded]);
 
-  const isLoading = foldersLoading || filesLoading;
-
-  // Merge folders and files, then sort
   const unsortedEntries: DirectoryEntry[] = [
-    ...(foldersData?.folders || []),
-    ...(filesData?.entries.filter((e: DirectoryEntry) => !e.is_directory) || []),
+    ...(data?.folders || []),
+    ...(data?.files || []),
   ];
 
   const allEntries = sortEntries(unsortedEntries, state.sortMode);
-
   const hasChildren = allEntries.length > 0;
 
-  // Calculate percentage using recursive size (true directory weight)
-  const displaySize = recursiveSize || size;  // Use recursive size for dirs, regular size for files
+  const displaySize = recursiveSize || size;
   const percent = referenceSize > 0 ? (displaySize / referenceSize) * 100 : 0;
 
   const isReferenceRow = state.referencePath === path;
   const isSelectedRow = state.selectedPath === path;
 
-  // CRITICAL: Determine if this node is actually inside the current reference directory
-  // This must be computed dynamically based on the current reference path, not inherited from parent.
-  // When the reference directory changes, we need to recompute which nodes should show bars.
-  // Without this, stale bars from a previous reference would remain visible.
   const isActuallyInsideReference = state.referencePath
     ? (path === state.referencePath || path.startsWith(state.referencePath + '/'))
     : isInsideReference;
 
-  // Percentage propagation logic:
-  // - If this node is the reference: children use this node's size as reference
-  // - If this node is expanded (and had a bar): children use this node's size as reference
-  // - Otherwise: children inherit the same reference size
   const childReferenceSize = isReferenceRow || (isExpanded && isActuallyInsideReference && !isReferenceRow)
-    ? displaySize  // Children are relative to this expanded folder
-    : referenceSize;  // Children inherit the same reference
+    ? displaySize
+    : referenceSize;
 
   const handleToggle = () => {
     if (isDirectory) {
       setIsExpanded(!isExpanded);
       setSelectedPath(path);
     }
-    // Update selected path in state for context card
-    // If clicking the same item, deselect it
     setState((prev) => ({
       ...prev,
       selectedPath: prev.selectedPath === path ? null : path,
     }));
   };
 
-  // Bar visibility logic:
-  // - Reference directory itself: NO bar (it's the 100% baseline)
-  // - Expanded folders: NO bar (their % is split among visible children)
-  // - All OTHER visible items inside reference tree: show bars
-  // - All visible bars must sum to 100% relative to reference
   const shouldShowBar = !isReferenceRow && !isExpanded && isActuallyInsideReference;
 
   return (
@@ -260,7 +258,6 @@ function TreeNode({
         style={{ paddingLeft: `${level * 12 + 8}px` }}
         onClick={handleToggle}
       >
-        {/* Chevron and icon (folder or file) */}
         <div className="flex items-center gap-1.5 flex-shrink-0 min-w-[52px]">
           {isDirectory ? (
             <>
@@ -280,7 +277,6 @@ function TreeNode({
           )}
         </div>
 
-        {/* Name with counts (clean format for directories) */}
         <div className="flex items-baseline gap-2 min-w-[200px] max-w-[300px]">
           <span className="text-xs font-medium truncate">{name}</span>
           {isDirectory && (fileCount !== undefined || dirCount !== undefined) && (
@@ -297,7 +293,6 @@ function TreeNode({
           )}
         </div>
 
-        {/* Size bar (only show if inside reference directory) */}
         <div className="flex-1 flex items-center gap-2 min-w-[200px]">
           {shouldShowBar ? (
             <>
@@ -337,12 +332,10 @@ function TreeNode({
           )}
         </div>
 
-        {/* Last access (always visible) */}
         <span className="text-xs font-mono text-muted-foreground/50 min-w-[45px] text-right flex-shrink-0">
           {formatDate(accessedTime || modifiedTime)}
         </span>
 
-        {/* Set reference button (folders only, always visible) */}
         {isDirectory && onSetReference && (
           <Button
             variant="ghost"
@@ -362,7 +355,6 @@ function TreeNode({
         )}
       </div>
 
-      {/* Children */}
       {isExpanded && isDirectory && (
         <div>
           {isLoading && (
@@ -417,43 +409,33 @@ function TreeNode({
 export function DiskUsageExplorerV2() {
   const { selectedSnapshot, referencePath, referenceSize, setReferencePath, setReferenceSize } = useAppStore();
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [localProjectSize, setLocalProjectSize] = useState<number>(0);
+
   const [state, setState] = useState<DiskUsageState>({
-    referencePath: referencePath,  // Use global store value
-    referenceSize: referenceSize,  // Use global store value
-    sortMode: "size",  // Default: sort by size (largest first)
-    selectedPath: null,  // No selection initially
+    referencePath: referencePath,
+    referenceSize: referenceSize,
+    sortMode: "size",
+    selectedPath: null,
   });
 
-  // Fetch all snapshots to get metadata (total_files, total_size, etc.)
   const { data: snapshots } = useQuery({
     queryKey: ["snapshots"],
     queryFn: getSnapshots,
   });
 
-  // Find the current snapshot metadata
   const currentSnapshot = snapshots?.find(s => s.snapshot_date === selectedSnapshot);
 
-  // Fetch root browse to calculate project size (use recursive sizes)
-  const { data: rootData } = useQuery({
-    queryKey: ["browse", selectedSnapshot, referencePath],
-    queryFn: () =>
-      getBrowse({
-        snapshot_date: selectedSnapshot!,
-        parent_path: referencePath,
-        limit: 1000,
-      }),
-    enabled: !!selectedSnapshot,
-  });
-
-  // Calculate total project size from recursive folder sizes (true total)
-  const projectSize = rootData
-    ? rootData.folders.reduce((sum: number, e) => sum + (e.recursive_size || e.size), 0)
-    : 0;
-
-  // Use custom reference if set, otherwise use project total
+  // Progressive loading: use local size, global ref, or 0
+  const projectSize = localProjectSize || referenceSize || 0;
   const effectiveReferenceSize = referenceSize || projectSize;
 
-  // Fetch data for the selected path (for context card)
+  const handleRootDataLoaded = (totalSize: number) => {
+    setLocalProjectSize(totalSize);
+    if (totalSize > 0 && referencePath === "/project/cil" && !referenceSize) {
+      setReferenceSize(totalSize);
+    }
+  };
+
   const { data: selectedData } = useQuery({
     queryKey: ["browse", selectedSnapshot, state.selectedPath],
     queryFn: () =>
@@ -465,14 +447,6 @@ export function DiskUsageExplorerV2() {
     enabled: !!selectedSnapshot && !!state.selectedPath,
   });
 
-  // Update global reference size when project size loads
-  useEffect(() => {
-    if (projectSize > 0 && referencePath === "/project/cil" && !referenceSize) {
-      setReferenceSize(projectSize);
-    }
-  }, [projectSize, referencePath, referenceSize, setReferenceSize]);
-
-  // Sync local state with global store
   useEffect(() => {
     setState((prev) => ({
       ...prev,
@@ -481,12 +455,9 @@ export function DiskUsageExplorerV2() {
     }));
   }, [referencePath, referenceSize]);
 
-  // ESC to exit fullscreen
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isFullscreen) {
-        setIsFullscreen(false);
-      }
+      if (e.key === "Escape" && isFullscreen) setIsFullscreen(false);
     };
     if (isFullscreen) {
       document.addEventListener("keydown", handleKeyDown);
@@ -495,7 +466,6 @@ export function DiskUsageExplorerV2() {
   }, [isFullscreen]);
 
   const handleSetReference = (path: string, size: number) => {
-    // Update global store (shared with Voronoi)
     setReferencePath(path);
     setReferenceSize(size);
   };
@@ -504,19 +474,14 @@ export function DiskUsageExplorerV2() {
     return (
       <Card>
         <CardContent className="p-6">
-          <div className="text-sm text-muted-foreground">
-            Select a snapshot to explore disk usage
-          </div>
+          <div className="text-sm text-muted-foreground">Select a snapshot to explore disk usage</div>
         </CardContent>
       </Card>
     );
   }
 
-  // Calculate quota usage
   const storageTB = projectSize / (1024 ** 4);
   const storageQuotaPercent = (storageTB / STORAGE_QUOTA_TB) * 100;
-
-  // Get total file count from snapshot metadata (not from folder aggregation)
   const totalFiles = currentSnapshot?.total_files || 0;
   const fileCountQuotaPercent = (totalFiles / FILE_COUNT_QUOTA) * 100;
 
@@ -538,74 +503,43 @@ export function DiskUsageExplorerV2() {
           </div>
           <div className="flex items-center gap-2">
             {!isFullscreen && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsFullscreen(true)}
-                className="gap-1.5 h-7"
-              >
-                <Maximize2 className="w-3 h-3" />
-                <span className="text-xs">Fullscreen</span>
+              <Button variant="outline" size="sm" onClick={() => setIsFullscreen(true)} className="gap-1.5 h-7">
+                <Maximize2 className="w-3 h-3" /> <span className="text-xs">Fullscreen</span>
               </Button>
             )}
             {isFullscreen && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsFullscreen(false)}
-                className="gap-1.5 h-7"
-              >
-                <Minimize2 className="w-3 h-3" />
-                <span className="text-xs">Exit (ESC)</span>
+              <Button variant="outline" size="sm" onClick={() => setIsFullscreen(false)} className="gap-1.5 h-7">
+                <Minimize2 className="w-3 h-3" /> <span className="text-xs">Exit (ESC)</span>
               </Button>
             )}
           </div>
         </div>
 
-        {/* Quota indicators */}
         <div className="flex items-center gap-4 text-xs">
-          {/* Storage quota */}
           <div className="flex items-center gap-2 min-w-[240px]">
             <span className="text-muted-foreground/70 font-mono">Storage:</span>
             <div className="flex-1 h-2 bg-muted/20 rounded-sm overflow-hidden border border-border/30">
-              <div
-                className={cn(
-                  "h-full transition-all",
-                  getQuotaColor(storageQuotaPercent)
-                )}
-                style={{ width: `${Math.min(storageQuotaPercent, 100)}%` }}
-              />
+              <div className={cn("h-full transition-all", getQuotaColor(storageQuotaPercent))}
+                   style={{ width: `${Math.min(storageQuotaPercent, 100)}%` }} />
             </div>
             <span className="font-mono text-muted-foreground/80 min-w-[110px]">
               {storageTB.toFixed(1)} / {STORAGE_QUOTA_TB} TB
             </span>
-            <span className={cn(
-              "font-mono font-medium min-w-[42px] text-right",
-              getQuotaTextColor(storageQuotaPercent)
-            )}>
+            <span className={cn("font-mono font-medium min-w-[42px] text-right", getQuotaTextColor(storageQuotaPercent))}>
               ({storageQuotaPercent.toFixed(1)}%)
             </span>
           </div>
 
-          {/* File count quota */}
           <div className="flex items-center gap-2 min-w-[240px]">
             <span className="text-muted-foreground/70 font-mono">Files:</span>
             <div className="flex-1 h-2 bg-muted/20 rounded-sm overflow-hidden border border-border/30">
-              <div
-                className={cn(
-                  "h-full transition-all",
-                  getQuotaColor(fileCountQuotaPercent)
-                )}
-                style={{ width: `${Math.min(fileCountQuotaPercent, 100)}%` }}
-              />
+              <div className={cn("h-full transition-all", getQuotaColor(fileCountQuotaPercent))}
+                   style={{ width: `${Math.min(fileCountQuotaPercent, 100)}%` }} />
             </div>
             <span className="font-mono text-muted-foreground/80 min-w-[110px]">
               {totalFiles.toLocaleString()} / {FILE_COUNT_QUOTA.toLocaleString()}
             </span>
-            <span className={cn(
-              "font-mono font-medium min-w-[42px] text-right",
-              getQuotaTextColor(fileCountQuotaPercent)
-            )}>
+            <span className={cn("font-mono font-medium min-w-[42px] text-right", getQuotaTextColor(fileCountQuotaPercent))}>
               ({fileCountQuotaPercent.toFixed(1)}%)
             </span>
           </div>
@@ -616,35 +550,20 @@ export function DiskUsageExplorerV2() {
       <div className="flex items-center gap-4 text-xs mb-3 pb-2 border-b border-border/20">
         <span className="text-muted-foreground">Sort:</span>
         <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="radio"
-            checked={state.sortMode === "name"}
-            onChange={() => setState((prev) => ({ ...prev, sortMode: "name" }))}
-            className="w-3 h-3"
-          />
+          <input type="radio" checked={state.sortMode === "name"} onChange={() => setState((prev) => ({ ...prev, sortMode: "name" }))} className="w-3 h-3" />
           <span>Name</span>
         </label>
         <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="radio"
-            checked={state.sortMode === "size"}
-            onChange={() => setState((prev) => ({ ...prev, sortMode: "size" }))}
-            className="w-3 h-3"
-          />
+          <input type="radio" checked={state.sortMode === "size"} onChange={() => setState((prev) => ({ ...prev, sortMode: "size" }))} className="w-3 h-3" />
           <span>Size</span>
         </label>
         <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="radio"
-            checked={state.sortMode === "modified"}
-            onChange={() => setState((prev) => ({ ...prev, sortMode: "modified" }))}
-            className="w-3 h-3"
-          />
+          <input type="radio" checked={state.sortMode === "modified"} onChange={() => setState((prev) => ({ ...prev, sortMode: "modified" }))} className="w-3 h-3" />
           <span>Modified</span>
         </label>
       </div>
 
-      {/* Info Panels - Above explorer, right-aligned */}
+      {/* Info Panels - RESTORED */}
       <div className="flex justify-end gap-3 mb-3">
         {/* Reference Directory Card */}
         <div className="w-[280px] bg-muted/20 border-2 border-green-500/40 rounded-md p-3">
@@ -653,7 +572,6 @@ export function DiskUsageExplorerV2() {
             <h4 className="text-xs font-semibold text-green-500/90">Reference</h4>
           </div>
 
-          {/* Metadata */}
           <div className="space-y-1.5 text-[10px] font-mono">
             <div className="flex justify-between items-start">
               <span className="text-muted-foreground/70">Path:</span>
@@ -694,7 +612,6 @@ export function DiskUsageExplorerV2() {
               <h4 className="text-xs font-semibold text-cyan-400/90">Item</h4>
             </div>
 
-            {/* Metadata */}
             <div className="space-y-1.5 text-[10px] font-mono">
               <div className="flex justify-between items-start">
                 <span className="text-muted-foreground/70">Path:</span>
@@ -713,10 +630,9 @@ export function DiskUsageExplorerV2() {
         )}
       </div>
 
-      {/* Legend - Compact */}
+      {/* Legend - RESTORED */}
       <div className="bg-muted/20 border border-border/40 rounded-sm px-3 py-2 mb-3">
         <div className="grid grid-cols-3 gap-4 text-[10px]">
-          {/* Section 1: Bar types */}
           <div className="flex flex-col">
             <div className="text-foreground/70 font-medium mb-1.5">Percentage Bars</div>
             <div className="space-y-1 mb-auto">
@@ -735,7 +651,6 @@ export function DiskUsageExplorerV2() {
             </div>
           </div>
 
-          {/* Section 2: Size colors */}
           <div className="flex flex-col">
             <div className="text-foreground/70 font-medium mb-1.5">Size Severity</div>
             <div className="space-y-0.5 mb-auto">
@@ -765,7 +680,6 @@ export function DiskUsageExplorerV2() {
             </div>
           </div>
 
-          {/* Section 3: Reference selector */}
           <div className="flex flex-col">
             <div className="text-foreground/70 font-medium mb-1.5">Reference Selection</div>
             <div className="flex items-center gap-1.5 mb-auto">
@@ -781,34 +695,31 @@ export function DiskUsageExplorerV2() {
 
       {/* Main Tree */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
-        {rootData ? (
-          <TreeNode
-            key={`/project/cil-${state.referencePath || 'default'}`}
-            path="/project/cil"
-            name="cil"
-            snapshotDate={selectedSnapshot}
-            level={0}
-            isDirectory={true}
-            size={projectSize}
-            sizeFormatted={`${(projectSize / 1024 ** 4).toFixed(2)} TiB`}
-            recursiveSize={projectSize}
-            recursiveSizeFormatted={`${(projectSize / 1024 ** 4).toFixed(2)} TiB`}
-            fileCount={undefined}
-            dirCount={undefined}
-            owner={undefined}
-            modifiedTime={undefined}
-            accessedTime={undefined}
-            fileType={undefined}
-            referenceSize={effectiveReferenceSize}
-            state={state}
-            setState={setState}
-            onSetReference={handleSetReference}
-            isInsideReference={true}
-            parentPath="/project"
-          />
-        ) : (
-          <div className="text-sm text-muted-foreground p-4">Loading...</div>
-        )}
+        <TreeNode
+          key={`/project/cil-${state.referencePath || 'default'}`}
+          path="/project/cil"
+          name="cil"
+          snapshotDate={selectedSnapshot}
+          level={0}
+          isDirectory={true}
+          size={projectSize}
+          sizeFormatted={projectSize ? `${(projectSize / 1024 ** 4).toFixed(2)} TiB` : "Loading..."}
+          recursiveSize={projectSize}
+          recursiveSizeFormatted={projectSize ? `${(projectSize / 1024 ** 4).toFixed(2)} TiB` : "Loading..."}
+          fileCount={undefined}
+          dirCount={undefined}
+          owner={undefined}
+          modifiedTime={undefined}
+          accessedTime={undefined}
+          fileType={undefined}
+          referenceSize={effectiveReferenceSize}
+          state={state}
+          setState={setState}
+          onSetReference={handleSetReference}
+          isInsideReference={true}
+          parentPath="/project"
+          onDataLoaded={handleRootDataLoaded}
+        />
       </div>
     </div>
   );

@@ -21,4 +21,6 @@ export interface VoronoiCacheEntry {
   path: string
   hierarchyData: any
   timestamp: number
+  width?: number   // Cached viewport width (for dimension-agnostic scaling)
+  height?: number  // Cached viewport height (for dimension-agnostic scaling)
 }

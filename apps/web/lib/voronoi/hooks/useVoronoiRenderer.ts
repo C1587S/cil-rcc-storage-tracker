@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
 import { type PartitionInfo, type VoronoiCacheEntry } from '@/lib/voronoi/utils/types'
 import { VoronoiRenderer } from '@/lib/voronoi/rendering/VoronoiRenderer'
@@ -64,6 +64,40 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
   const rendererRef = useRef<VoronoiRenderer | null>(null)
   const [isRendering, setIsRendering] = useState(false)
 
+  // OPTIMIZATION: Memoize stable renderer options to reduce effect re-runs
+  // Only re-create when actual values change, not on every parent re-render
+  const rendererOptions = useMemo(() => ({
+    svgRef,
+    containerRef,
+    tooltipRef,
+    voronoiCacheRef,
+    zoomRef,
+    isFullscreen,
+    getPartitionQuotaPercent,
+    getFileQuotaPercent,
+    getParentQuotaPercent,
+    parentSize,
+    selectedPartition,
+    setHoveredPartition,
+    handleInspect,
+    performDrillDown,
+  }), [
+    svgRef,
+    containerRef,
+    tooltipRef,
+    voronoiCacheRef,
+    zoomRef,
+    isFullscreen,
+    getPartitionQuotaPercent,
+    getFileQuotaPercent,
+    getParentQuotaPercent,
+    parentSize,
+    selectedPartition,
+    setHoveredPartition,
+    handleInspect,
+    performDrillDown,
+  ])
+
   useEffect(() => {
     console.log('[useVoronoiRenderer] useEffect triggered:', {
       hasData: !!data,
@@ -93,22 +127,9 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
       rendererRef.current.cleanup()
     }
 
-    // Create new renderer
+    // Create new renderer with memoized options
     const renderer = new VoronoiRenderer({
-      svgRef,
-      containerRef,
-      tooltipRef,
-      voronoiCacheRef,
-      zoomRef,
-      isFullscreen,
-      getPartitionQuotaPercent,
-      getFileQuotaPercent,
-      getParentQuotaPercent,
-      parentSize,
-      selectedPartition,
-      setHoveredPartition,
-      handleInspect,
-      performDrillDown,
+      ...rendererOptions,
       onRenderComplete: () => setIsRendering(false)
     })
 
@@ -131,21 +152,9 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
     effectivePath,
     isFullscreen,
     isExpanded,
-    performDrillDown,
-    handleInspect,
-    getPartitionQuotaPercent,
-    getFileQuotaPercent,
-    getParentQuotaPercent,
-    parentSize,
-    selectedPartition,
     navigationLock,
     isFetching,
-    setHoveredPartition,
-    zoomRef,
-    svgRef,
-    containerRef,
-    tooltipRef,
-    voronoiCacheRef,
+    rendererOptions,
     simulationRef
   ])
 

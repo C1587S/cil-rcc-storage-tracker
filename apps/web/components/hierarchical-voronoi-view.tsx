@@ -250,7 +250,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
             <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex items-center gap-3 animate-pulse">
               <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-              <div className="text-cyan-400 font-bold">{navigationLock ? 'Navigating...' : 'Loading...'}</div>
+              <div className="text-cyan-400 font-bold">{navigationLock ? 'Loading...' : 'Loading...'}</div>
             </div>
           </div>
         )}
