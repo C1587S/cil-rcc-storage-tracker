@@ -1,10 +1,57 @@
+# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+clickhouse/.venv/
+clickhouse/venv/
+apps/api/venv/
+apps/api/.venv/
+.venv/
+venv/
+ENV/
+
 # ClickHouse runtime stuff
 clickhouse/data/
 clickhouse/cil_scans_aggregated/
-clickhouse/.venv/
+
+# Node.js
+apps/web/node_modules/
+apps/web/.next/
+apps/web/out/
+node_modules/
+
+# Rust
+scanner/target/
+**/target/
+*.rs.bk
+Cargo.lock
 
 # IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
 
 # Generated stuff
 reports/
+snapshots/
+extensions.txt
+
+# OS
+.DS_Store
+Thumbs.db

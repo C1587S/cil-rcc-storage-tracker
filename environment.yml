@@ -1,0 +1,62 @@
+name: storage_scanner
+channels:
+  - conda-forge
+  - defaults
+
+# Set the installation prefix (optional, comment out for default location)
+# For RCC environment, uncomment and use:
+# prefix: /project/cil/home_dirs/rcc/envs/storage_scanner
+
+dependencies:
+  # Python runtime
+  - python=3.11
+
+  # Rust toolchain for building the scanner
+  - rust=1.81
+
+  # Build essentials
+  - gcc
+  - make
+  - pkg-config
+
+  # Backend dependencies (FastAPI and server)
+  - fastapi=0.109.0
+  - uvicorn=0.27.0
+  - python-multipart=0.0.6
+
+  # Data processing and database
+  - polars=0.20.3
+  - pyarrow=15.0.0
+  - numpy<2.0.0
+  - clickhouse-driver=0.2.7
+
+  # Configuration and validation
+  - pydantic=2.5.3
+  - pydantic-settings=2.1.0
+  - python-dotenv=1.0.0
+
+  # Date/time handling
+  - python-dateutil=2.8.2
+
+  # HTTP client
+  - httpx=0.26.0
+
+  # Logging
+  - structlog=24.1.0
+
+  # Visualization (for reports)
+  - matplotlib>=3.8.0
+  - seaborn>=0.13.0
+
+  # Markdown processing (for reports)
+  - markdown>=3.5.0
+
+  # Development and testing tools (optional, comment out if not needed)
+  - pytest
+  - pytest-cov
+  - black
+  - ruff
+  - mypy
+
+  # Pip-only dependencies (if needed)
+  - pip
