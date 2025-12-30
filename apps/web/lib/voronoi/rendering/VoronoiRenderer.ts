@@ -9,9 +9,6 @@ import { BubbleLayer } from './layers/BubbleLayer'
 import { LabelLayer } from './layers/LabelLayer'
 import { InteractionLayer } from './layers/InteractionLayer'
 
-/**
- * Options for configuring the VoronoiRenderer
- */
 export interface VoronoiRendererOptions {
   svgRef: React.RefObject<SVGSVGElement>
   containerRef: React.RefObject<HTMLDivElement>
@@ -19,6 +16,8 @@ export interface VoronoiRendererOptions {
   voronoiCacheRef: React.RefObject<Map<string, VoronoiCacheEntry>>
   zoomRef: React.MutableRefObject<any>
   isFullscreen: boolean
+  highlightColor: string
+  theme: 'dark' | 'light'
   getPartitionQuotaPercent: (size: number) => number
   getFileQuotaPercent: (fileCount: number) => number
   getParentQuotaPercent: (size: number) => number
@@ -30,11 +29,6 @@ export interface VoronoiRendererOptions {
   onRenderComplete?: () => void
 }
 
-/**
- * Orchestrates the rendering of voronoi treemap visualization.
- * Manages multiple rendering layers (background, preview, bubbles, labels, interaction)
- * and handles the complete rendering pipeline from data computation to SVG output.
- */
 export class VoronoiRenderer {
   private options: VoronoiRendererOptions
   private computer: VoronoiComputer | null = null
@@ -45,106 +39,85 @@ export class VoronoiRenderer {
     this.options = options
   }
 
-  /**
-   * Main render method - orchestrates the entire rendering pipeline
-   *
-   * @param data - The hierarchical voronoi data to render
-   * @param effectivePath - Current path being visualized
-   */
   render(data: VoronoiNode, effectivePath: string): void {
-    const { svgRef, containerRef, voronoiCacheRef, isFullscreen } = this.options
+    const { svgRef, containerRef, voronoiCacheRef } = this.options
 
     if (!svgRef.current || !containerRef.current || !voronoiCacheRef.current) {
-      console.log('[VoronoiRenderer] render() - refs not ready')
       return
     }
 
-    // Log initial state
-    const initialWidth = containerRef.current.clientWidth
-    const initialHeight = containerRef.current.clientHeight
-    console.log('[VoronoiRenderer] render() called:', {
-      effectivePath,
-      isFullscreen,
-      initialWidth,
-      initialHeight,
-      containerElement: containerRef.current
-    })
+    const container = containerRef.current
+    const width = container.clientWidth
+    const height = container.clientHeight
 
-    // OPTIMIZED: Reduced delay from 320ms to 50ms for faster perceived performance
-    // Just enough time for layout to stabilize without waiting for full CSS transition
-    setTimeout(() => {
-      if (!svgRef.current || !containerRef.current || !voronoiCacheRef.current) {
-        console.log('[VoronoiRenderer] setTimeout - refs not ready')
-        return
-      }
+    if (this.simulation) {
+      this.simulation.stop()
+      this.simulation = null
+    }
 
-      // Stop previous simulation
-      if (this.simulation) {
-        this.simulation.stop()
-        this.simulation = null
-      }
-
-      // Calculate dimensions (after transition complete)
-      const container = containerRef.current
-      const width = container.clientWidth
-      const height = container.clientHeight
-
-      console.log('[VoronoiRenderer] setTimeout - dimensions after wait:', {
-        width,
-        height,
-        isFullscreen,
-        windowHeight: window.innerHeight,
-        containerClientWidth: container.clientWidth,
-        containerClientHeight: container.clientHeight,
-        containerOffsetWidth: container.offsetWidth,
-        containerOffsetHeight: container.offsetHeight,
-        containerBoundingRect: container.getBoundingClientRect()
-      })
-
-      if (width === 0) {
-        console.warn('[VoronoiRenderer] setTimeout - width is 0, skipping render')
-        return
-      }
-
-      this.renderInternal(data, effectivePath, width, height)
-    }, 50) // OPTIMIZED: Reduced from 320ms - layout stabilization only
+    this.renderInternal(data, effectivePath, width, height)
   }
 
-  /**
-   * Internal render method with calculated dimensions
-   */
   private renderInternal(data: VoronoiNode, effectivePath: string, width: number, height: number): void {
     const { svgRef, voronoiCacheRef, zoomRef, isFullscreen } = this.options
 
-    if (!svgRef.current || !voronoiCacheRef.current) return
+    // 1. SAFETY CHECK: Abortar si no hay dimensiones válidas.
+    // Esto es crucial para evitar el "letterboxing" negro o errores de cálculo.
+    if (!svgRef.current || !voronoiCacheRef.current || width === 0 || height === 0) return
 
-    // Setup SVG
     const svg = d3.select(svgRef.current)
-    svg.selectAll('*').remove()
-    svg.attr('width', width)
-      .attr('height', height)
-      .style('background', TERMINAL_COLORS.background)
 
-    // Create layer groups
+    // 🔥 LIMPIEZA NUCLEAR: Resetear todo estado previo de D3
+    svg.selectAll('*').remove()
+    svg.attr('viewBox', null)
+    
+    // TRUCO CRÍTICO: Eliminar la propiedad interna __zoom de D3 del nodo DOM.
+    // Si no se hace esto, al cambiar el tamaño del contenedor, el zoom antiguo se aplica
+    // al nuevo tamaño, causando que el gráfico se vea desplazado o gigante.
+    if ((svgRef.current as any).__zoom) {
+        delete (svgRef.current as any).__zoom;
+    }
+
+    // 2. FORZAR ESTILOS CSS
+    // Aseguramos que el SVG ocupe exactamente el espacio disponible
+    svg.attr('width', width)
+       .attr('height', height)
+       .style('width', '100%')
+       .style('height', '100%')
+       .style('display', 'block') // Evita el "gap" inferior de los elementos inline
+       .style('background', TERMINAL_COLORS.background)
+
     const defs = svg.append('defs')
+    
+    // Crear el grupo raíz
     const gRoot = svg.append('g').attr('id', 'voronoi-root')
+    
+    // Resetear transformación explícitamente
+    gRoot.attr('transform', 'translate(0,0) scale(1)')
+
+    // Crear capas (Orden de apilamiento importa - labels deben estar encima de interaction para permitir hover)
     const gBackgrounds = gRoot.append('g').attr('class', 'layer-backgrounds')
     const gPreview = gRoot.append('g').attr('class', 'layer-preview')
     const gBubbles = gRoot.append('g').attr('class', 'layer-bubbles')
-    const gLabels = gRoot.append('g').attr('class', 'layer-labels')
     const gInteraction = gRoot.append('g').attr('class', 'layer-interaction')
+    const gLabels = gRoot.append('g').attr('class', 'layer-labels')
 
-    // Setup zoom
+    // Configurar comportamiento de Zoom
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([1, 10])
       .translateExtent([[0, 0], [width, height]])
       .extent([[0, 0], [width, height]])
-      .on('zoom', (event) => gRoot.attr('transform', event.transform))
+      .on('zoom', (event) => {
+          gRoot.attr('transform', event.transform)
+      })
 
     svg.call(zoom)
+    // Reiniciar el zoom a la identidad (0,0 scale 1) en cada render limpio
+    svg.call(zoom.transform, d3.zoomIdentity)
+
     zoomRef.current = zoom
 
-    // Compute voronoi hierarchy
+    // Compute Voronoi geometry
     this.computer = new VoronoiComputer(voronoiCacheRef.current)
     const { allNodes, topLevelNodes, previewNodes } = this.computer.compute(
       data,
@@ -153,10 +126,9 @@ export class VoronoiRenderer {
       height
     )
 
-    // Create clip paths
     this.createClipPaths(defs, allNodes)
 
-    // Render all layers in order
+    // Render layers
     const backgroundLayer = new BackgroundLayer({ gBackgrounds, topLevelNodes })
     backgroundLayer.render(topLevelNodes)
 
@@ -166,10 +138,11 @@ export class VoronoiRenderer {
     this.bubbleLayer = new BubbleLayer({
       gBubbles,
       topLevelNodes,
-      tooltipRef: this.options.tooltipRef
+      tooltipRef: this.options.tooltipRef,
+      highlightColor: this.options.highlightColor,
+      theme: this.options.theme
     })
-    // Render bubbles for BOTH top-level AND preview nodes
-    // This ensures bubbles are visible in preview partitions before clicking
+
     const nodesForBubbles = [...topLevelNodes, ...previewNodes]
     this.simulation = this.bubbleLayer.render(nodesForBubbles)
 
@@ -180,6 +153,7 @@ export class VoronoiRenderer {
       gInteraction,
       gBackgrounds,
       topLevelNodes,
+      highlightColor: this.options.highlightColor,
       getPartitionQuotaPercent: this.options.getPartitionQuotaPercent,
       getFileQuotaPercent: this.options.getFileQuotaPercent,
       getParentQuotaPercent: this.options.getParentQuotaPercent,
@@ -191,7 +165,6 @@ export class VoronoiRenderer {
     })
     interactionLayer.render(topLevelNodes)
 
-    // Notify that rendering is complete
     if (this.options.onRenderComplete) {
       this.options.onRenderComplete()
     }
@@ -209,9 +182,6 @@ export class VoronoiRenderer {
     })
   }
 
-  /**
-   * Cleanup method - stops physics simulations and releases resources
-   */
   cleanup(): void {
     if (this.bubbleLayer) {
       this.bubbleLayer.stop()
@@ -223,11 +193,6 @@ export class VoronoiRenderer {
     }
   }
 
-  /**
-   * Returns the current D3 physics simulation instance
-   *
-   * @returns The active simulation or null if not initialized
-   */
   getSimulation(): d3.Simulation<any, undefined> | null {
     return this.simulation
   }

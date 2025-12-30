@@ -4,6 +4,7 @@
 
 @layer base {
   :root {
+    /* Dark mode colors (default) */
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
     --card: 222.2 84% 4.9%;
@@ -24,6 +25,29 @@
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
     --radius: 0.3rem;
+  }
+
+  .light {
+    /* Light mode colors - Nord Theme inspired, hacker elegante */
+    --background: 220 16% 94%;
+    --foreground: 220 16% 22%;
+    --card: 220 27% 98%;
+    --card-foreground: 220 16% 22%;
+    --popover: 220 27% 98%;
+    --popover-foreground: 220 16% 22%;
+    --primary: 213 32% 52%;
+    --primary-foreground: 220 27% 98%;
+    --secondary: 220 16% 88%;
+    --secondary-foreground: 220 16% 22%;
+    --muted: 220 13% 91%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 179 25% 65%;
+    --accent-foreground: 220 16% 22%;
+    --destructive: 354 42% 56%;
+    --destructive-foreground: 220 27% 98%;
+    --border: 220 13% 82%;
+    --input: 220 13% 91%;
+    --ring: 213 32% 52%;
   }
 }
 

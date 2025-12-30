@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # CORS settings (comma-separated string)
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
 
+    # Snapshots directory for voronoi artifacts
+    snapshots_dir: str = "/app/snapshots"
+
     def get_cors_origins_list(self) -> list[str]:
         """Get CORS origins as a list from comma-separated string."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

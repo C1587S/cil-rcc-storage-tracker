@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
 import { type PartitionInfo, type VoronoiCacheEntry } from '@/lib/voronoi/utils/types'
 import { VoronoiRenderer } from '@/lib/voronoi/rendering/VoronoiRenderer'
@@ -13,6 +13,12 @@ export interface UseVoronoiRendererOptions {
   isExpanded: boolean
   navigationLock: boolean
   isFetching: boolean
+  highlightColor: string
+  theme: 'dark' | 'light'
+  // 🔥 NUEVO: Trigger explícito para forzar re-render desde el padre
+  // Esto es vital para sincronizar con transiciones de Portals/Tabs
+  layoutTrigger?: number
+
   svgRef: React.RefObject<SVGSVGElement>
   containerRef: React.RefObject<HTMLDivElement>
   tooltipRef: React.RefObject<HTMLDivElement>
@@ -45,6 +51,9 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
     isExpanded,
     navigationLock,
     isFetching,
+    highlightColor,
+    theme,
+    layoutTrigger = 0, // Default a 0
     svgRef,
     containerRef,
     tooltipRef,
@@ -63,84 +72,128 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
 
   const rendererRef = useRef<VoronoiRenderer | null>(null)
   const [isRendering, setIsRendering] = useState(false)
+  const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 })
 
-  // OPTIMIZATION: Memoize stable renderer options to reduce effect re-runs
-  // Only re-create when actual values change, not on every parent re-render
-  const rendererOptions = useMemo(() => ({
-    svgRef,
-    containerRef,
-    tooltipRef,
-    voronoiCacheRef,
-    zoomRef,
-    isFullscreen,
+  // 1. CALLBACK STABILITY
+  // Store callbacks in refs to prevent infinite re-renders.
+  const callbacksRef = useRef({
     getPartitionQuotaPercent,
     getFileQuotaPercent,
     getParentQuotaPercent,
-    parentSize,
-    selectedPartition,
     setHoveredPartition,
     handleInspect,
-    performDrillDown,
-  }), [
-    svgRef,
-    containerRef,
-    tooltipRef,
-    voronoiCacheRef,
-    zoomRef,
-    isFullscreen,
-    getPartitionQuotaPercent,
-    getFileQuotaPercent,
-    getParentQuotaPercent,
-    parentSize,
-    selectedPartition,
-    setHoveredPartition,
-    handleInspect,
-    performDrillDown,
-  ])
+    performDrillDown
+  })
 
+  // Update refs on every render
   useEffect(() => {
-    console.log('[useVoronoiRenderer] useEffect triggered:', {
-      hasData: !!data,
-      effectivePath,
-      isFullscreen,
-      isExpanded,
-      navigationLock,
-      isFetching,
-      hasSvgRef: !!svgRef.current,
-      hasContainerRef: !!containerRef.current
+    callbacksRef.current = {
+      getPartitionQuotaPercent,
+      getFileQuotaPercent,
+      getParentQuotaPercent,
+      setHoveredPartition,
+      handleInspect,
+      performDrillDown
+    }
+  })
+
+  // 2. DIMENSION OBSERVING (Interno del Hook)
+  // Mantiene sincronizado el estado interno de dimensiones con el DOM real.
+  useEffect(() => {
+    if (!containerRef.current) return
+
+    let animationFrameId: number;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0) return;
+
+      const entry = entries[0];
+      const { width, height } = entry.contentRect;
+
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = requestAnimationFrame(() => {
+        setContainerDimensions(prev => {
+          // Solo actualizamos si el cambio es significativo (> 1px) para evitar loops
+          if (Math.abs(prev.width - width) > 1 || Math.abs(prev.height - height) > 1) {
+            return { width, height }
+          }
+          return prev
+        })
+      });
     })
 
+    resizeObserver.observe(containerRef.current)
+
+    return () => {
+      resizeObserver.disconnect()
+      cancelAnimationFrame(animationFrameId)
+    }
+  }, [containerRef, isExpanded, isFullscreen]) // Re-conectar si cambia el modo de vista
+
+  // 3. MAIN RENDER EFFECT
+  // This is the brain that decides when to render
+  useEffect(() => {
+    // 3a. Safety Checks
+    // Note: Even if containerDimensions is 0, if layoutTrigger changes, we want to try reading the ref
     if (!data || !svgRef.current || !containerRef.current) {
-      console.log('[useVoronoiRenderer] Early return - missing data or refs')
+      setIsRendering(false)
       return
     }
+    
+    // Prevent rendering if locked
     if (navigationLock && isFetching) {
-      console.log('[useVoronoiRenderer] Early return - navigation locked and fetching')
       return
     }
 
-    // Set rendering state
+    // Read dimensions directly from ref if state hasn't updated yet (race condition mitigation)
+    const domWidth = containerRef.current.clientWidth
+    const domHeight = containerRef.current.clientHeight
+
+    // If real DOM is 0 (e.g. before Portal mount), abort
+    if (domWidth === 0 || domHeight === 0) return
+
+    console.log('[RENDER] Syncing Voronoi:', {
+      trigger: layoutTrigger,
+      domSize: `${domWidth}x${domHeight}`,
+      path: effectivePath
+    })
+
     setIsRendering(true)
 
-    // Cleanup previous renderer
+    // 3b. Cleanup previous instance
     if (rendererRef.current) {
       rendererRef.current.cleanup()
     }
 
-    // Create new renderer with memoized options
+    // 3c. Instantiate Renderer
     const renderer = new VoronoiRenderer({
-      ...rendererOptions,
+      svgRef,
+      containerRef,
+      tooltipRef,
+      voronoiCacheRef,
+      zoomRef,
+      isFullscreen,
+      highlightColor,
+      theme,
+      parentSize,
+      selectedPartition,
+      getPartitionQuotaPercent: (s) => callbacksRef.current.getPartitionQuotaPercent(s),
+      getFileQuotaPercent: (c) => callbacksRef.current.getFileQuotaPercent(c),
+      getParentQuotaPercent: (s) => callbacksRef.current.getParentQuotaPercent(s),
+      setHoveredPartition: (i) => callbacksRef.current.setHoveredPartition(i),
+      handleInspect: (i) => callbacksRef.current.handleInspect(i),
+      performDrillDown: (p) => callbacksRef.current.performDrillDown(p),
       onRenderComplete: () => setIsRendering(false)
     })
 
-    // Render
+    // 3d. Execute Render
     renderer.render(data, effectivePath)
 
-    // Store simulation
+    // 3e. Store References
     simulationRef.current = renderer.getSimulation()
     rendererRef.current = renderer
 
-    // Cleanup on unmount
+    // 3f. Cleanup on unmount/re-run
     return () => {
       if (rendererRef.current) {
         rendererRef.current.cleanup()
@@ -148,13 +201,30 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
       }
     }
   }, [
+    // Dependencias Críticas
     data,
     effectivePath,
+    layoutTrigger, // <--- AL CAMBIAR ESTO, FORZAMOS RENDER INMEDIATO
+    highlightColor, // Re-render when highlight color changes
+
+    // Dimensiones detectadas por el Observer
+    containerDimensions.width,
+    containerDimensions.height,
+
+    // UI States
     isFullscreen,
     isExpanded,
+    parentSize,
+    selectedPartition,
     navigationLock,
     isFetching,
-    rendererOptions,
+    
+    // Refs
+    svgRef,
+    containerRef,
+    tooltipRef,
+    voronoiCacheRef,
+    zoomRef,
     simulationRef
   ])
 

@@ -21,11 +21,9 @@ export class LabelLayer {
   }
 
   render(topLevelNodes: d3.HierarchyNode<any>[]): void {
-    // Scale font size based on viewport width
-    // Base width (1278px) uses max font size of 13px
-    // In fullscreen mode, reduce font size by 20% for better visual fit
+    // Smaller base font size for cleaner look
     const baseWidth = 1278
-    const baseFontSizeMax = 13
+    const baseFontSizeMax = 10  // Reduced from 13 to 10
     const fullscreenReduction = this.isFullscreen ? 0.8 : 1.0
     const fontSizeScale = Math.max(1, this.viewportWidth / baseWidth)
     const maxFontSize = baseFontSizeMax * fontSizeScale * fullscreenReduction
@@ -38,9 +36,9 @@ export class LabelLayer {
       const bounds = getPolygonBounds(poly)
       if (bounds.width > 30 && bounds.height > 20) {
         const centroid = d3.polygonCentroid(poly)
-        const displayName = node.isSynthetic
-          ? `${node.file_count} files`
-          : (node.name.length > 20 ? node.name.slice(0, 17) + '...' : node.name)
+        const fullName = node.isSynthetic ? `${node.file_count} files` : node.name
+        const isTruncated = !node.isSynthetic && node.name.length > 20
+        const displayName = isTruncated ? node.name.slice(0, 17) + '...' : fullName
         const fontSize = Math.min(maxFontSize, Math.max(7, bounds.width / displayName.length * 1.2 * fontSizeScale))
 
         // Calculate text bounding box for background
@@ -72,7 +70,7 @@ export class LabelLayer {
           .style('pointer-events', 'none')
           .text(displayName)
 
-        // Main text with stroke outline
+        // Main text with stroke outline and hover effects
         this.gLabels.append('text')
           .attr('x', centroid[0])
           .attr('y', centroid[1])
@@ -84,10 +82,68 @@ export class LabelLayer {
           .attr('font-size', fontSize)
           .attr('font-weight', '600')
           .attr('font-family', 'monospace')
-          .style('pointer-events', 'none')
+          .attr('data-base-size', fontSize)  // Store base font size
+          .attr('data-full-name', fullName)  // Store full name for hover
+          .attr('data-is-truncated', isTruncated ? 'true' : 'false')  // Store truncation state
+          .style('pointer-events', 'all')  // Enable hover
+          .style('cursor', 'pointer')
           .style('paint-order', 'stroke fill')
-          .style('filter', 'drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))')  // Additional drop shadow
+          .style('filter', 'drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))')
+          .style('transition', 'all 0.2s ease')
           .text(displayName)
+          .on('mouseenter', function(event: MouseEvent) {
+            const baseSize = parseFloat(d3.select(this).attr('data-base-size'))
+            const fullNameAttr = d3.select(this).attr('data-full-name')
+            const isTrunc = d3.select(this).attr('data-is-truncated') === 'true'
+
+            // Trigger partition highlight by simulating mouseenter on interaction overlay
+            const overlayPath = `.voronoi-interaction-overlay[data-path="${node.path}"]`
+            const overlay = d3.select(overlayPath).node() as Element | null
+            if (overlay) {
+              const syntheticEvent = new MouseEvent('mouseenter', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                relatedTarget: event.target as Element
+              })
+              overlay.dispatchEvent(syntheticEvent)
+            }
+
+            d3.select(this)
+              .attr('font-size', baseSize * 1.2)  // Grow 20%
+              .attr('text-decoration', 'underline')
+              .style('filter', 'drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.5))')
+
+            // Show full name if truncated
+            if (isTrunc && fullNameAttr) {
+              d3.select(this).text(fullNameAttr)
+            }
+          })
+          .on('mouseleave', function(event: MouseEvent) {
+            const baseSize = parseFloat(d3.select(this).attr('data-base-size'))
+            const isTrunc = d3.select(this).attr('data-is-truncated') === 'true'
+            const fullNameAttr = d3.select(this).attr('data-full-name')
+            const displayNameStored = isTrunc && fullNameAttr ? fullNameAttr.slice(0, 17) + '...' : fullNameAttr
+
+            // Trigger partition un-highlight
+            const overlayPath = `.voronoi-interaction-overlay[data-path="${node.path}"]`
+            const overlay = d3.select(overlayPath).node() as Element | null
+            if (overlay) {
+              const syntheticEvent = new MouseEvent('mouseleave', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                relatedTarget: event.target as Element
+              })
+              overlay.dispatchEvent(syntheticEvent)
+            }
+
+            d3.select(this)
+              .attr('font-size', baseSize)
+              .attr('text-decoration', 'none')
+              .style('filter', 'drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))')
+              .text(displayNameStored || '')  // Restore truncated version
+          })
       }
     })
   }

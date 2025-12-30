@@ -490,17 +490,31 @@ export function DiskUsageExplorerV2() {
       {/* Header with quota indicators */}
       <div className="border-b border-border/50 pb-3 mb-3">
         <div className="flex items-center justify-between mb-2">
-          <div>
-            <h3 className="text-sm font-semibold">Disk Usage Explorer</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {selectedSnapshot}
-              {state.referencePath && (
-                <span className="ml-2 text-green-500/70">
-                  · ref: {state.referencePath.split('/').pop()}
-                </span>
-              )}
-            </p>
-          </div>
+          {!isFullscreen && (
+            <div>
+              <h3 className="text-sm font-semibold">Disk Usage Explorer</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {selectedSnapshot}
+                {state.referencePath && (
+                  <span className="ml-2 text-green-500/70">
+                    · ref: {state.referencePath.split('/').pop()}
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
+          {isFullscreen && (
+            <div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {selectedSnapshot}
+                {state.referencePath && (
+                  <span className="ml-2 text-green-500/70">
+                    · ref: {state.referencePath.split('/').pop()}
+                  </span>
+                )}
+              </p>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             {!isFullscreen && (
               <Button variant="outline" size="sm" onClick={() => setIsFullscreen(true)} className="gap-1.5 h-7">
@@ -687,7 +701,7 @@ export function DiskUsageExplorerV2() {
               <span className="text-muted-foreground/70">Click to set reference</span>
             </div>
             <div className="mt-2 text-[9px] text-muted-foreground/60 leading-tight">
-              Select any folder as baseline. Selected reference highlighted in green.
+              Percentages show how much of the selected folder's total size each child occupies. Reference highlighted in green.
             </div>
           </div>
         </div>

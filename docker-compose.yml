@@ -1,0 +1,259 @@
+services:
+  # ClickHouse Database
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1
+    container_name: tracker-clickhouse
+    hostname: clickhouse
+
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # Native protocol
+      - "9009:9009"  # Inter-server communication
+
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+
+    environment:
+      CLICKHOUSE_DB: filesystem
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    restart: unless-stopped
+
+    networks:
+      - tracker-network
+
+  # Database initialization
+  clickhouse-init:
+    image: python:3.11-slim
+    container_name: tracker-clickhouse-init
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - |
+        pip install -q clickhouse-driver
+        python3 << 'PYEOF'
+        import time
+        from clickhouse_driver import Client
+
+        print('Waiting for ClickHouse...')
+        client = Client(host='clickhouse')
+        for i in range(30):
+            try:
+                client.execute('SELECT 1')
+                break
+            except:
+                time.sleep(2)
+
+        print('Checking if database exists...')
+        result = client.execute("SELECT name FROM system.databases WHERE name = 'filesystem'")
+
+        if not result:
+            print('Creating database and tables...')
+            client.execute('CREATE DATABASE filesystem')
+
+            client.execute('''CREATE TABLE filesystem.entries (
+                snapshot_date Date,
+                path String,
+                parent_path String,
+                name String,
+                depth UInt16,
+                top_level_dir String,
+                size UInt64,
+                file_type String,
+                is_directory UInt8,
+                modified_time UInt32,
+                accessed_time UInt32,
+                created_time UInt32,
+                inode UInt64,
+                permissions UInt16,
+                owner String,
+                group_name String,
+                uid UInt32,
+                gid UInt32,
+                import_time DateTime DEFAULT now(),
+                INDEX idx_path path TYPE bloom_filter(0.01) GRANULARITY 1,
+                INDEX idx_parent parent_path TYPE bloom_filter(0.01) GRANULARITY 1,
+                INDEX idx_file_type file_type TYPE set(100) GRANULARITY 4,
+                INDEX idx_owner owner TYPE set(0) GRANULARITY 4,
+                INDEX idx_top_level top_level_dir TYPE set(50) GRANULARITY 4
+            ) ENGINE = MergeTree() PARTITION BY toYYYYMM(snapshot_date) PRIMARY KEY (snapshot_date, parent_path, path) ORDER BY (snapshot_date, parent_path, path)''')
+
+            # Create materialized views
+            client.execute('''CREATE MATERIALIZED VIEW filesystem.directory_sizes
+                ENGINE = SummingMergeTree() PARTITION BY toYYYYMM(snapshot_date) ORDER BY (snapshot_date, path) POPULATE AS
+                SELECT snapshot_date, parent_path AS path, sum(size) AS total_size, count() AS entry_count,
+                sumIf(1, is_directory = 1) AS dir_count, sumIf(1, is_directory = 0) AS file_count
+                FROM filesystem.entries GROUP BY snapshot_date, parent_path''')
+
+            client.execute('''CREATE MATERIALIZED VIEW filesystem.directory_hierarchy
+                ENGINE = ReplacingMergeTree() PARTITION BY toYYYYMM(snapshot_date) ORDER BY (snapshot_date, parent_path, name) POPULATE AS
+                SELECT snapshot_date, parent_path, name, path AS child_path, is_directory, size AS total_size,
+                1 AS file_count, modified_time AS last_modified FROM filesystem.entries''')
+
+            client.execute('''CREATE MATERIALIZED VIEW filesystem.file_type_distribution
+                ENGINE = SummingMergeTree() PARTITION BY toYYYYMM(snapshot_date) ORDER BY (snapshot_date, file_type) POPULATE AS
+                SELECT snapshot_date, file_type, count() AS file_count, sum(size) AS total_size,
+                avg(size) AS avg_size, max(size) AS max_size FROM filesystem.entries WHERE is_directory = 0
+                GROUP BY snapshot_date, file_type''')
+
+            client.execute('''CREATE MATERIALIZED VIEW filesystem.owner_distribution
+                ENGINE = SummingMergeTree() PARTITION BY toYYYYMM(snapshot_date) ORDER BY (snapshot_date, owner) POPULATE AS
+                SELECT snapshot_date, owner, count() AS file_count, sum(size) AS total_size,
+                sumIf(1, is_directory = 1) AS dir_count, sumIf(1, is_directory = 0) AS file_only_count
+                FROM filesystem.entries GROUP BY snapshot_date, owner''')
+
+            client.execute('''CREATE TABLE filesystem.directory_recursive_sizes (
+                snapshot_date Date,
+                path String,
+                depth UInt16,
+                top_level_dir String,
+                recursive_size_bytes UInt64,
+                recursive_file_count UInt64,
+                recursive_dir_count UInt64,
+                direct_size_bytes UInt64,
+                direct_file_count UInt64,
+                last_modified UInt32,
+                last_accessed UInt32,
+                INDEX idx_path path TYPE bloom_filter(0.01) GRANULARITY 1,
+                INDEX idx_top_level top_level_dir TYPE set(50) GRANULARITY 4
+            ) ENGINE = MergeTree() PARTITION BY toYYYYMM(snapshot_date) PRIMARY KEY (snapshot_date, path) ORDER BY (snapshot_date, path)''')
+
+            client.execute('''CREATE TABLE filesystem.voronoi_precomputed (
+                snapshot_date Date,
+                node_id String,
+                parent_id String,
+                path String,
+                name String,
+                size UInt64,
+                depth UInt32,
+                is_directory UInt8,
+                file_count Nullable(UInt32),
+                children_json String,
+                is_synthetic UInt8 DEFAULT 0,
+                original_files_json String DEFAULT '',
+                created_at DateTime DEFAULT now()
+            ) ENGINE = MergeTree() ORDER BY (snapshot_date, node_id)''')
+
+            client.execute('''CREATE TABLE filesystem.snapshots (
+                snapshot_date Date, scan_started DateTime, scan_completed DateTime,
+                total_entries UInt64, total_size UInt64, total_directories UInt64,
+                total_files UInt64, top_level_dirs Array(String), scanner_version String,
+                import_time DateTime DEFAULT now(), import_duration_seconds Float32
+            ) ENGINE = MergeTree() ORDER BY snapshot_date SETTINGS index_granularity = 1''')
+
+            print('Database initialized successfully!')
+        else:
+            print('Database already exists, skipping initialization.')
+        PYEOF
+    networks:
+      - tracker-network
+    restart: "no"
+
+  # Snapshot importer (run manually)
+  importer:
+    build:
+      context: ./clickhouse
+      dockerfile: Dockerfile
+    container_name: tracker-importer
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DATABASE: filesystem
+    volumes:
+      # Mount the cil_scans directory (adjust path as needed)
+      # :z for SELinux relabeling on Fedora/RHEL
+      - ./cil_scans:/scans:z
+    networks:
+      - tracker-network
+    profiles:
+      - tools
+
+  # Backend API
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: tracker-api
+    hostname: api
+
+    ports:
+      - "8000:8000"
+
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DATABASE: filesystem
+      MAX_EXECUTION_TIME: 20
+      MAX_RESULT_ROWS: 5000
+      MAX_RESULT_BYTES: 50000000
+      CORS_ORIGINS: http://localhost:3000,http://localhost:3001
+
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    networks:
+      - tracker-network
+
+    volumes:
+      # Mount snapshots directory for voronoi artifacts
+      - ./snapshots:/app/snapshots
+
+  # Frontend Web Application
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: tracker-web
+    hostname: web
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      # API URL for server-side rewrites
+      API_URL: http://api:8000
+      # Public API URL for client-side requests (optional)
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+
+    depends_on:
+      - api
+
+    restart: unless-stopped
+
+    networks:
+      - tracker-network
+
+volumes:
+  clickhouse-data:
+    driver: local
+
+networks:
+  tracker-network:
+    driver: bridge

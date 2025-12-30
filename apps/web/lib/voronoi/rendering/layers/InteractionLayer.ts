@@ -1,11 +1,11 @@
 import * as d3 from 'd3'
 import { type PartitionInfo } from '@/lib/voronoi/utils/types'
-import { HOVER_HIGHLIGHT_COLOR } from '@/lib/voronoi/utils/constants'
 
 export interface InteractionLayerOptions {
   gInteraction: d3.Selection<SVGGElement, unknown, null, undefined>
   gBackgrounds: d3.Selection<SVGGElement, unknown, null, undefined>
   topLevelNodes: d3.HierarchyNode<any>[]
+  highlightColor: string
   getPartitionQuotaPercent: (size: number) => number
   getFileQuotaPercent: (fileCount: number) => number
   getParentQuotaPercent: (size: number) => number
@@ -19,11 +19,13 @@ export interface InteractionLayerOptions {
 export class InteractionLayer {
   private gInteraction: d3.Selection<SVGGElement, unknown, null, undefined>
   private gBackgrounds: d3.Selection<SVGGElement, unknown, null, undefined>
-  private options: Omit<InteractionLayerOptions, 'gInteraction' | 'gBackgrounds' | 'topLevelNodes'>
+  private highlightColor: string
+  private options: Omit<InteractionLayerOptions, 'gInteraction' | 'gBackgrounds' | 'topLevelNodes' | 'highlightColor'>
 
   constructor(options: InteractionLayerOptions) {
     this.gInteraction = options.gInteraction
     this.gBackgrounds = options.gBackgrounds
+    this.highlightColor = options.highlightColor
     this.options = {
       getPartitionQuotaPercent: options.getPartitionQuotaPercent,
       getFileQuotaPercent: options.getFileQuotaPercent,
@@ -109,7 +111,7 @@ export class InteractionLayer {
       this.gBackgrounds.selectAll('.voronoi-partition-bg').style('filter', 'none')
       this.gBackgrounds.selectAll('.voronoi-partition-bg')
         .filter(function() { return d3.select(this).attr('data-path') === pathAttr })
-        .style('filter', `drop-shadow(0 0 12px ${HOVER_HIGHLIGHT_COLOR})`)
+        .style('filter', `drop-shadow(0 0 12px ${this.highlightColor})`)
       this.options.handleInspect(d3.select(e.currentTarget as SVGPathElement).datum() as PartitionInfo)
     })
 
@@ -143,12 +145,12 @@ export class InteractionLayer {
         const pathAttr = d3.select(event.currentTarget as SVGPathElement).attr('data-path')
         this.gBackgrounds.selectAll('.voronoi-partition-bg')
           .filter(function() { return d3.select(this).attr('data-path') === pathAttr })
-          .attr('fill', HOVER_HIGHLIGHT_COLOR)
+          .attr('fill', this.highlightColor)
           .attr('fill-opacity', 0.2)
-          .attr('stroke', HOVER_HIGHLIGHT_COLOR)
+          .attr('stroke', this.highlightColor)
           .attr('stroke-width', 2)
           .attr('stroke-opacity', 0.8)
-          .style('filter', `drop-shadow(0 0 6px ${HOVER_HIGHLIGHT_COLOR})`)
+          .style('filter', `drop-shadow(0 0 6px ${this.highlightColor})`)
         this.options.setHoveredPartition(d3.select(event.currentTarget as SVGPathElement).datum() as PartitionInfo)
       })
       .on('mouseleave', (event: MouseEvent) => {
@@ -168,12 +170,12 @@ export class InteractionLayer {
   private highlightPartition(pathAttr: string): void {
     this.gBackgrounds.selectAll('.voronoi-partition-bg')
       .filter(function() { return d3.select(this).attr('data-path') === pathAttr })
-      .attr('fill', HOVER_HIGHLIGHT_COLOR)
+      .attr('fill', this.highlightColor)
       .attr('fill-opacity', 0.35)
-      .attr('stroke', HOVER_HIGHLIGHT_COLOR)
+      .attr('stroke', this.highlightColor)
       .attr('stroke-width', 3.5)
       .attr('stroke-opacity', 1)
-      .style('filter', `drop-shadow(0 0 8px ${HOVER_HIGHLIGHT_COLOR})`)
+      .style('filter', `drop-shadow(0 0 8px ${this.highlightColor})`)
   }
 
   private resetPartitionStyle(pathAttr: string): void {

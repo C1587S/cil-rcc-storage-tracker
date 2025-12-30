@@ -200,43 +200,14 @@ async def get_voronoi_subtree(
         500: If retrieval fails
     """
     try:
-        # This would require a new method in VoronoiStore that does:
-        # SELECT * FROM voronoi_precomputed
-        # WHERE snapshot_date = ? AND path LIKE ? AND depth <= root_depth + max_depth
-        # For now, use the existing get_node_by_path and batch fetch
+        # OPTIMIZED: Use single SQL query instead of N+1 recursive fetches
+        results = voronoi_store.get_subtree(snapshot_date, path, max_depth)
 
-        root_node_data = voronoi_store.get_node_by_path(snapshot_date, path)
-        if not root_node_data:
+        if not results:
             raise HTTPException(
                 status_code=404,
                 detail=f"No node found at path {path} for snapshot {snapshot_date}",
             )
-
-        # Collect all node IDs up to max_depth
-        all_node_ids = [root_node_data["node_id"]]
-        nodes_to_process = [root_node_data]
-        current_depth = 0
-
-        while nodes_to_process and current_depth < max_depth:
-            next_level = []
-            for node_data in nodes_to_process:
-                child_ids = node_data.get("children_ids", [])
-                all_node_ids.extend(child_ids)
-                # Fetch children to continue traversal
-                for child_id in child_ids:
-                    child_data = voronoi_store.get_node(snapshot_date, child_id)
-                    if child_data:
-                        next_level.append(child_data)
-
-            nodes_to_process = next_level
-            current_depth += 1
-
-        # Batch fetch all nodes
-        results = {}
-        for node_id in all_node_ids:
-            node_data = voronoi_store.get_node(snapshot_date, node_id)
-            if node_data:
-                results[node_id] = node_data
 
         return JSONResponse(content=results)
 

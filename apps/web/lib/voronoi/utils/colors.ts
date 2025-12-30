@@ -35,7 +35,7 @@ export function getQuotaTextColor(percent: number): string {
   return "text-green-600"
 }
 
-export function getFileColor(name: string): string {
+export function getFileColor(name: string, theme: 'dark' | 'light' = 'dark'): string {
   // Use new category-based color system
-  return getFileCategoryColor(name)
+  return getFileCategoryColor(name, theme)
 }

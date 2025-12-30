@@ -2,6 +2,7 @@ import { ChevronLeft, Search, AlertCircle } from 'lucide-react'
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
+import { useAppStore } from '@/lib/store'
 
 interface BreadcrumbPart {
   name: string
@@ -28,6 +29,7 @@ export function VoronoiBreadcrumb({
   onNavigateToBreadcrumb,
   onDrillDown
 }: VoronoiBreadcrumbProps) {
+  const theme = useAppStore(state => state.theme)
   const [searchQuery, setSearchQuery] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -122,7 +124,10 @@ export function VoronoiBreadcrumb({
   }
 
   return (
-    <div className="bg-[#0a0e14] border border-gray-800 rounded flex flex-col gap-2 p-2">
+    <div className={cn(
+      "border rounded flex flex-col gap-2 p-2",
+      theme === 'dark' ? 'bg-[#0a0e14] border-gray-800' : 'bg-card border-border'
+    )}>
       {/* Top row: Back button + Breadcrumb path */}
       <div className="flex items-center gap-2">
         <button
@@ -131,15 +136,19 @@ export function VoronoiBreadcrumb({
           className={cn(
             "flex items-center justify-center w-7 h-7 rounded border transition-all shrink-0",
             canGoBack && !isLocked
-              ? "border-gray-700 hover:border-cyan-600 hover:bg-cyan-950/30 text-gray-400 hover:text-cyan-400 cursor-pointer"
-              : "border-gray-800 text-gray-700 cursor-not-allowed"
+              ? theme === 'dark'
+                ? "border-gray-700 hover:border-cyan-600 hover:bg-cyan-950/30 text-gray-400 hover:text-cyan-400 cursor-pointer"
+                : "border-border hover:border-primary hover:bg-primary/10 text-muted-foreground hover:text-primary cursor-pointer"
+              : theme === 'dark'
+                ? "border-gray-800 text-gray-700 cursor-not-allowed"
+                : "border-border/50 text-muted-foreground/30 cursor-not-allowed"
           )}
           title="Go back"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
-        <span className="text-gray-700">|</span>
-        <span className="text-green-500 font-bold">$</span>
+        <span className={theme === 'dark' ? 'text-gray-700' : 'text-muted-foreground/40'}>|</span>
+        <span className={theme === 'dark' ? 'text-green-500 font-bold' : 'text-primary font-bold'}>$</span>
         {breadcrumbParts.map((part, i) => (
           <div key={`${part.path}-${i}`} className="flex items-center gap-1">
             <button
@@ -148,13 +157,17 @@ export function VoronoiBreadcrumb({
               className={cn(
                 "transition-colors whitespace-nowrap",
                 part.isClickable && !isLocked
-                  ? "hover:text-cyan-400 text-gray-400 cursor-pointer"
-                  : "text-white cursor-default font-bold"
+                  ? theme === 'dark'
+                    ? "hover:text-cyan-400 text-gray-400 cursor-pointer"
+                    : "hover:text-primary text-muted-foreground cursor-pointer"
+                  : theme === 'dark'
+                    ? "text-white cursor-default font-bold"
+                    : "text-foreground cursor-default font-bold"
               )}
             >
               {part.name}
             </button>
-            {i < breadcrumbParts.length - 1 && <span className="text-gray-700">/</span>}
+            {i < breadcrumbParts.length - 1 && <span className={theme === 'dark' ? 'text-gray-700' : 'text-muted-foreground/40'}>/</span>}
           </div>
         ))}
       </div>
@@ -162,7 +175,7 @@ export function VoronoiBreadcrumb({
       {/* Bottom row: Search input with autocomplete */}
       <div className="relative" ref={dropdownRef}>
         <div className="relative">
-          <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3 text-gray-600" />
+          <Search className={cn("absolute left-2 top-1/2 transform -translate-y-1/2 w-3 h-3", theme === 'dark' ? 'text-gray-600' : 'text-muted-foreground')} />
           <input
             ref={inputRef}
             type="text"
@@ -172,10 +185,15 @@ export function VoronoiBreadcrumb({
             disabled={isLocked}
             placeholder={`Navigate from ${currentPath}...`}
             className={cn(
-              "w-full bg-black/30 border rounded pl-7 pr-3 py-1 text-xs text-white placeholder-gray-600 focus:outline-none transition-colors",
+              "w-full border rounded pl-7 pr-3 py-1 text-xs focus:outline-none transition-colors",
+              theme === 'dark'
+                ? "bg-black/30 text-white placeholder-gray-600"
+                : "bg-background text-foreground placeholder-muted-foreground/50",
               errorMessage
                 ? "border-yellow-600 focus:border-yellow-500"
-                : "border-gray-700 focus:border-cyan-600",
+                : theme === 'dark'
+                  ? "border-gray-700 focus:border-cyan-600"
+                  : "border-border focus:border-primary",
               isLocked && "cursor-not-allowed opacity-50"
             )}
           />
