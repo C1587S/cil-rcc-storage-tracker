@@ -52,6 +52,14 @@ reports/
 snapshots/
 extensions.txt
 
+# Data and scans - ignore all scan data
+cil_scans/
+cil_scans.zip
+*.parquet
+
+# Documentation - internal notes
+.giti
+
 # OS
 .DS_Store
 Thumbs.db
