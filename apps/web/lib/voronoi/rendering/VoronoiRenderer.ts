@@ -80,12 +80,15 @@ export class VoronoiRenderer {
 
     // 2. FORZAR ESTILOS CSS
     // Aseguramos que el SVG ocupe exactamente el espacio disponible
+    const { theme } = this.options
+    const backgroundColor = theme === 'dark' ? '#0a0e14' : '#eceff4'
+
     svg.attr('width', width)
        .attr('height', height)
        .style('width', '100%')
        .style('height', '100%')
        .style('display', 'block') // Evita el "gap" inferior de los elementos inline
-       .style('background', TERMINAL_COLORS.background)
+       .style('background', backgroundColor)
 
     const defs = svg.append('defs')
     

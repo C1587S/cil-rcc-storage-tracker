@@ -28,7 +28,7 @@ export default function Home() {
 
       {/* Navbar - always visible except in fullscreen */}
       {!isVoronoiFullscreen && (
-        <nav className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40">
+        <nav className="border-b border-border bg-card sticky top-0 z-40">
           <div className={cn(containerClass, "py-4")}>
             <div className="flex items-center justify-between">
               <h1 className="text-2xl font-bold tracking-tight">

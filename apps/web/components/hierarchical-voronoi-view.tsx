@@ -30,6 +30,7 @@ import { VoronoiTrafficLightLegend } from '@/components/voronoi/VoronoiTrafficLi
 import { VoronoiControlPanel } from '@/components/voronoi/VoronoiControlPanel'
 import { VoronoiBreadcrumb } from '@/components/voronoi/VoronoiBreadcrumb'
 import { VoronoiPartitionPanel } from '@/components/voronoi/VoronoiPartitionPanel'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { useVoronoiData } from '@/lib/voronoi/hooks/useVoronoiData'
 import { useVoronoiDataOnTheFly } from '@/lib/voronoi/hooks/useVoronoiDataOnTheFly'
 import { useVoronoiNavigation } from '@/lib/voronoi/hooks/useVoronoiNavigation'
@@ -93,7 +94,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
     },
   })
 
-  const { isFullscreen, zoomRef, resetZoom, toggleFullscreen } = useVoronoiZoom()
+  const { isFullscreen, isTransitioning, zoomRef, resetZoom, toggleFullscreen } = useVoronoiZoom()
 
   // Choose data loading strategy based on mode
   const precomputedResult = useVoronoiData({
@@ -273,6 +274,8 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         />
 
         <div className="absolute bottom-3 right-3 flex gap-2">
+          {isFullscreen && <ThemeToggle />}
+
           <Button
             size="icon"
             variant="outline"
@@ -332,19 +335,25 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
 
         {isLocked && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex items-center gap-3 animate-pulse">
-              <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-              <div className="text-cyan-400 font-bold">{navigationLock ? 'Loading...' : 'Loading...'}</div>
+            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
+              <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
             </div>
           </div>
         )}
 
         {!isLocked && isRendering && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
-            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex items-center gap-3 animate-pulse">
-              <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-              <div className="text-cyan-400 font-bold">Resizing...</div>
+            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
+              <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
             </div>
+          </div>
+        )}
+
+        {isTransitioning && !isLocked && !isRendering && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px] pointer-events-none">
+            <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
           </div>
         )}
       </div>

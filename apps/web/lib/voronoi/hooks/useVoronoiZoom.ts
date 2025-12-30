@@ -4,6 +4,7 @@ import { useAppStore } from '@/lib/store'
 
 export function useVoronoiZoom() {
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [isTransitioning, setIsTransitioning] = useState(false)
   const zoomRef = useRef<any>(null)
   const setVoronoiFullscreen = useAppStore(state => state.setVoronoiFullscreen)
 
@@ -13,6 +14,10 @@ export function useVoronoiZoom() {
       const newFullscreenState = !!document.fullscreenElement
       setIsFullscreen(newFullscreenState)
       setVoronoiFullscreen(newFullscreenState)
+
+      // Show transition indicator briefly after fullscreen change
+      setIsTransitioning(true)
+      setTimeout(() => setIsTransitioning(false), 800)
     }
 
     document.addEventListener('fullscreenchange', handleFullscreenChange)
@@ -42,6 +47,7 @@ export function useVoronoiZoom() {
 
   return {
     isFullscreen,
+    isTransitioning,
     zoomRef,
     resetZoom,
     toggleFullscreen,

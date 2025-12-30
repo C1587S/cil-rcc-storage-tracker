@@ -17,6 +17,7 @@ import { getFileIcon, getFolderIcon, getSizeColor } from "@/lib/utils/icon-helpe
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import type { DirectoryEntry } from "@/lib/types";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 type SortMode = "name" | "size" | "modified";
 
@@ -516,6 +517,8 @@ export function DiskUsageExplorerV2() {
             </div>
           )}
           <div className="flex items-center gap-2">
+            {isFullscreen && <ThemeToggle />}
+
             {!isFullscreen && (
               <Button variant="outline" size="sm" onClick={() => setIsFullscreen(true)} className="gap-1.5 h-7">
                 <Maximize2 className="w-3 h-3" /> <span className="text-xs">Fullscreen</span>
