@@ -149,7 +149,7 @@ export class VoronoiRenderer {
     const nodesForBubbles = [...topLevelNodes, ...previewNodes]
     this.simulation = this.bubbleLayer.render(nodesForBubbles)
 
-    const labelLayer = new LabelLayer({ gLabels, topLevelNodes, viewportWidth: width, isFullscreen })
+    const labelLayer = new LabelLayer({ gLabels, topLevelNodes, viewportWidth: width, isFullscreen, theme: this.options.theme })
     labelLayer.render(topLevelNodes)
 
     const interactionLayer = new InteractionLayer({

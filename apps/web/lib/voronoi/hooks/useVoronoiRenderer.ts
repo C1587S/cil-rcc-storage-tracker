@@ -206,6 +206,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
     effectivePath,
     layoutTrigger, // <--- AL CAMBIAR ESTO, FORZAMOS RENDER INMEDIATO
     highlightColor, // Re-render when highlight color changes
+    theme, // Re-render when theme changes
 
     // Dimensiones detectadas por el Observer
     containerDimensions.width,
@@ -218,7 +219,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
     selectedPartition,
     navigationLock,
     isFetching,
-    
+
     // Refs
     svgRef,
     containerRef,

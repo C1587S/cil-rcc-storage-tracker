@@ -7,17 +7,20 @@ export interface LabelLayerOptions {
   topLevelNodes: d3.HierarchyNode<any>[]
   viewportWidth: number
   isFullscreen: boolean
+  theme: 'dark' | 'light'
 }
 
 export class LabelLayer {
   private gLabels: d3.Selection<SVGGElement, unknown, null, undefined>
   private viewportWidth: number
   private isFullscreen: boolean
+  private theme: 'dark' | 'light'
 
   constructor(options: LabelLayerOptions) {
     this.gLabels = options.gLabels
     this.viewportWidth = options.viewportWidth
     this.isFullscreen = options.isFullscreen
+    this.theme = options.theme
   }
 
   render(topLevelNodes: d3.HierarchyNode<any>[]): void {
@@ -46,6 +49,18 @@ export class LabelLayer {
         const textHeight = fontSize * 1.4
         const padding = 4
 
+        // Theme-aware colors
+        const isDark = this.theme === 'dark'
+        const bgColor = isDark ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.85)'
+        const shadowColor = isDark ? 'rgba(0, 0, 0, 0.4)' : 'rgba(0, 0, 0, 0.25)'
+        const textColor = node.isSynthetic
+          ? (isDark ? TERMINAL_COLORS.filesContainer : '#0066cc')  // Blue for synthetic in light mode
+          : (isDark ? '#b0b0b0' : '#1a1a1a')  // Almost black for light mode
+        const strokeColor = isDark ? 'white' : 'rgba(255, 255, 255, 0.9)'
+        const shadowFilter = isDark
+          ? 'drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))'
+          : 'drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.2))'
+
         // Add subtle background rectangle
         this.gLabels.append('rect')
           .attr('x', centroid[0] - textWidth / 2 - padding)
@@ -54,7 +69,7 @@ export class LabelLayer {
           .attr('height', textHeight + padding * 2)
           .attr('rx', 3)
           .attr('ry', 3)
-          .attr('fill', 'rgba(0, 0, 0, 0.3)')
+          .attr('fill', bgColor)
           .style('pointer-events', 'none')
 
         // Add subtle shadow for improved visibility
@@ -63,7 +78,7 @@ export class LabelLayer {
           .attr('y', centroid[1] + 0.5)  // Slight offset for shadow
           .attr('text-anchor', 'middle')
           .attr('dominant-baseline', 'middle')
-          .attr('fill', 'rgba(0, 0, 0, 0.4)')  // Semi-transparent black shadow
+          .attr('fill', shadowColor)
           .attr('font-size', fontSize)
           .attr('font-weight', '600')
           .attr('font-family', 'monospace')
@@ -76,8 +91,8 @@ export class LabelLayer {
           .attr('y', centroid[1])
           .attr('text-anchor', 'middle')
           .attr('dominant-baseline', 'middle')
-          .attr('fill', node.isSynthetic ? TERMINAL_COLORS.filesContainer : '#b0b0b0')
-          .attr('stroke', 'white')
+          .attr('fill', textColor)
+          .attr('stroke', strokeColor)
           .attr('stroke-width', 0.5)
           .attr('font-size', fontSize)
           .attr('font-weight', '600')
@@ -88,7 +103,7 @@ export class LabelLayer {
           .style('pointer-events', 'all')  // Enable hover
           .style('cursor', 'pointer')
           .style('paint-order', 'stroke fill')
-          .style('filter', 'drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))')
+          .style('filter', shadowFilter)
           .style('transition', 'all 0.2s ease')
           .text(displayName)
           .on('mouseenter', function(event: MouseEvent) {
