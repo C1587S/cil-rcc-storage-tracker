@@ -71,6 +71,14 @@ async def get_contents(
                 ELSE e.size
             END
         ) AS size_formatted,
+        CASE
+            WHEN e.is_directory = 1 THEN COALESCE(rs.recursive_file_count, 0)
+            ELSE 0
+        END AS file_count,
+        CASE
+            WHEN e.is_directory = 1 THEN COALESCE(rs.recursive_dir_count, 0)
+            ELSE 0
+        END AS dir_count,
         e.owner,
         e.file_type,
         e.modified_time,
@@ -124,6 +132,8 @@ async def get_contents(
                     is_directory=bool(row["is_directory"]),
                     size=row["size"],
                     size_formatted=row.get("size_formatted"),
+                    file_count=row.get("file_count"),
+                    dir_count=row.get("dir_count"),
                     owner=row.get("owner"),
                     file_type=row.get("file_type"),
                     modified_time=row.get("modified_time"),

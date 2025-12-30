@@ -54,6 +54,17 @@ export class InteractionLayer {
   }
 
   private createPartitionInfo(node: any): PartitionInfo {
+    // DEBUG: Log file count information
+    console.log('[InteractionLayer] Creating PartitionInfo:', {
+      path: node.path,
+      name: node.name,
+      file_count: node.file_count,
+      size: node.size,
+      isDirectory: node.isDirectory,
+      isSynthetic: node.isSynthetic,
+      nodeKeys: Object.keys(node)
+    })
+
     return {
       name: node.isSynthetic ? `Files (${node.file_count})` : node.name,
       path: node.path,

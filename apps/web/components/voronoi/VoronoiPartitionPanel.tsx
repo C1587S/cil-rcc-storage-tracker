@@ -25,6 +25,18 @@ export function VoronoiPartitionPanel({
   // Fixed height, no scaling
   const textScale = 1
 
+  // DEBUG: Log active partition when it changes
+  if (activePartition) {
+    console.log('[VoronoiPartitionPanel] Active partition updated:', {
+      name: activePartition.name,
+      path: activePartition.path,
+      file_count: activePartition.file_count,
+      fileQuotaPercent: activePartition.fileQuotaPercent,
+      size: activePartition.size,
+      isDirectory: activePartition.isDirectory
+    })
+  }
+
   return (
     <div className={cn(
       "border rounded-lg overflow-hidden h-[200px] flex flex-col shrink-0",
@@ -51,57 +63,55 @@ export function VoronoiPartitionPanel({
               </div>
             </div>
 
-            {/* Compact inline metrics */}
+            {/* Metrics in single horizontal row */}
             <div className={cn(
-              "px-3 py-2 rounded border space-y-1.5",
+              "px-3 py-2 rounded border flex items-center gap-3 flex-wrap",
               theme === 'dark' ? 'bg-black/30 border-gray-800' : 'bg-muted/20 border-border/30'
             )}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <HardDrive className="w-3 h-3 text-gray-600" />
-                  <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>SIZE:</label>
-                </div>
-                <div className={cn("font-bold", getSizeSeverity(activePartition.size).color)} style={{ fontSize: `${12 * textScale}px` }}>{formatBytes(activePartition.size)}</div>
+              {/* SIZE */}
+              <div className="flex items-center gap-1.5">
+                <HardDrive className="w-3 h-3 text-gray-600" />
+                <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>SIZE:</label>
+                <div className={cn("font-bold", getSizeSeverity(activePartition.size).color)} style={{ fontSize: `${11 * textScale}px` }}>{formatBytes(activePartition.size)}</div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <BarChart3 className="w-3 h-3 text-gray-600" />
-                  <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>STORAGE QUOTA:</label>
-                </div>
-                <div className="flex items-baseline gap-1">
-                  <div className={cn("font-bold", getQuotaTextColor(activePartition.quotaPercent))} style={{ fontSize: `${12 * textScale}px` }}>{activePartition.quotaPercent.toFixed(2)}%</div>
-                  <div className="text-gray-500" style={{ fontSize: `${8 * textScale}px` }}>of 500 TB</div>
-                </div>
+              <div className={cn("h-4 w-px", theme === 'dark' ? 'bg-gray-700' : 'bg-border')} />
+
+              {/* STORAGE QUOTA */}
+              <div className="flex items-center gap-1.5">
+                <BarChart3 className="w-3 h-3 text-gray-600" />
+                <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>QUOTA:</label>
+                <div className={cn("font-bold", getQuotaTextColor(activePartition.quotaPercent))} style={{ fontSize: `${11 * textScale}px` }}>{activePartition.quotaPercent.toFixed(2)}%</div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <Files className="w-3 h-3 text-gray-600" />
-                  <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILE COUNT:</label>
-                </div>
-                <div className={cn("font-bold", getFileCountSeverity(activePartition.file_count).color)} style={{ fontSize: `${12 * textScale}px` }}>{activePartition.file_count > 0 ? activePartition.file_count.toLocaleString() : '—'}</div>
+              <div className={cn("h-4 w-px", theme === 'dark' ? 'bg-gray-700' : 'bg-border')} />
+
+              {/* FILE COUNT */}
+              <div className="flex items-center gap-1.5">
+                <Files className="w-3 h-3 text-gray-600" />
+                <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILES:</label>
+                <div className={cn("font-bold", getFileCountSeverity(activePartition.file_count).color)} style={{ fontSize: `${11 * textScale}px` }}>{activePartition.file_count > 0 ? activePartition.file_count.toLocaleString() : '—'}</div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <BarChart3 className="w-3 h-3 text-gray-600" />
-                  <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILE QUOTA:</label>
-                </div>
-                <div className="flex items-baseline gap-1">
-                  <div className={cn("font-bold", getQuotaTextColor(activePartition.fileQuotaPercent))} style={{ fontSize: `${12 * textScale}px` }}>{activePartition.fileQuotaPercent.toFixed(3)}%</div>
-                  <div className="text-gray-500" style={{ fontSize: `${8 * textScale}px` }}>of {(FILE_COUNT_QUOTA / 1_000_000).toFixed(0)}M</div>
-                </div>
+              <div className={cn("h-4 w-px", theme === 'dark' ? 'bg-gray-700' : 'bg-border')} />
+
+              {/* FILE QUOTA */}
+              <div className="flex items-center gap-1.5">
+                <BarChart3 className="w-3 h-3 text-gray-600" />
+                <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILE %:</label>
+                <div className={cn("font-bold", getQuotaTextColor(activePartition.fileQuotaPercent))} style={{ fontSize: `${11 * textScale}px` }}>{activePartition.fileQuotaPercent.toFixed(3)}%</div>
               </div>
 
+              {/* PARENT QUOTA (optional) */}
               {activePartition.parentQuotaPercent !== undefined && activePartition.parentQuotaPercent < 100 && (
-                <div className="flex items-center justify-between">
+                <>
+                  <div className={cn("h-4 w-px", theme === 'dark' ? 'bg-gray-700' : 'bg-border')} />
                   <div className="flex items-center gap-1.5">
                     <BarChart3 className="w-3 h-3 text-gray-600" />
-                    <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>% OF CURRENT DIR:</label>
+                    <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>OF DIR:</label>
+                    <div className={cn("font-bold", getQuotaTextColor(activePartition.parentQuotaPercent))} style={{ fontSize: `${11 * textScale}px` }}>{activePartition.parentQuotaPercent.toFixed(1)}%</div>
                   </div>
-                  <div className={cn("font-bold", getQuotaTextColor(activePartition.parentQuotaPercent))} style={{ fontSize: `${12 * textScale}px` }}>{activePartition.parentQuotaPercent.toFixed(1)}%</div>
-                </div>
+                </>
               )}
             </div>
 
