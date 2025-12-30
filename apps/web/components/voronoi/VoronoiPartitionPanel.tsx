@@ -123,18 +123,44 @@ export function VoronoiPartitionPanel({
                   "px-3 py-2 rounded border max-h-64 overflow-y-auto",
                   theme === 'dark' ? 'bg-black/30 border-gray-800' : 'bg-muted/20 border-border/30'
                 )}>
-                  <div className="text-gray-500 uppercase mb-2" style={{ fontSize: `${9 * textScale}px` }}>Files in this region ({activePartition.originalFiles.length}):</div>
+                  <div className={cn(
+                    "uppercase mb-2 font-semibold",
+                    theme === 'dark' ? 'text-gray-400' : 'text-gray-700'
+                  )} style={{ fontSize: `${9 * textScale}px` }}>Files in this region ({activePartition.originalFiles.length}):</div>
                   <div className="space-y-1">
                     {activePartition.originalFiles.map((file, idx) => {
                       const sizePercent = maxFileSize > 0 ? (file.size / maxFileSize) * 100 : 0
                       return (
-                        <div key={idx} onClick={() => onFileClick(file.path)} className={cn("flex flex-col gap-1 p-1 rounded hover:bg-cyan-950/30 cursor-pointer transition-colors", selectedFileInPanel === file.path && "bg-cyan-950/50 border border-cyan-700")}>
+                        <div key={idx} onClick={() => onFileClick(file.path)} className={cn(
+                          "flex flex-col gap-1 p-1 rounded cursor-pointer transition-colors",
+                          theme === 'dark'
+                            ? "hover:bg-cyan-950/30"
+                            : "hover:bg-cyan-100/50",
+                          selectedFileInPanel === file.path && (
+                            theme === 'dark'
+                              ? "bg-cyan-950/50 border border-cyan-700"
+                              : "bg-cyan-100 border border-cyan-400"
+                          )
+                        )}>
                           <div className="flex items-center justify-between gap-2">
-                            <span className="text-white truncate flex-1" style={{ fontSize: `${10 * textScale}px` }}>{file.name}</span>
-                            <span className="text-gray-400 whitespace-nowrap" style={{ fontSize: `${9 * textScale}px` }}>{formatBytes(file.size)}</span>
+                            <span className={cn(
+                              "truncate flex-1 font-medium",
+                              theme === 'dark' ? 'text-white' : 'text-gray-900'
+                            )} style={{ fontSize: `${10 * textScale}px` }}>{file.name}</span>
+                            <span className={cn(
+                              "whitespace-nowrap",
+                              theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+                            )} style={{ fontSize: `${9 * textScale}px` }}>{formatBytes(file.size)}</span>
                           </div>
-                          <div className="h-1 bg-gray-900/50 rounded-full overflow-hidden">
-                            <div className="h-full bg-cyan-500/60 transition-all" style={{ width: `${sizePercent}%` }} />
+                          {/* Bar aligned to the right, like Disk Usage Tree */}
+                          <div className={cn(
+                            "h-1 rounded-full overflow-hidden flex justify-end",
+                            theme === 'dark' ? 'bg-gray-900/50' : 'bg-gray-300/50'
+                          )}>
+                            <div className={cn(
+                              "h-full transition-all",
+                              theme === 'dark' ? 'bg-cyan-500/60' : 'bg-cyan-500/70'
+                            )} style={{ width: `${sizePercent}%` }} />
                           </div>
                         </div>
                       )
