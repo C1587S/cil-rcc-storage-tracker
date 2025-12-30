@@ -37,8 +37,15 @@ logger = logging.getLogger(__name__)
 class SnapshotImporter:
     """Import Parquet snapshot into ClickHouse."""
 
-    def __init__(self, clickhouse_host='localhost', clickhouse_port=9000):
+    def __init__(self, clickhouse_host=None, clickhouse_port=None):
         """Initialize importer with ClickHouse connection."""
+        # Get host/port from environment if not provided
+        import os
+        if clickhouse_host is None:
+            clickhouse_host = os.getenv('CLICKHOUSE_HOST', 'localhost')
+        if clickhouse_port is None:
+            clickhouse_port = int(os.getenv('CLICKHOUSE_PORT', '9000'))
+
         self.client = Client(
             host=clickhouse_host,
             port=clickhouse_port,
@@ -50,12 +57,13 @@ class SnapshotImporter:
         )
         logger.info(f"Connected to ClickHouse at {clickhouse_host}:{clickhouse_port}")
 
-    def import_snapshot(self, snapshot_dir: Path) -> Dict[str, Any]:
+    def import_snapshot(self, snapshot_dir: Path, clear_existing: bool = True) -> Dict[str, Any]:
         """
         Import entire snapshot from directory.
 
         Args:
             snapshot_dir: Path to snapshot directory containing Parquet files
+            clear_existing: Whether to clear existing data for this snapshot date
 
         Returns:
             Import statistics
@@ -65,6 +73,26 @@ class SnapshotImporter:
         snapshot_date = snapshot_dir.name
         logger.info(f"Importing snapshot: {snapshot_date}")
         logger.info(f"Source directory: {snapshot_dir}")
+
+        # Clear any existing data for this snapshot date (if requested)
+        if clear_existing:
+            logger.info(f"Clearing existing data for {snapshot_date}...")
+            try:
+                self.client.execute(
+                    "ALTER TABLE filesystem.entries DELETE WHERE snapshot_date = %(date)s",
+                    {'date': snapshot_date}
+                )
+                self.client.execute(
+                    "ALTER TABLE filesystem.snapshots DELETE WHERE snapshot_date = %(date)s",
+                    {'date': snapshot_date}
+                )
+                self.client.execute(
+                    "ALTER TABLE filesystem.voronoi_precomputed DELETE WHERE snapshot_date = %(date)s",
+                    {'date': snapshot_date}
+                )
+                logger.info(f"Cleared existing data for {snapshot_date}")
+            except Exception as e:
+                logger.warning(f"Could not clear existing data (this is normal for first import): {e}")
 
         # Find all Parquet files
         parquet_files = list(snapshot_dir.glob("*.parquet"))
@@ -231,6 +259,12 @@ class SnapshotImporter:
         # Convert snapshot_date string to date object
         snapshot_date_obj = datetime.strptime(snapshot_date, '%Y-%m-%d').date()
 
+        # Delete existing metadata for this date first (to avoid duplicates)
+        self.client.execute(
+            "ALTER TABLE filesystem.snapshots DELETE WHERE snapshot_date = %(date)s",
+            {'date': snapshot_date}
+        )
+
         # Calculate snapshot statistics
         stats = self.client.execute(f"""
             SELECT
@@ -245,7 +279,7 @@ class SnapshotImporter:
 
         total_entries, total_size, total_directories, total_files, top_level_dirs = stats
 
-        # Insert or update snapshot metadata
+        # Insert snapshot metadata
         self.client.execute("""
             INSERT INTO filesystem.snapshots
             (snapshot_date, scan_started, scan_completed, total_entries, total_size,
@@ -324,11 +358,14 @@ class SnapshotImporter:
 
 def main():
     """Main entry point."""
-    if len(sys.argv) != 2:
-        print("Usage: python import_snapshot.py /path/to/snapshot/2025-12-12")
-        sys.exit(1)
+    import argparse
 
-    snapshot_dir = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description='Import filesystem snapshot from Parquet files')
+    parser.add_argument('snapshot_dir', help='Path to snapshot directory (e.g., /path/to/2025-12-27)')
+    parser.add_argument('--no-clear', action='store_true', help='Do not clear existing data for this date')
+    args = parser.parse_args()
+
+    snapshot_dir = Path(args.snapshot_dir)
 
     if not snapshot_dir.exists():
         print(f"Error: Directory not found: {snapshot_dir}")
@@ -342,7 +379,7 @@ def main():
     importer = SnapshotImporter()
 
     try:
-        stats = importer.import_snapshot(snapshot_dir)
+        stats = importer.import_snapshot(snapshot_dir, clear_existing=not args.no_clear)
 
         # Verify import
         snapshot_date = snapshot_dir.name

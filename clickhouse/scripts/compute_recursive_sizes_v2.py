@@ -345,14 +345,15 @@ class RecursiveSizeComputerV3:
 
 
 def main():
+    import os
     parser = argparse.ArgumentParser(description="Compute recursive directory sizes (ClickHouse v3)")
     parser.add_argument("snapshot_date", nargs="?", help="Snapshot date YYYY-MM-DD")
     parser.add_argument("--all", action="store_true", help="Process all snapshots")
     parser.add_argument("--verify", action="store_true", help="Verify results with samples")
     parser.add_argument("--verify-samples", type=int, default=10, help="How many directories to verify")
-    parser.add_argument("--host", default="localhost", help="ClickHouse host")
-    parser.add_argument("--port", type=int, default=9000, help="ClickHouse port")
-    parser.add_argument("--db", default="filesystem", help="ClickHouse database")
+    parser.add_argument("--host", default=os.getenv('CLICKHOUSE_HOST', 'localhost'), help="ClickHouse host")
+    parser.add_argument("--port", type=int, default=int(os.getenv('CLICKHOUSE_PORT', '9000')), help="ClickHouse port")
+    parser.add_argument("--db", default=os.getenv('CLICKHOUSE_DATABASE', 'filesystem'), help="ClickHouse database")
 
     args = parser.parse_args()
 

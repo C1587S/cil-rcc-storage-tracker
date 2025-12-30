@@ -24,7 +24,7 @@ export interface CategoryInfo {
 }
 
 /**
- * 10-color palette for file categories
+ * 10-color palette for file categories (dark mode)
  */
 export const CATEGORY_COLORS: Record<FileCategory, string> = {
   tabular: '#2c4875',      // Deep blue
@@ -37,6 +37,23 @@ export const CATEGORY_COLORS: Record<FileCategory, string> = {
   config: '#8cb357',       // Green
   runtime: '#18bfae',      // Teal
   other: '#53cbef'         // Light blue
+}
+
+/**
+ * Pastel color palette for file categories (light mode)
+ * Vibrant pastel versions maintaining dark mode hues with better differentiation
+ */
+export const CATEGORY_COLORS_LIGHT: Record<FileCategory, string> = {
+  tabular: '#6b8ab8',      // Medium pastel blue
+  scientific: '#9a85b3',   // Medium pastel purple
+  image: '#c97fb5',        // Medium pastel magenta
+  document: '#e65a99',     // Medium pastel pink
+  code: '#ff9896',         // Medium pastel coral
+  compressed: '#ffbb66',   // Medium pastel gold
+  binary: '#ffaa66',       // Medium pastel orange
+  config: '#afd87f',       // Medium pastel green
+  runtime: '#5dd9cc',      // Medium pastel teal
+  other: '#7fcdeb'         // Medium pastel light blue
 }
 
 /**
@@ -247,11 +264,11 @@ export function getFileCategory(path: string): FileCategory {
 }
 
 /**
- * Get color for a file based on its category
+ * Get color for a file based on its category and theme
  */
-export function getFileCategoryColor(path: string): string {
+export function getFileCategoryColor(path: string, theme: 'dark' | 'light' = 'dark'): string {
   const category = getFileCategory(path)
-  return CATEGORY_COLORS[category]
+  return theme === 'dark' ? CATEGORY_COLORS[category] : CATEGORY_COLORS_LIGHT[category]
 }
 
 /**

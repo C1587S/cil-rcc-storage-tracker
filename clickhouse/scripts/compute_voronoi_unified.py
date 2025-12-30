@@ -511,17 +511,18 @@ def fetch_subdirectories(snapshot_date, root_path, db_config) -> List[str]:
         client.disconnect()
 
 def main():
+    import os
     parser = argparse.ArgumentParser(description="Unified Voronoi Computer")
     parser.add_argument("snapshot_date", type=str, help="YYYY-MM-DD")
     parser.add_argument("--workers", type=int, default=1, help="Parallel workers")
     parser.add_argument("--force", action="store_true", help="Delete old data")
     parser.add_argument("--root", default="/project/cil", help="Root path")
     # DB connection args
-    parser.add_argument("--host", default="localhost")
-    parser.add_argument("--port", type=int, default=9000)
-    parser.add_argument("--user", default="default")
-    parser.add_argument("--password", default="")
-    parser.add_argument("--database", default="filesystem")
+    parser.add_argument("--host", default=os.getenv('CLICKHOUSE_HOST', 'localhost'))
+    parser.add_argument("--port", type=int, default=int(os.getenv('CLICKHOUSE_PORT', '9000')))
+    parser.add_argument("--user", default=os.getenv('CLICKHOUSE_USER', 'default'))
+    parser.add_argument("--password", default=os.getenv('CLICKHOUSE_PASSWORD', ''))
+    parser.add_argument("--database", default=os.getenv('CLICKHOUSE_DATABASE', 'filesystem'))
 
     args = parser.parse_args()
 

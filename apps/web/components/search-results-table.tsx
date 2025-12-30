@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { DirectoryEntry } from "@/lib/types";
 import { formatDistanceToNow } from "date-fns";
-import { Download, ChevronDown, ChevronUp, ChevronsUpDown, FileText } from "lucide-react";
+import { Download, ChevronDown, ChevronUp, ChevronsUpDown, FileText, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface SearchResultsTableProps {
@@ -203,6 +203,7 @@ export function SearchResultsTable({
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [showAggregation, setShowAggregation] = useState(false);
   const [aggGroupBy, setAggGroupBy] = useState<("parent_dir" | "top_level_dir" | "owner" | "file_type")[]>(["top_level_dir"]);
+  const [postQueryFilter, setPostQueryFilter] = useState("");
 
   // Enrich results with derived columns
   const enrichedResults = useMemo(() => results.map(enrichEntry), [results]);
@@ -246,6 +247,26 @@ export function SearchResultsTable({
       return 0;
     });
   }, [enrichedResults, sortField, sortDirection]);
+
+  // Post-query filtering
+  const filteredResults = useMemo(() => {
+    if (!postQueryFilter.trim()) return sortedResults;
+
+    const filterLower = postQueryFilter.toLowerCase();
+    return sortedResults.filter(entry => {
+      const filename = extractFilename(entry.path).toLowerCase();
+      const path = entry.path.toLowerCase();
+      const owner = (entry.owner || "").toLowerCase();
+      const parentDir = entry.parent_dir.toLowerCase();
+      const topLevelDir = entry.top_level_dir.toLowerCase();
+
+      return filename.includes(filterLower) ||
+             path.includes(filterLower) ||
+             owner.includes(filterLower) ||
+             parentDir.includes(filterLower) ||
+             topLevelDir.includes(filterLower);
+    });
+  }, [sortedResults, postQueryFilter]);
 
   // Compute aggregations
   const aggregations = useMemo(() => {
@@ -430,8 +451,29 @@ export function SearchResultsTable({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="text-[10px] font-mono text-muted-foreground">
-              {results.length} of {totalCount.toLocaleString()} results
-              {totalCount > results.length && " (server limit)"}
+              {filteredResults.length} {postQueryFilter ? `filtered (of ${results.length})` : `of ${totalCount.toLocaleString()} results`}
+              {!postQueryFilter && totalCount > results.length && " (server limit)"}
+            </div>
+
+            {/* Post-query filter input */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Filter results..."
+                value={postQueryFilter}
+                onChange={(e) => setPostQueryFilter(e.target.value)}
+                className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-border/20 rounded-sm bg-background/50 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 w-40"
+              />
+              <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/50" />
+              {postQueryFilter && (
+                <button
+                  onClick={() => setPostQueryFilter("")}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground text-[10px] px-1"
+                  title="Clear filter"
+                >
+                  ×
+                </button>
+              )}
             </div>
 
             {/* View Mode Toggle */}
@@ -498,7 +540,7 @@ export function SearchResultsTable({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => downloadAsCSV(results)}
+              onClick={() => downloadAsCSV(filteredResults)}
               className="h-6 px-2 text-[10px] font-mono"
             >
               <Download className="h-3 w-3 mr-1" />
@@ -507,7 +549,7 @@ export function SearchResultsTable({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => downloadAsTXT(results)}
+              onClick={() => downloadAsTXT(filteredResults)}
               className="h-6 px-2 text-[10px] font-mono"
             >
               <Download className="h-3 w-3 mr-1" />
@@ -698,7 +740,7 @@ export function SearchResultsTable({
 
         {/* Results with vertical scrolling - fixed column widths */}
         <div className="divide-y divide-border/30 bg-background max-h-[500px] overflow-y-auto">
-          {sortedResults.map((entry, idx) => {
+          {filteredResults.map((entry, idx) => {
             const filename = extractFilename(entry.path);
             return (
               <div

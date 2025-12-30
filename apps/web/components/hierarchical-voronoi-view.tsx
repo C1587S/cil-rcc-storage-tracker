@@ -14,7 +14,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
-import { Maximize2, Minimize2, Focus, ArrowLeftRight, Minimize } from 'lucide-react'
+import { Maximize2, Minimize2, Focus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
 import {
@@ -30,6 +30,7 @@ import { VoronoiTrafficLightLegend } from '@/components/voronoi/VoronoiTrafficLi
 import { VoronoiControlPanel } from '@/components/voronoi/VoronoiControlPanel'
 import { VoronoiBreadcrumb } from '@/components/voronoi/VoronoiBreadcrumb'
 import { VoronoiPartitionPanel } from '@/components/voronoi/VoronoiPartitionPanel'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { useVoronoiData } from '@/lib/voronoi/hooks/useVoronoiData'
 import { useVoronoiDataOnTheFly } from '@/lib/voronoi/hooks/useVoronoiDataOnTheFly'
 import { useVoronoiNavigation } from '@/lib/voronoi/hooks/useVoronoiNavigation'
@@ -49,16 +50,14 @@ export interface HierarchicalVoronoiViewProps {
 }
 
 export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVoronoiViewProps = {}) {
-  const { selectedSnapshot, referencePath } = useAppStore()
+  const { selectedSnapshot, referencePath, highlightColor, theme } = useAppStore()
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const simulationRef = useRef<d3.Simulation<any, undefined> | null>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const voronoiCacheRef = useRef<Map<string, VoronoiCacheEntry>>(new Map())
-
-  // Horizontal expansion state
-  const [isExpanded, setIsExpanded] = useState(false)
+  
 
   const { data: snapshots } = useQuery({ queryKey: ['snapshots'], queryFn: getSnapshots })
 
@@ -95,7 +94,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
     },
   })
 
-  const { isFullscreen, zoomRef, resetZoom, toggleFullscreen } = useVoronoiZoom()
+  const { isFullscreen, isTransitioning, zoomRef, resetZoom, toggleFullscreen } = useVoronoiZoom()
 
   // Choose data loading strategy based on mode
   const precomputedResult = useVoronoiData({
@@ -123,7 +122,6 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
   const parentSize = viewRootSize
 
   // Global project size (always the root, doesn't change with navigation)
-  // We need to track this separately from current view
   const [globalRootSize, setGlobalRootSize] = useState(0)
 
   // Update global root size only when we're at the base path
@@ -133,7 +131,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
     }
   }, [data, effectivePath, basePath])
 
-  const projectSize = globalRootSize || viewRootSize  // Fallback to viewRootSize initially
+  const projectSize = globalRootSize || viewRootSize 
   const storageTB = projectSize / (1024 ** 4)
   const storageQuotaPercent = (storageTB / STORAGE_QUOTA_TB) * 100
 
@@ -150,9 +148,11 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
     data: data ?? undefined,
     effectivePath,
     isFullscreen,
-    isExpanded,
+    isExpanded: false,
     navigationLock,
     isFetching,
+    highlightColor,
+    theme,
     svgRef,
     containerRef,
     tooltipRef,
@@ -195,8 +195,28 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
   const activePartition = hoveredPartition || selectedPartition
   const isLocked = isLoading || isFetching || navigationLock
 
-  return (
-    <div ref={wrapperRef} className={cn("space-y-3 font-mono text-xs transition-all duration-300", isFullscreen && "fixed inset-0 z-50 bg-[#0a0e14] p-4", isExpanded && !isFullscreen && "mx-[-200px]")}>
+  // --- CONTENT RENDERER ---
+  const renderContent = (isPortalMode: boolean) => (
+    <div
+      ref={wrapperRef}
+      className={cn(
+        // ESTILOS BASE - Adaptado al theme
+        "space-y-3 font-mono text-xs flex flex-col",
+        theme === 'dark' ? 'bg-[#0a0e14]' : 'bg-card',
+
+        // MODO PANTALLA COMPLETA - expande verticalmente
+        isFullscreen && "fixed inset-0 z-50 p-4 h-screen",
+
+        // MODO EXPANDIDO (PORTAL)
+        isPortalMode && cn(
+          "w-full h-full p-6 rounded-xl border-2 shadow-2xl backdrop-blur-sm",
+          theme === 'dark' ? 'border-cyan-800 shadow-black bg-[#0a0e14]/95' : 'border-primary/20 shadow-gray-400 bg-card/95'
+        ),
+
+        // Si NO es portal ni fullscreen (estado normal)
+        !isPortalMode && !isFullscreen && "relative"
+      )}
+    >
       <div ref={tooltipRef} className="fixed pointer-events-none z-50 bg-black/90 border border-cyan-600 rounded px-2 py-1 hidden" />
 
       {/* HEADER */}
@@ -206,6 +226,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         storageQuotaPercent={storageQuotaPercent}
         viewingPath={viewingPath}
         parentSize={parentSize}
+        isFullscreen={isFullscreen}
       />
 
       {/* PANELS */}
@@ -213,7 +234,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         activePartition={activePartition}
         selectedFileInPanel={selectedFileInPanel}
         onFileClick={handleFileClickInPanel}
-        isExpanded={isExpanded}
+        isExpanded={false}
         isFullscreen={isFullscreen}
       />
 
@@ -228,51 +249,126 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         onDrillDown={performDrillDown}
       />
 
-      {/* VISUALIZER */}
-      <div ref={containerRef} className={cn("relative border border-gray-800 bg-[#0a0e14] rounded-lg overflow-hidden", isLocked && "pointer-events-none")} style={{ height: isFullscreen ? 'calc(100vh - 900px)' : '550px' }}>
-        <svg ref={svgRef} className={cn("w-full h-full cursor-crosshair", isLocked && "pointer-events-none")} />
+      {/* VISUALIZER CONTAINER */}
+      <div
+        ref={containerRef}
+        className={cn(
+          "relative border rounded-lg overflow-hidden",
+          theme === 'dark' ? 'border-gray-800 bg-[#0a0e14]' : 'border-border bg-card',
+          isLocked && "pointer-events-none",
+          // En fullscreen, flex-1 toma todo el espacio disponible verticalmente
+          isFullscreen ? "flex-1" : ""
+        )}
+        style={{
+          // Altura fija en modo normal, auto en fullscreen para que flex-1 funcione
+          height: isFullscreen ? 'auto' : '550px',
+          minHeight: isFullscreen ? '0' : '550px'
+        }}
+      >
+        <svg
+          ref={svgRef}
+          className={cn("w-full h-full cursor-crosshair", isLocked && "pointer-events-none")}
+          style={{
+            background: theme === 'dark' ? '#0a0e14' : '#eceff4'
+          }}
+        />
 
         <div className="absolute bottom-3 right-3 flex gap-2">
-          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => resetZoom(svgRef)} disabled={isLocked} title="Recenter View"><Focus className="w-4 h-4" /></Button>
-          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => {
-            console.log('[HierarchicalVoronoiView] Expand button clicked:', { currentExpanded: isExpanded, willBe: !isExpanded })
-            setIsExpanded(!isExpanded)
-          }} disabled={isLocked} title={isExpanded ? 'Return to Original Width' : 'Expand Horizontally'}>{isExpanded ? <Minimize className="w-4 h-4" /> : <ArrowLeftRight className="w-4 h-4" />}</Button>
-          <Button size="icon" variant="outline" className="bg-black/80 border-gray-700 w-8 h-8 hover:bg-gray-800 hover:border-cyan-700" onClick={() => {
-            console.log('[HierarchicalVoronoiView] Fullscreen button clicked:', { currentFullscreen: isFullscreen })
-            toggleFullscreen(wrapperRef)
-          }} title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}>{isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}</Button>
+          {isFullscreen && <ThemeToggle />}
+
+          <Button
+            size="icon"
+            variant="outline"
+            className={cn(
+              "w-8 h-8",
+              theme === 'dark'
+                ? 'bg-black/80 border-gray-700 hover:bg-gray-800 hover:border-cyan-700'
+                : 'bg-white/90 border-gray-300 hover:bg-gray-50 hover:border-primary'
+            )}
+            onClick={() => resetZoom(svgRef)}
+            disabled={isLocked}
+            title="Recenter View"
+          >
+            <Focus className="w-4 h-4" />
+          </Button>
+
+          {!isFullscreen && (
+            <Button
+              size="icon"
+              variant="outline"
+              className={cn(
+                "w-8 h-8",
+                theme === 'dark'
+                  ? 'bg-black/80 border-gray-700 hover:bg-gray-800 hover:border-cyan-700'
+                  : 'bg-white/90 border-gray-300 hover:bg-gray-50 hover:border-primary'
+              )}
+              onClick={() => {
+                console.log('[HierarchicalVoronoiView] Fullscreen button clicked')
+                toggleFullscreen(wrapperRef)
+              }}
+              title="Fullscreen"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </Button>
+          )}
+          {isFullscreen && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(
+                "gap-1.5 h-8",
+                theme === 'dark'
+                  ? 'bg-black/80 border-gray-700 hover:bg-gray-800 hover:border-cyan-700'
+                  : 'bg-white/90 border-gray-300 hover:bg-gray-50 hover:border-primary'
+              )}
+              onClick={() => {
+                console.log('[HierarchicalVoronoiView] Exit fullscreen clicked')
+                toggleFullscreen(wrapperRef)
+              }}
+            >
+              <Minimize2 className="w-3 h-3" /> <span className="text-xs">Exit (ESC)</span>
+            </Button>
+          )}
         </div>
 
         {error && <div className="absolute inset-0 flex items-center justify-center bg-black/80"><p className="text-red-500 font-bold">Failed to compute Voronoi: {error.toString()}</p></div>}
 
         {isLocked && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex items-center gap-3 animate-pulse">
-              <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-              <div className="text-cyan-400 font-bold">{navigationLock ? 'Loading...' : 'Loading...'}</div>
+            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
+              <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
             </div>
           </div>
         )}
 
         {!isLocked && isRendering && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
-            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex items-center gap-3 animate-pulse">
-              <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-              <div className="text-cyan-400 font-bold">Resizing...</div>
+            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
+              <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
             </div>
+          </div>
+        )}
+
+        {isTransitioning && !isLocked && !isRendering && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px] pointer-events-none">
+            <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
           </div>
         )}
       </div>
 
-      {/* FILE CATEGORY LEGEND */}
-      <VoronoiCategoryLegend isExpanded={isExpanded} isFullscreen={isFullscreen} />
+      {/* LEGENDS - Layout: File Categories izquierda (2 filas), Bubble+Quota derecha (vertical) */}
+      <div className="grid grid-cols-[1fr_auto] gap-3">
+        {/* Columna izquierda: File Categories con 2 filas de 5 elementos */}
+        <VoronoiCategoryLegend isExpanded={false} isFullscreen={isFullscreen} />
 
-      {/* BUBBLE SIZE LEGEND */}
-      <VoronoiBubbleSizeLegend isExpanded={isExpanded} isFullscreen={isFullscreen} />
-
-      {/* TRAFFIC LIGHT LEGEND */}
-      <VoronoiTrafficLightLegend isExpanded={isExpanded} isFullscreen={isFullscreen} />
+        {/* Columna derecha: Bubble Size arriba, Quota abajo (ambos en una sola fila) */}
+        <div className="flex flex-col gap-3">
+          <VoronoiBubbleSizeLegend isExpanded={false} isFullscreen={isFullscreen} />
+          <VoronoiTrafficLightLegend isExpanded={false} isFullscreen={isFullscreen} />
+        </div>
+      </div>
 
       {/* CONTROLS */}
       <VoronoiControlPanel
@@ -286,4 +382,6 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
       <VoronoiLegend />
     </div>
   )
+
+  return renderContent(false)
 }

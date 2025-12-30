@@ -55,20 +55,39 @@ async def get_contents(
         type_filter = "AND is_directory = 1"
 
     # Query filesystem.entries for detailed information
+    # For directories, use recursive size from directory_recursive_sizes table
     query = f"""
     SELECT
-        path,
-        name,
-        is_directory,
-        size,
-        formatReadableSize(size) AS size_formatted,
-        owner,
-        file_type,
-        modified_time,
-        accessed_time
-    FROM filesystem.entries
-    WHERE snapshot_date = %(snapshot_date)s
-      AND parent_path = %(parent_path)s
+        e.path,
+        e.name,
+        e.is_directory,
+        CASE
+            WHEN e.is_directory = 1 THEN COALESCE(rs.recursive_size_bytes, 0)
+            ELSE e.size
+        END AS size,
+        formatReadableSize(
+            CASE
+                WHEN e.is_directory = 1 THEN COALESCE(rs.recursive_size_bytes, 0)
+                ELSE e.size
+            END
+        ) AS size_formatted,
+        CASE
+            WHEN e.is_directory = 1 THEN COALESCE(rs.recursive_file_count, 0)
+            ELSE 0
+        END AS file_count,
+        CASE
+            WHEN e.is_directory = 1 THEN COALESCE(rs.recursive_dir_count, 0)
+            ELSE 0
+        END AS dir_count,
+        e.owner,
+        e.file_type,
+        e.modified_time,
+        e.accessed_time
+    FROM filesystem.entries AS e
+    LEFT JOIN filesystem.directory_recursive_sizes AS rs
+        ON e.snapshot_date = rs.snapshot_date AND e.path = rs.path
+    WHERE e.snapshot_date = %(snapshot_date)s
+      AND e.parent_path = %(parent_path)s
       {type_filter}
     ORDER BY {order_by}
     LIMIT %(limit)s
@@ -99,6 +118,10 @@ async def get_contents(
         # Get entries
         results = execute_query(query, params)
 
+        # DEBUG: Log first result
+        if results:
+            print(f"DEBUG: First result = {results[0]}")
+
         # Convert to DirectoryEntry objects
         entries = []
         for row in results:
@@ -109,6 +132,8 @@ async def get_contents(
                     is_directory=bool(row["is_directory"]),
                     size=row["size"],
                     size_formatted=row.get("size_formatted"),
+                    file_count=row.get("file_count"),
+                    dir_count=row.get("dir_count"),
                     owner=row.get("owner"),
                     file_type=row.get("file_type"),
                     modified_time=row.get("modified_time"),

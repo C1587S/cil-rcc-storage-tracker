@@ -123,6 +123,7 @@ def setup_database(host='localhost', port=9000):
         'entries',
         'snapshots',
         'search_index',
+        'voronoi_precomputed',
     ]
 
     for table in expected_tables:
@@ -137,9 +138,7 @@ def setup_database(host='localhost', port=9000):
         FROM system.tables
         WHERE database = 'filesystem'
           AND engine LIKE '%MergeTree%'
-          AND name != 'entries'
-          AND name != 'snapshots'
-          AND name != 'search_index'
+          AND name NOT IN ('entries', 'snapshots', 'search_index', 'voronoi_precomputed')
     """
 
     views = client.execute(views_query)

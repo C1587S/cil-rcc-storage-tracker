@@ -26,14 +26,15 @@ export function getSizeColor(sizeBytes: number): string {
 
 /**
  * Get fill color (hex) for size-based coloring (for D3/SVG rendering)
+ * Size categories: Green (0-10GB), Yellow (10-20GB), Orange (20-50GB), Red (>50GB)
  */
 export function getSizeFillColor(sizeBytes: number): string {
   const sizeGB = sizeBytes / (1024 ** 3);
-  if (sizeGB >= 50) return "#ef4444";         // red-500
-  if (sizeGB >= 10) return "#fb923c";         // orange-400
-  if (sizeGB >= 1) return "#facc15";          // yellow-400
-  if (sizeGB >= 0.01) return "#4ade80";       // green-400
-  return "#9ca3af";                           // gray-400 (negligible)
+  if (sizeGB > 50) return "#ef4444";          // red-500 (>50GB)
+  if (sizeGB > 20) return "#fb923c";          // orange-400 (20-50GB)
+  if (sizeGB > 10) return "#facc15";          // yellow-400 (10-20GB)
+  if (sizeGB > 0) return "#4ade80";           // green-400 (0-10GB)
+  return "#9ca3af";                           // gray-400 (negligible/empty)
 }
 
 /**

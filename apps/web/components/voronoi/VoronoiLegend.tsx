@@ -1,13 +1,19 @@
-import { TERMINAL_COLORS } from '@/lib/voronoi/utils/constants'
+import { useAppStore } from '@/lib/store'
 
 export function VoronoiLegend() {
+  const theme = useAppStore(state => state.theme)
+
   return (
-    <div className="flex justify-between items-center text-[10px] uppercase tracking-wider font-mono text-gray-600 px-1">
-      <div className="flex gap-4">
-        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: TERMINAL_COLORS.folder, opacity: 0.4 }} />Directories</span>
-        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded border border-dashed" style={{ borderColor: TERMINAL_COLORS.filesContainer, opacity: 0.7 }} />Files Region</span>
-        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: TERMINAL_COLORS.file }} />Files</span>
-        <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded border" style={{ borderColor: '#ffffff', opacity: 0.5 }} />Preview</span>
+    <div className="space-y-2 text-[10px]">
+      <div className={theme === 'dark' ? 'text-gray-500' : 'text-muted-foreground/80'}>
+        <div className="mb-1">
+          <span className="font-bold">Polygons:</span> Represent subfolders within the current directory.
+          Size is proportional to total bytes stored. Voronoi representation shows space occupied relative to /project/cil.
+          <span className="italic ml-1">(Dotted polygons indicate regions containing files not within subfolders)</span>
+        </div>
+        <div>
+          <span className="font-bold">Bubbles:</span> Represent individual files within the directory.
+        </div>
       </div>
     </div>
   )

@@ -3,7 +3,6 @@ import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
 import { formatBytes } from '@/lib/utils/formatters'
 import { getFileColor } from '@/lib/voronoi/utils/colors'
 import { getFileCategory } from '@/lib/voronoi/utils/file-categories'
-import { HOVER_HIGHLIGHT_COLOR } from '@/lib/voronoi/utils/constants'
 import { constrainToPolygon } from '@/lib/voronoi/utils/geometry'
 import { packCirclesInPolygon } from '@/lib/voronoi/utils/circle-packing'
 
@@ -19,16 +18,22 @@ export interface BubbleLayerOptions {
   gBubbles: d3.Selection<SVGGElement, unknown, null, undefined>
   topLevelNodes: d3.HierarchyNode<any>[]
   tooltipRef: React.RefObject<HTMLDivElement>
+  highlightColor: string
+  theme: 'dark' | 'light'
 }
 
 export class BubbleLayer {
   private gBubbles: d3.Selection<SVGGElement, unknown, null, undefined>
   private tooltipRef: React.RefObject<HTMLDivElement>
+  private highlightColor: string
+  private theme: 'dark' | 'light'
   private simulation: d3.Simulation<any, undefined> | null = null
 
   constructor(options: BubbleLayerOptions) {
     this.gBubbles = options.gBubbles
     this.tooltipRef = options.tooltipRef
+    this.highlightColor = options.highlightColor
+    this.theme = options.theme
   }
 
   render(topLevelNodes: d3.HierarchyNode<any>[]): d3.Simulation<any, undefined> | null {
@@ -38,28 +43,14 @@ export class BubbleLayer {
       this.simulation = null
     }
 
-    console.log('[BubbleLayer] render() called:', {
-      topLevelNodesCount: topLevelNodes.length,
-      nodesWithOriginalFiles: topLevelNodes.filter(d => d.data.originalFiles?.length > 0).length
-    })
-
     // Collect all bubble nodes across all partitions for a unified simulation
     const allBubbleNodes: BubbleNode[] = []
 
     // Render bubbles for top-level nodes (depth=1)
     // These are the main partitions visible on screen
-    topLevelNodes.forEach((d: any, idx: number) => {
+    topLevelNodes.forEach((d: any) => {
       const node = d.data
       const poly = d.polygon
-
-      console.log(`[BubbleLayer] Processing node ${idx}:`, {
-        path: node.path,
-        name: node.name,
-        hasPoly: !!poly,
-        hasOriginalFiles: !!node.originalFiles,
-        originalFilesCount: node.originalFiles?.length || 0,
-        isSynthetic: node.isSynthetic
-      })
 
       // Render bubbles for ANY node with originalFiles (not just synthetic nodes)
       // This handles both on-the-fly mode (__files__ synthetic nodes) and precomputed mode (regular directories with files)
@@ -84,9 +75,9 @@ export class BubbleLayer {
           .attr('cx', c.x)
           .attr('cy', c.y)
           .attr('r', c.r)
-          .attr('fill', getFileColor(c.node.name))
-          .attr('fill-opacity', 0.7)
-          .attr('stroke', 'rgba(255,255,255,0.4)')
+          .attr('fill', getFileColor(c.node.name, this.theme))
+          .attr('fill-opacity', this.theme === 'dark' ? 1.0 : 0.85)
+          .attr('stroke', this.theme === 'dark' ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.15)')
           .attr('stroke-width', 0.5)
           .attr('clip-path', `url(#clip-${node.uniqueId})`)
           .style('cursor', 'grab')
@@ -112,7 +103,6 @@ export class BubbleLayer {
 
     // Create ONE simulation for ALL bubbles across all partitions
     if (allBubbleNodes.length > 0) {
-      console.log('[BubbleLayer] Creating unified simulation with', allBubbleNodes.length, 'bubbles')
       this.simulation = this.createMultiPartitionSimulation(allBubbleNodes)
       this.attachDragBehavior(allBubbleNodes)
     }
@@ -134,7 +124,7 @@ export class BubbleLayer {
           tooltip.innerHTML = `<div class="font-mono text-xs"><div class="font-bold text-cyan-400">${d.node.name}</div><div class="text-gray-400">${formatBytes(d.node.size)}</div></div>`
         }
         d3.select(event.currentTarget as SVGCircleElement)
-          .attr('stroke', HOVER_HIGHLIGHT_COLOR)
+          .attr('stroke', this.highlightColor)
           .attr('stroke-width', 2)
       })
       .on('mousemove', (event: MouseEvent) => {
@@ -149,7 +139,8 @@ export class BubbleLayer {
         if (tooltip) tooltip.style.display = 'none'
         const target = d3.select(event.currentTarget as SVGCircleElement)
         if (!target.classed('highlighted')) {
-          target.attr('stroke', 'rgba(255,255,255,0.4)').attr('stroke-width', 0.5)
+          const defaultStroke = this.theme === 'dark' ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.15)'
+          target.attr('stroke', defaultStroke).attr('stroke-width', 0.5)
         }
       })
   }
