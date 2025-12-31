@@ -14,7 +14,8 @@ export interface PartitionInfo {
   parentSize?: number
   parentQuotaPercent?: number
   depth: number
-  originalFiles?: VoronoiNode[]
+  originalFiles?: VoronoiNode[]  // Files in this directory
+  children?: VoronoiNode[]        // Subdirectories
 }
 
 export interface VoronoiCacheEntry {

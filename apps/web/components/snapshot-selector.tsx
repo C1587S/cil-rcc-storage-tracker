@@ -52,18 +52,25 @@ export function SnapshotSelector() {
   return (
     <Card>
       <CardContent className="py-4">
-        <div className="flex items-center gap-3">
-          <label htmlFor="snapshot-select" className="text-sm font-semibold whitespace-nowrap">
-            Snapshot:
-          </label>
-          <Select id="snapshot-select" value={selectedSnapshot || ""} onChange={handleChange} className="flex-1">
-            <option value="">Select a snapshot...</option>
-            {snapshots.map((snapshot) => (
-              <option key={snapshot.snapshot_date} value={snapshot.snapshot_date}>
-                {snapshot.snapshot_date}
-              </option>
-            ))}
-          </Select>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-3">
+            <label htmlFor="snapshot-select" className="text-sm font-semibold whitespace-nowrap">
+              Snapshot:
+            </label>
+            <Select id="snapshot-select" value={selectedSnapshot || ""} onChange={handleChange} className="flex-1">
+              <option value="">Select a snapshot...</option>
+              {snapshots.map((snapshot) => (
+                <option key={snapshot.snapshot_date} value={snapshot.snapshot_date}>
+                  {snapshot.snapshot_date}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {selectedSnapshot && (
+            <p className="text-xs text-muted-foreground/70 italic pl-[85px]">
+              Note: Data shown is current up to {selectedSnapshot}
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

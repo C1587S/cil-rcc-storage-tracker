@@ -77,7 +77,8 @@ export class InteractionLayer {
       parentSize: this.options.parentSize,
       parentQuotaPercent: this.options.getParentQuotaPercent(node.size),
       depth: 1,
-      originalFiles: node.originalFiles
+      originalFiles: node.originalFiles,
+      children: node.children  // Include subdirectories
     }
   }
 
