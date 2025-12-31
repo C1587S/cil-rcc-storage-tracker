@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { X, GripVertical, ArrowUpDown, Search, ChevronDown, Folder, Flag, Copy, Check } from 'lucide-react'
+import { X, GripVertical, ArrowUpDown, Search, ChevronDown, Folder, Flag, Copy, Check, Minimize2, Maximize2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatBytes } from '@/lib/utils/formatters'
 import { useAppStore } from '@/lib/store'
@@ -50,6 +50,7 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [searchQuery, setSearchQuery] = useState('')
   const [displayLimit, setDisplayLimit] = useState(INITIAL_DISPLAY_LIMIT)
+  const [isMinimized, setIsMinimized] = useState(false)
 
   const panelRef = useRef<HTMLDivElement>(null)
   const resizeRef = useRef<HTMLDivElement>(null)
@@ -170,7 +171,7 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
         left: `${position.x}px`,
         top: `${position.y}px`,
         width: `${size.width}px`,
-        height: `${size.height}px`,
+        height: isMinimized ? 'auto' : `${size.height}px`,
         cursor: isDragging ? 'grabbing' : 'default'
       }}
     >
@@ -192,7 +193,25 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
           </span>
         </div>
         <div className="flex items-center gap-1">
-          {/* Pin/Flag button */}
+          {/* Minimize/Maximize button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setIsMinimized(!isMinimized)
+            }}
+            className={cn(
+              "p-1 rounded hover:bg-gray-700/50 transition-colors",
+              theme === 'dark' ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
+            )}
+            title={isMinimized ? "Expand panel" : "Minimize panel"}
+          >
+            {isMinimized ? (
+              <Maximize2 className="w-4 h-4" />
+            ) : (
+              <Minimize2 className="w-4 h-4" />
+            )}
+          </button>
+          {/* Pin/Flag button with improved tooltip */}
           {onTogglePin && (
             <button
               onClick={(e) => {
@@ -200,10 +219,9 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
                 onTogglePin()
               }}
               className={cn(
-                "p-1 rounded hover:bg-gray-700/50 transition-colors",
+                "p-1 rounded hover:bg-gray-700/50 transition-colors relative group",
                 theme === 'dark' ? 'hover:text-white' : 'hover:text-gray-900'
               )}
-              title={isPinned ? "Unpin panel (will close on hover out)" : "Pin panel (keep open)"}
             >
               <Flag className={cn(
                 "w-4 h-4",
@@ -211,6 +229,30 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
                   ? (theme === 'dark' ? 'text-red-500' : 'text-red-600')
                   : (theme === 'dark' ? 'text-gray-500' : 'text-gray-400')
               )} />
+              {/* Tooltip */}
+              <div className={cn(
+                "absolute bottom-full right-0 mb-2 px-3 py-2 rounded-md text-xs whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-[200] shadow-lg border",
+                theme === 'dark'
+                  ? 'bg-gray-800 border-gray-700 text-gray-200'
+                  : 'bg-white border-gray-300 text-gray-700'
+              )}>
+                <div className="text-[10px] leading-relaxed max-w-[200px] whitespace-normal">
+                  {isPinned ? (
+                    <>
+                      <span className="font-semibold">Panel Fijado:</span> La posición del panel no cambiará al hacer hover sobre las particiones.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-semibold">Panel Libre:</span> El panel se cerrará automáticamente cuando dejes de hacer hover.
+                    </>
+                  )}
+                </div>
+                {/* Arrow */}
+                <div className={cn(
+                  "absolute top-full right-3 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent",
+                  theme === 'dark' ? 'border-t-gray-800' : 'border-t-white'
+                )} style={{ marginTop: '-1px' }} />
+              </div>
             </button>
           )}
           {/* Close button */}
@@ -220,18 +262,22 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
               "p-1 rounded hover:bg-gray-700/50 transition-colors",
               theme === 'dark' ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
             )}
+            title="Close panel"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* Search bar */}
-      <div className={cn(
-        "px-3 py-2 border-b shrink-0",
-        theme === 'dark' ? 'bg-gray-800/20 border-gray-700' : 'bg-gray-50 border-gray-200'
-      )}>
-        <div className="relative">
+      {/* Content - only show when not minimized */}
+      {!isMinimized && (
+        <>
+          {/* Search bar */}
+          <div className={cn(
+            "px-3 py-2 border-b shrink-0",
+            theme === 'dark' ? 'bg-gray-800/20 border-gray-700' : 'bg-gray-50 border-gray-200'
+          )}>
+            <div className="relative">
           <Search className={cn(
             "absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5",
             theme === 'dark' ? 'text-gray-500' : 'text-gray-400'
@@ -384,18 +430,20 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
         </div>
       </div>
 
-      {/* Resize handle - bottom right corner */}
-      <div
-        ref={resizeRef}
-        className={cn(
-          "absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize resize-handle",
-          theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'
-        )}
-        style={{
-          clipPath: 'polygon(100% 0, 100% 100%, 0 100%)'
-        }}
-        onMouseDown={handleMouseDownResize}
-      />
+          {/* Resize handle - bottom right corner */}
+          <div
+            ref={resizeRef}
+            className={cn(
+              "absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize resize-handle",
+              theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'
+            )}
+            style={{
+              clipPath: 'polygon(100% 0, 100% 100%, 0 100%)'
+            }}
+            onMouseDown={handleMouseDownResize}
+          />
+        </>
+      )}
     </div>
   )
 }
