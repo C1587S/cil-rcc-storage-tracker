@@ -236,6 +236,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         onFileClick={handleFileClickInPanel}
         isExpanded={false}
         isFullscreen={isFullscreen}
+        isPartitionFixed={selectedPartition !== null}
       />
 
       {/* BREADCRUMB */}
