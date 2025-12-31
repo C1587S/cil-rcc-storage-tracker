@@ -21,7 +21,7 @@ import {
   STORAGE_QUOTA_TB,
   FILE_COUNT_QUOTA,
 } from '@/lib/voronoi/utils/constants'
-import { type VoronoiCacheEntry } from '@/lib/voronoi/utils/types'
+import { type VoronoiCacheEntry, type PartitionInfo } from '@/lib/voronoi/utils/types'
 import { VoronoiHeader } from '@/components/voronoi/VoronoiHeader'
 import { VoronoiLegend } from '@/components/voronoi/VoronoiLegend'
 import { VoronoiCategoryLegend } from '@/components/voronoi/VoronoiCategoryLegend'
@@ -192,7 +192,28 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
   }, [basePath, history, viewingPath, effectivePath])
 
   const canGoBack = history.length > 0
-  const activePartition = hoveredPartition || selectedPartition
+
+  // Create PartitionInfo for current directory being viewed
+  const currentPartitionInfo: PartitionInfo | null = useMemo(() => {
+    if (!data) return null
+    return {
+      name: data.name,
+      path: data.path,
+      size: data.size,
+      file_count: data.file_count || 0,
+      isDirectory: data.isDirectory,
+      isSynthetic: data.isSynthetic || false,
+      quotaPercent: getPartitionQuotaPercent(data.size),
+      fileQuotaPercent: getFileQuotaPercent(data.file_count || 0),
+      parentSize: parentSize,
+      parentQuotaPercent: getParentQuotaPercent(data.size),
+      depth: data.depth || 0,
+      originalFiles: data.originalFiles,
+      children: data.children
+    }
+  }, [data, getPartitionQuotaPercent, getFileQuotaPercent, getParentQuotaPercent, parentSize])
+
+  const activePartition = hoveredPartition || selectedPartition || currentPartitionInfo
   const isLocked = isLoading || isFetching || navigationLock
 
   // --- CONTENT RENDERER ---

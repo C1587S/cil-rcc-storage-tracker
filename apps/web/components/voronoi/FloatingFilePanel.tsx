@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { X, GripVertical, ArrowUpDown, Search, ChevronDown, Folder } from 'lucide-react'
+import { X, GripVertical, ArrowUpDown, Search, ChevronDown, Folder, Flag, Copy, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatBytes } from '@/lib/utils/formatters'
 import { useAppStore } from '@/lib/store'
@@ -17,6 +17,10 @@ interface FloatingFilePanelProps {
   selectedFile: string | null
   onFileClick: (filePath: string) => void
   onClose: () => void
+  isPinned?: boolean
+  onTogglePin?: () => void
+  copiedPath?: string | null
+  onCopyPath?: (path: string) => void
 }
 
 type SortColumn = 'name' | 'size'
@@ -24,7 +28,7 @@ type SortDirection = 'asc' | 'desc'
 
 const INITIAL_DISPLAY_LIMIT = 100
 
-export function FloatingFilePanel({ files, folders = [], selectedFile, onFileClick, onClose }: FloatingFilePanelProps) {
+export function FloatingFilePanel({ files, folders = [], selectedFile, onFileClick, onClose, isPinned = true, onTogglePin, copiedPath, onCopyPath }: FloatingFilePanelProps) {
   const theme = useAppStore(state => state.theme)
   const [position, setPosition] = useState({ x: window.innerWidth - 320, y: 100 })
   const [size, setSize] = useState({ width: 300, height: 400 })
@@ -162,15 +166,39 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
             Items ({totalCount} {searchQuery ? `of ${files.length + folders.length}` : ''})
           </span>
         </div>
-        <button
-          onClick={onClose}
-          className={cn(
-            "p-1 rounded hover:bg-gray-700/50 transition-colors",
-            theme === 'dark' ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
+        <div className="flex items-center gap-1">
+          {/* Pin/Flag button */}
+          {onTogglePin && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onTogglePin()
+              }}
+              className={cn(
+                "p-1 rounded hover:bg-gray-700/50 transition-colors",
+                theme === 'dark' ? 'hover:text-white' : 'hover:text-gray-900'
+              )}
+              title={isPinned ? "Unpin panel (will close on hover out)" : "Pin panel (keep open)"}
+            >
+              <Flag className={cn(
+                "w-4 h-4",
+                isPinned
+                  ? (theme === 'dark' ? 'text-red-500' : 'text-red-600')
+                  : (theme === 'dark' ? 'text-gray-500' : 'text-gray-400')
+              )} />
+            </button>
           )}
-        >
-          <X className="w-4 h-4" />
-        </button>
+          {/* Close button */}
+          <button
+            onClick={onClose}
+            className={cn(
+              "p-1 rounded hover:bg-gray-700/50 transition-colors",
+              theme === 'dark' ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
+            )}
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Search bar */}
@@ -243,9 +271,8 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
             return (
               <div
                 key={idx}
-                onClick={() => onFileClick(item.path)}
                 className={cn(
-                  "flex flex-col gap-1 p-2 rounded cursor-pointer transition-colors",
+                  "flex flex-col gap-1 p-2 rounded transition-colors",
                   theme === 'dark'
                     ? "hover:bg-cyan-950/30"
                     : "hover:bg-cyan-100/50",
@@ -257,7 +284,7 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer" onClick={() => onFileClick(item.path)}>
                     {item.isDirectory && (
                       <Folder className={cn(
                         "w-3.5 h-3.5 shrink-0",
@@ -271,12 +298,34 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
                       {item.name}
                     </span>
                   </div>
-                  <span className={cn(
-                    "whitespace-nowrap text-xs",
-                    theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
-                  )}>
-                    {formatBytes(item.size)}
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Copy button */}
+                    {onCopyPath && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onCopyPath(item.path)
+                        }}
+                        className={cn(
+                          "p-0.5 rounded hover:bg-gray-700/50 transition-colors",
+                          theme === 'dark' ? 'text-gray-500 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+                        )}
+                        title="Copy path to clipboard"
+                      >
+                        {copiedPath === item.path ? (
+                          <Check className="w-3.5 h-3.5 text-green-500" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    )}
+                    <span className={cn(
+                      "whitespace-nowrap text-xs",
+                      theme === 'dark' ? 'text-gray-400' : 'text-gray-600'
+                    )}>
+                      {formatBytes(item.size)}
+                    </span>
+                  </div>
                 </div>
                 {/* Bar aligned to the right */}
                 <div className={cn(
