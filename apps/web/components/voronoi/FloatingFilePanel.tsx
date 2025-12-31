@@ -21,6 +21,7 @@ interface FloatingFilePanelProps {
   onTogglePin?: () => void
   copiedPath?: string | null
   onCopyPath?: (path: string) => void
+  isFullscreen?: boolean  // Whether the visualization is in fullscreen mode
 }
 
 type SortColumn = 'name' | 'size'
@@ -28,10 +29,20 @@ type SortDirection = 'asc' | 'desc'
 
 const INITIAL_DISPLAY_LIMIT = 100
 
-export function FloatingFilePanel({ files, folders = [], selectedFile, onFileClick, onClose, isPinned = true, onTogglePin, copiedPath, onCopyPath }: FloatingFilePanelProps) {
+export function FloatingFilePanel({ files, folders = [], selectedFile, onFileClick, onClose, isPinned = true, onTogglePin, copiedPath, onCopyPath, isFullscreen = false }: FloatingFilePanelProps) {
   const theme = useAppStore(state => state.theme)
-  const [position, setPosition] = useState({ x: window.innerWidth - 320, y: 100 })
-  const [size, setSize] = useState({ width: 300, height: 400 })
+
+  // Adjust position and size based on fullscreen mode
+  const initialPosition = isFullscreen
+    ? { x: window.innerWidth - 340, y: 80 }  // Fullscreen: align with partition panel start, stick to right with margin
+    : { x: window.innerWidth - 370, y: 100 }  // Normal: right side of screen with small margin
+
+  const initialSize = isFullscreen
+    ? { width: 320, height: 200 }  // Fullscreen: match partition panel height (200px)
+    : { width: 350, height: 500 }  // Normal: larger and taller
+
+  const [position, setPosition] = useState(initialPosition)
+  const [size, setSize] = useState(initialSize)
   const [isDragging, setIsDragging] = useState(false)
   const [isResizing, setIsResizing] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
@@ -100,6 +111,20 @@ export function FloatingFilePanel({ files, folders = [], selectedFile, onFileCli
     setIsResizing(true)
     setDragStart({ x: e.clientX, y: e.clientY })
   }
+
+  // Update position and size when fullscreen mode changes
+  useEffect(() => {
+    const newPosition = isFullscreen
+      ? { x: window.innerWidth - 340, y: 80 }  // Fullscreen: align with partition panel
+      : { x: window.innerWidth - 370, y: 100 }  // Normal: right side with margin
+
+    const newSize = isFullscreen
+      ? { width: 320, height: 200 }  // Fullscreen: match partition panel height
+      : { width: 350, height: 500 }  // Normal: larger
+
+    setPosition(newPosition)
+    setSize(newSize)
+  }, [isFullscreen])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {

@@ -421,6 +421,7 @@ export function VoronoiPartitionPanel({
                 onTogglePin={() => setIsPanelPinned(!isPanelPinned)}
                 copiedPath={copiedPath}
                 onCopyPath={copyToClipboard}
+                isFullscreen={isFullscreen}
               />
             )}
 

@@ -375,7 +375,11 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
 
         {isTransitioning && !isLocked && !isRendering && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px] pointer-events-none">
-            <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
+              <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <div className="text-cyan-400/70 text-[10px] font-normal italic">Resizing visualization...</div>
+              <div className="text-cyan-600/60 text-[9px] font-light">Complex partitions may take a few seconds</div>
+            </div>
           </div>
         )}
       </div>
