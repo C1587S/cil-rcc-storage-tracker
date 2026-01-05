@@ -47,36 +47,50 @@ ls cil_scans
 # battuta_shares gcp home_dirs kupe_shares norgay sacagawea_shares ...
 
 ----------------------------------------
-# 4) Start all services (DB + API + Web)
+# 4) FULL RESET – CLEAN START (IMPORTANT)
 ----------------------------------------
 
-docker compose up -d
+# This completely deletes ClickHouse data and state
+# Use this whenever you want to start from zero
 
-# Verify containers are running
+docker compose down -v
+docker volume prune -f
+
+# Rebuild images (important if Python scripts changed)
+docker compose build --no-cache
+
+# Start only ClickHouse first
+docker compose up -d clickhouse
+
+# Wait until ClickHouse is healthy
 docker compose ps
-# clickhouse, api, web should be "Up"
 
 ----------------------------------------
-# 5) (Optional) Reset database (clean start)
+# 5) Initialize database schema
 ----------------------------------------
 
-docker compose down
-docker volume rm cil-rcc-storage-tracker_clickhouse-data
-docker compose up -d
+# Creates database, tables, materialized views
+docker compose up clickhouse-init
+
+# Verify tables exist
+docker compose exec clickhouse clickhouse-client --query "
+SHOW TABLES FROM filesystem
+"
 
 ----------------------------------------
 # 6) IMPORT DATA – DIRECTORY BY DIRECTORY
 ----------------------------------------
 
-# IMPORTANT:
-# - First import clears the database
+# IMPORTANT RULES:
+# - First import CLEARS the snapshot
 # - All following imports MUST use --no-clear
+# - Run directories ONE BY ONE
 
 # 6.1) First import (example: gcp)
 docker compose run --rm importer \
-python scripts/import_snapshot.py /scans/gcp/2025-12-27
+python scripts/import_snapshot.py /scans/home_dirs/2025-12-27
 
-# 6.2) Remaining directories (one by one)
+# 6.2) Remaining directories
 docker compose run --rm importer \
 python scripts/import_snapshot.py /scans/battuta_shares/2025-12-27 --no-clear
 
@@ -84,7 +98,7 @@ docker compose run --rm importer \
 python scripts/import_snapshot.py /scans/battuta-shares-S3-archive/2025-12-27 --no-clear
 
 docker compose run --rm importer \
-python scripts/import_snapshot.py /scans/home_dirs/2025-12-27 --no-clear
+python scripts/import_snapshot.py /scans/gcp/2025-12-27 --no-clear
 
 docker compose run --rm importer \
 python scripts/import_snapshot.py /scans/kupe_shares/2025-12-27 --no-clear
@@ -142,7 +156,16 @@ LIMIT 10
 "
 
 ----------------------------------------
-# 12) Open the dashboard
+# 12) Start API and Web Dashboard
+----------------------------------------
+
+docker compose up -d api web
+
+# Verify
+docker compose ps
+
+----------------------------------------
+# 13) Open the dashboard
 ----------------------------------------
 
 # From your local browser:
