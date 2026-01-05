@@ -2,11 +2,12 @@
 """
 Voronoi Computation & Storage - UNIFIED SCRIPT
 ----------------------------------------------
-python compute_voronoi_unified.py 2025-12-12 --workers 10 --force
+python compute_voronoi_unified.py 2025-12-27 --workers 8 --force
+
 Architecture:
 1. Streaming Stack-Based Computation (Low RAM)
-2. Batch Insert to ClickHouse Table (filesystem.voronoi_precomputed)
-3. Multiprocessing support for top-level directories.
+2. Batch Insert to ClickHouse (Safe JSON Truncation)
+3. Parallel Processing (Prevent Timeouts)
 """
 
 import argparse
@@ -39,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger("VoronoiUnified")
 
 # ==============================================================================
-# PART 1: STORAGE CLASS (Handles DB Inserts)
+# PART 1: STORAGE CLASS (Safe Inserts)
 # ==============================================================================
 
 class VoronoiStorage:
@@ -48,10 +49,14 @@ class VoronoiStorage:
     Batches writes to avoid network overhead.
     """
     TABLE_NAME = "filesystem.voronoi_precomputed"
+    
+    # SAFETY: Max files to store in JSON to prevent 4GB RAM crashes.
+    # 500 files is plenty for visualization.
+    MAX_FILES_IN_JSON = 500 
 
-    def __init__(self, db_config: Dict[str, Any], batch_size: int = 5000):
+    def __init__(self, db_config: Dict[str, Any], batch_size: int = 1000):
         self.db_config = db_config
-        self.batch_size = batch_size
+        self.batch_size = batch_size  # Reduced default batch size for safety
         self.pending_rows: List[tuple] = []
         self.total_inserted = 0
 
@@ -82,7 +87,6 @@ class VoronoiStorage:
         try:
             client = self._get_client()
             client.execute(create_table_sql)
-            # logger.info(f"Ensured table {self.TABLE_NAME} exists")
             client.disconnect()
         except Exception as e:
             logger.error(f"Failed to create table {self.TABLE_NAME}: {e}")
@@ -108,9 +112,26 @@ class VoronoiStorage:
         # Serialize Lists to JSON Strings
         children_json = json.dumps(children_ids) if children_ids else "[]"
         original_files_json = ""
-        # Store original_files for BOTH synthetic nodes AND regular directories with files
+        
+        # KEY FIX: TRUNCATE FILE LIST TO PREVENT MEMORY CRASH
         if original_files:
-            original_files_json = json.dumps(original_files)
+            # Sort by size descending (keep the biggest ones for visualization)
+            sorted_files = sorted(original_files, key=lambda x: x['size'], reverse=True)
+            
+            # Keep only top N
+            if len(sorted_files) > self.MAX_FILES_IN_JSON:
+                kept_files = sorted_files[:self.MAX_FILES_IN_JSON]
+                # Add a dummy entry indicating truncation (optional, useful for UI)
+                remaining_count = len(sorted_files) - self.MAX_FILES_IN_JSON
+                remaining_size = sum(f['size'] for f in sorted_files[self.MAX_FILES_IN_JSON:])
+                kept_files.append({
+                    "name": f"... and {remaining_count} smaller files",
+                    "path": "",
+                    "size": remaining_size
+                })
+                original_files_json = json.dumps(kept_files)
+            else:
+                original_files_json = json.dumps(sorted_files)
 
         row = (
             snapshot_date, node_id, parent_id, path, name,
@@ -146,6 +167,7 @@ class VoronoiStorage:
             return count
         except Exception as e:
             logger.error(f"Failed to flush voronoi nodes: {e}")
+            # If a massive batch fails, we might want to log it but re-raising is safer
             raise
 
     def delete_snapshot(self, snapshot_date: date) -> None:
@@ -160,205 +182,130 @@ class VoronoiStorage:
             logger.error(f"Failed to delete snapshot: {e}")
 
 # ==============================================================================
-# PART 2: COMPUTER CLASS (Handles Streaming Logic)
+# PART 2: COMPUTER CLASS (Optimized & Stable)
 # ==============================================================================
 
 class VoronoiComputer:
     """
     Reads from filesystem.entries (Streaming) -> Writes to VoronoiStorage
+    OPTIMIZED: Performs Lookup in Python to avoid ClickHouse HashJoin OOM.
+    STABLE: Uses external sorting settings to avoid OOM during global sort.
     """
     def __init__(self, snapshot_date: date, root_path: str, db_config: Dict[str, Any]):
         self.snapshot_date = snapshot_date
         self.root_path = root_path
         self.db_config = db_config
         self.node_counter = 0
-        # Initialize storage interface
         self.storage = VoronoiStorage(db_config)
+        self.dir_stats = {} # Lookup cache
 
     def _generate_id(self, path: str, is_dir: bool) -> str:
         self.node_counter += 1
         prefix = "d" if is_dir else "f"
-        # Deterministic hash for parallel safety
         h = abs(hash(path)) % 10000000
         return f"{prefix}_{h}_{self.node_counter}"
 
     def _calculate_depth(self, path: str) -> int:
-        """
-        Calculate relative depth from root_path.
-        Root path gets depth 0, immediate children get depth 1, etc.
-
-        Examples:
-          root_path = '/project/cil'
-          '/project/cil' -> depth 0
-          '/project/cil/gcp' -> depth 1
-          '/project/cil/gcp/data' -> depth 2
-        """
         if path == self.root_path:
             return 0
-
-        # Remove root_path prefix and count remaining path segments
         relative_path = path[len(self.root_path):].lstrip('/')
         if not relative_path:
             return 0
-
         return relative_path.count('/') + 1
+
+    def _ensure_source_dependencies(self, client: Client):
+        """Ensures the recursive size table exists."""
+        sql = """
+        CREATE TABLE IF NOT EXISTS filesystem.directory_recursive_sizes (
+            snapshot_date Date,
+            path String,
+            depth UInt16,
+            top_level_dir String,
+            recursive_size_bytes UInt64,
+            recursive_file_count UInt64,
+            recursive_dir_count UInt64,
+            direct_size_bytes UInt64,
+            direct_file_count UInt64,
+            last_modified UInt32,
+            last_accessed UInt32
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(snapshot_date)
+        ORDER BY (snapshot_date, path)
+        """
+        try:
+            client.execute(sql)
+        except Exception as e:
+            logger.warning(f"Could not verify source table schema: {e}")
+
+    def _load_directory_stats(self) -> None:
+        """
+        Pre-fetches recursive sizes only for the relevant tree.
+        """
+        client = Client(**self.db_config)
+        self._ensure_source_dependencies(client)
+        
+        query = """
+        SELECT path, recursive_size_bytes, recursive_file_count
+        FROM filesystem.directory_recursive_sizes
+        WHERE snapshot_date = %(date)s
+          AND path LIKE %(root)s
+        """
+        try:
+            results = client.execute(
+                query, 
+                {"date": self.snapshot_date.isoformat(), "root": self.root_path + "%"}
+            )
+            if not results and self.root_path == "/project/cil":
+                logger.warning("Warning: No recursive stats found! Directories might show 0 size.")
+            
+            self.dir_stats = {row[0]: (row[1], row[2]) for row in results}
+            
+        except Exception as e:
+            logger.error(f"Failed to load directory stats: {e}")
+            raise
+        finally:
+            client.disconnect()
 
     def compute(self) -> Dict[str, Any]:
         self.storage.ensure_table_exists()
+        
+        # 1. Load Directory Stats into Python Memory
+        self._load_directory_stats()
+        
+        # Get root stats
+        root_stats = self.dir_stats.get(self.root_path, (0, 0))
+        root_recursive_size = root_stats[0] or 0
+        root_recursive_count = root_stats[1] or 0
+
         client = Client(**self.db_config)
-
-        # Get root file count BEFORE starting stream
-        root_file_count_result = client.execute(
-            """
-            SELECT COALESCE(recursive_file_count, 0) as file_count
-            FROM filesystem.directory_recursive_sizes
-            WHERE snapshot_date = %(date)s AND path = %(path)s
-            """,
-            {"date": self.snapshot_date.isoformat(), "path": self.root_path}
-        )
-        root_file_count = root_file_count_result[0][0] if root_file_count_result else 0
-
-        # Query with recursive file counts from directory_recursive_sizes
+        
+        # 2. Optimized Stream Query (With External Sort)
+        # We allow spilling to disk if sort takes > 1GB RAM
         query = """
         SELECT
-            e.path,
-            e.name,
-            e.size,
-            e.is_directory,
-            CASE
-                WHEN e.is_directory = 1 THEN COALESCE(r.recursive_file_count, 0)
-                ELSE 0
-            END AS recursive_file_count
-        FROM filesystem.entries AS e
-        LEFT JOIN filesystem.directory_recursive_sizes AS r
-            ON e.snapshot_date = r.snapshot_date AND e.path = r.path
-        WHERE e.snapshot_date = %(date)s
-          AND e.path LIKE %(root)s
-        ORDER BY e.path ASC
+            path,
+            name,
+            size,
+            is_directory
+        FROM filesystem.entries
+        WHERE snapshot_date = %(date)s
+          AND path LIKE %(root)s
+        ORDER BY path ASC
         """
-
-        stream = client.execute_iter(
-            query,
-            {"date": self.snapshot_date.isoformat(), "root": self.root_path + "%"}
-        )
-
-        root_id = self._generate_id(self.root_path, True)
-        root_node = {
-            "id": root_id,
-            "name": self.root_path.split("/")[-1] or "root",
-            "path": self.root_path,
-            "size": 0, # Se calculará sumando
-            "is_directory": True,
-            "depth": 0,  # Root always has depth 0
-            "file_count": root_file_count,
-            "children_ids": [],
-            "files": [],
-            "parent_id": "",  # Root has no parent
+        
+        # KEY SETTING: External Sort
+        settings = {
+            'max_bytes_before_external_sort': 1073741824, # 1 GB
+            'max_block_size': 8192
         }
-        
-        stack = [(self.root_path, root_node)]
-        nodes_processed = 0
 
-        for row in stream:
-            path, name, size, is_directory, recursive_file_count = row
-            nodes_processed += 1
-
-            # 1. Stack Management: Cerrar nodos terminados y SUMAR tamaños
-            while stack and not path.startswith(stack[-1][0] + "/"):
-                _, finished_node = stack.pop()
-
-                # BUBBLE UP SIZE: Sumar al padre
-                if stack:
-                    parent_path, parent_node = stack[-1]
-                    parent_node['size'] += finished_node['size']
-
-                self._finalize_and_insert(finished_node)
-
-            if not stack: continue
-
-            parent_path, parent_node = stack[-1]
-
-            if path == self.root_path:
-                # Update root with its recursive file count
-                parent_node['file_count'] = recursive_file_count
-                continue
-
-            # 2. Process New Item
-            node_id = self._generate_id(path, is_directory)
-            depth = self._calculate_depth(path)  # Use relative depth
-
-            if is_directory:
-                new_node = {
-                    "id": node_id, "name": name, "path": path,
-                    "size": 0, # Inicia en 0, sumará hijos y archivos
-                    "is_directory": True, "depth": depth, "file_count": recursive_file_count,
-                    "children_ids": [], "files": [],
-                    "parent_id": parent_node["id"]  # Track parent
-                }
-                parent_node["children_ids"].append(node_id)
-                stack.append((path, new_node))
-            else:
-                # Archivo
-                parent_node["files"].append({
-                    "name": name, "path": path, "size": size
-                })
-                # Don't manually increment - using pre-calculated recursive_file_count
-                parent_node["size"] += size # Sumar tamaño al directorio actual
-
-        client.disconnect()
-
-        # Finalize remaining stack
-        while stack:
-            _, finished_node = stack.pop()
-            if stack:
-                parent_path, parent_node = stack[-1]
-                parent_node['size'] += finished_node['size']
-                # Don't propagate file_count - using pre-calculated recursive values
-
-            self._finalize_and_insert(finished_node)
-
-        self.storage.flush()
-        
-        return {
-            "status": "success", 
-            "path": self.root_path, 
-            "processed": nodes_processed, 
-            "inserted": self.storage.total_inserted
-        }     # Ensure table exists (safe to call multiple times)
-        self.storage.ensure_table_exists()
-
-        client = Client(**self.db_config)
-        
-        # Optimized Query: Streaming + Pre-calculated Sizes and File Counts
-        # Uses `filesystem.directory_recursive_sizes` for accurate recursive metrics
-        query = """
-        SELECT
-            e.path,
-            e.name,
-            CASE
-                WHEN e.is_directory = 1 THEN COALESCE(r.recursive_size_bytes, 0)
-                ELSE e.size
-            END AS size,
-            e.is_directory,
-            CASE
-                WHEN e.is_directory = 1 THEN COALESCE(r.recursive_file_count, 0)
-                ELSE 0
-            END AS recursive_file_count
-        FROM filesystem.entries AS e
-        LEFT JOIN filesystem.directory_recursive_sizes AS r
-            ON e.snapshot_date = r.snapshot_date AND e.path = r.path
-        WHERE e.snapshot_date = %(date)s
-          AND e.path LIKE %(root)s
-        ORDER BY e.path ASC
-        """
-        
         stream = client.execute_iter(
             query, 
-            {"date": self.snapshot_date.isoformat(), "root": self.root_path + "%"}
+            {"date": self.snapshot_date.isoformat(), "root": self.root_path + "%"},
+            settings=settings
         )
 
         # Initialize Stack
-        # Logic: We manually create the root node container to start the stack
         root_id = self._generate_id(self.root_path, True)
         root_node = {
             "id": root_id,
@@ -366,68 +313,72 @@ class VoronoiComputer:
             "path": self.root_path,
             "size": 0,
             "is_directory": True,
-            "depth": 0,  # Root always has depth 0
+            "depth": 0,  
             "file_count": 0,
             "children_ids": [],
             "files": [],
-            "parent_id": "",  # Root has no parent
+            "parent_id": "", 
         }
         
         stack = [(self.root_path, root_node)]
         nodes_processed = 0
 
         for row in stream:
-            path, name, size, is_directory, recursive_file_count = row
+            path, name, size, is_directory = row
             nodes_processed += 1
 
-            # 1. Stack Management: Close nodes that are done
-            # While current path is NOT a child of stack top...
+            # 1. Stack Management
             while stack and not path.startswith(stack[-1][0] + "/"):
                 _, finished_node = stack.pop()
-                # Don't propagate - we're using pre-calculated recursive counts
                 self._finalize_and_insert(finished_node)
 
-            if not stack: continue # Should not happen
+            if not stack: continue 
 
             parent_path, parent_node = stack[-1]
 
-            # If row IS the root itself (due to LIKE match), update info
+            # If row IS the root, update info
             if path == self.root_path:
-                parent_node['size'] = size
-                parent_node['file_count'] = recursive_file_count
+                parent_node['size'] = root_recursive_size 
+                parent_node['file_count'] = root_recursive_count
                 continue
 
             # 2. Process New Item
-            # Create Node Object
             node_id = self._generate_id(path, is_directory)
-            depth = self._calculate_depth(path)  # Use relative depth
+            depth = self._calculate_depth(path)
 
             if is_directory:
+                # LOOKUP
+                d_stats = self.dir_stats.get(path, (0, 0))
+                rec_size = d_stats[0] if d_stats[0] is not None else 0
+                rec_count = d_stats[1] if d_stats[1] is not None else 0
+
                 new_node = {
-                    "id": node_id, "name": name, "path": path, "size": size,
-                    "is_directory": True, "depth": depth, "file_count": recursive_file_count,
-                    "children_ids": [], "files": [],
-                    "parent_id": parent_node["id"]  # Track parent
+                    "id": node_id, 
+                    "name": name, 
+                    "path": path, 
+                    "size": size, 
+                    "is_directory": True, 
+                    "depth": depth, 
+                    "file_count": rec_count,
+                    "children_ids": [], 
+                    "files": [],
+                    "parent_id": parent_node["id"]
                 }
                 parent_node["children_ids"].append(node_id)
-                stack.append((path, new_node)) # Push to stack
+                stack.append((path, new_node))
             else:
-                # File: Don't create DB node yet, just add to parent's file list
                 parent_node["files"].append({
                     "name": name, "path": path, "size": size
                 })
-                # Don't increment file_count - using pre-calculated recursive count
 
         client.disconnect()
 
-        # Finalize remaining stack
         while stack:
             _, node = stack.pop()
-            # Don't propagate - we're using pre-calculated recursive counts
             self._finalize_and_insert(node)
 
-        # Flush final batch
         self.storage.flush()
+        self.dir_stats.clear() 
         
         return {
             "status": "success", 
@@ -439,7 +390,11 @@ class VoronoiComputer:
     def _finalize_and_insert(self, node: dict):
         """Prepare node and send to storage class."""
         
-        # Handle __files__ grouping (Synthetic Node)
+        final_size = node['size']
+        if node['is_directory']:
+            if node['path'] in self.dir_stats:
+                final_size = self.dir_stats[node['path']][0] or 0
+        
         if node["files"]:
             files_id = node["id"] + "_files"
             files_size = sum(f["size"] for f in node["files"])
@@ -460,24 +415,20 @@ class VoronoiComputer:
             )
             node["children_ids"].append(files_id)
 
-        # Insert the Directory Node itself
-        # IMPORTANT: Also store original_files on the directory node for frontend compatibility
-        # This allows the frontend to show file bubbles directly without needing to fetch __files__ children
         self.storage.add_node(
             snapshot_date=self.snapshot_date,
             node_id=node["id"],
-            parent_id=node.get("parent_id", ""),  # Use tracked parent_id
+            parent_id=node.get("parent_id", ""),
             path=node["path"],
             name=node["name"],
-            size=node["size"],
+            size=final_size,
             depth=node["depth"],
             is_directory=node["is_directory"],
             file_count=node["file_count"],
             children_ids=node["children_ids"],
             is_synthetic=False,
-            original_files=node["files"] if node["files"] else None  # Store files on directory too
+            original_files=node["files"] if node["files"] else None
         )
-
 
 # ==============================================================================
 # PART 3: ORCHESTRATOR & HELPERS
@@ -495,17 +446,18 @@ def worker_task(args):
 def fetch_subdirectories(snapshot_date, root_path, db_config) -> List[str]:
     """Finds top-level children to distribute workload."""
     client = Client(**db_config)
-    query = f"""
-    SELECT child_path FROM filesystem.directory_hierarchy
-    WHERE snapshot_date = '{snapshot_date.isoformat()}'
-      AND parent_path = '{root_path}'
-      AND is_directory = 1
-    """
     try:
+        # Check if table exists first to avoid crashes
+        query = f"""
+        SELECT child_path FROM filesystem.directory_hierarchy
+        WHERE snapshot_date = '{snapshot_date.isoformat()}'
+          AND parent_path = '{root_path}'
+          AND is_directory = 1
+        """
         result = client.execute(query)
         return [row[0] for row in result]
     except Exception as e:
-        logger.error(f"Error fetching subdirectories: {e}")
+        logger.warning(f"Could not fetch subdirectories (falling back to sequential): {e}")
         return []
     finally:
         client.disconnect()
@@ -517,7 +469,7 @@ def main():
     parser.add_argument("--workers", type=int, default=1, help="Parallel workers")
     parser.add_argument("--force", action="store_true", help="Delete old data")
     parser.add_argument("--root", default="/project/cil", help="Root path")
-    # DB connection args
+    
     parser.add_argument("--host", default=os.getenv('CLICKHOUSE_HOST', 'localhost'))
     parser.add_argument("--port", type=int, default=int(os.getenv('CLICKHOUSE_PORT', '9000')))
     parser.add_argument("--user", default=os.getenv('CLICKHOUSE_USER', 'default'))
@@ -526,7 +478,6 @@ def main():
 
     args = parser.parse_args()
 
-    # DB Config Dictionary
     db_config = {
         "host": args.host, "port": args.port, "user": args.user,
         "password": args.password, "database": args.database
@@ -551,24 +502,18 @@ def main():
     # 2. Execution
     if args.workers > 1:
         logger.info("Mode: PARALLEL (Partitioning by Subtree)")
-        
-        # Get sub-tasks
         subfolders = fetch_subdirectories(snap_date, args.root, db_config)
         
         if not subfolders:
             logger.warning("No subfolders found. Falling back to sequential.")
-            tasks = []
+            tasks = [(snap_date, args.root, db_config)]
         else:
             logger.info(f"Distributing {len(subfolders)} sub-trees.")
             tasks = [(snap_date, folder, db_config) for folder in subfolders]
-
-        # Also need to process the root itself (shallow)
-        # For simplicity in this script, we assume the workers cover the heavy lifting
-        # and we run one quick pass on the root path in the main process?
-        # Better: Just run the workers. 
         
         total_inserted = 0
         
+        # Parallel Execution
         with ProcessPoolExecutor(max_workers=args.workers) as executor:
             futures = [executor.submit(worker_task, t) for t in tasks]
             pbar = tqdm(as_completed(futures), total=len(tasks), desc="Subtrees", disable=not HAS_TQDM)
