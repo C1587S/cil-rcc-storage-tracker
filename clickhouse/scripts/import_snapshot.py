@@ -1,30 +1,19 @@
 #!/usr/bin/env python3
 """
 Import filesystem snapshot from Parquet files into ClickHouse.
-
-This script:
-1. Reads Parquet files from a snapshot directory
-2. Transforms data to ClickHouse schema
-3. Batch inserts data efficiently
-4. Updates snapshot metadata
-5. Materializes views automatically
-
-Usage:
-    python import_snapshot.py /path/to/cil_scans_aggregated/2025-12-12
-
-Performance:
-    - Parallel Parquet reading
-    - Batch inserts (1M rows per batch)
-    - ~10-15 minutes for 74M rows
+Optimized for LOW MEMORY usage via streaming, with automatic structure preservation.
 """
 
 import sys
 import time
 import logging
+import gc
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import Dict, Any
+
 import polars as pl
+import pyarrow.parquet as pq
 from clickhouse_driver import Client
 
 logging.basicConfig(
@@ -33,13 +22,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 class SnapshotImporter:
-    """Import Parquet snapshot into ClickHouse."""
+    """Import Parquet snapshot into ClickHouse using streaming + in-db fixups."""
 
     def __init__(self, clickhouse_host=None, clickhouse_port=None):
-        """Initialize importer with ClickHouse connection."""
-        # Get host/port from environment if not provided
         import os
         if clickhouse_host is None:
             clickhouse_host = os.getenv('CLICKHOUSE_HOST', 'localhost')
@@ -50,222 +36,219 @@ class SnapshotImporter:
             host=clickhouse_host,
             port=clickhouse_port,
             settings={
-                'max_threads': 8,
-                'max_insert_threads': 4,
-                'max_insert_block_size': 1000000,
+                'compression': 'lz4',
+                'max_insert_block_size': 1_000_000,
+                'send_timeout': 300,
+                'receive_timeout': 300,
             }
         )
         logger.info(f"Connected to ClickHouse at {clickhouse_host}:{clickhouse_port}")
 
     def import_snapshot(self, snapshot_dir: Path, clear_existing: bool = True) -> Dict[str, Any]:
-        """
-        Import entire snapshot from directory.
-
-        Args:
-            snapshot_dir: Path to snapshot directory containing Parquet files
-            clear_existing: Whether to clear existing data for this snapshot date
-
-        Returns:
-            Import statistics
-        """
         start_time = time.time()
-
         snapshot_date = snapshot_dir.name
+        
         logger.info(f"Importing snapshot: {snapshot_date}")
         logger.info(f"Source directory: {snapshot_dir}")
 
-        # Clear any existing data for this snapshot date (if requested)
+        # 1. Clear Old Data
         if clear_existing:
-            logger.info(f"Clearing existing data for {snapshot_date}...")
-            try:
-                self.client.execute(
-                    "ALTER TABLE filesystem.entries DELETE WHERE snapshot_date = %(date)s",
-                    {'date': snapshot_date}
-                )
-                self.client.execute(
-                    "ALTER TABLE filesystem.snapshots DELETE WHERE snapshot_date = %(date)s",
-                    {'date': snapshot_date}
-                )
-                self.client.execute(
-                    "ALTER TABLE filesystem.voronoi_precomputed DELETE WHERE snapshot_date = %(date)s",
-                    {'date': snapshot_date}
-                )
-                logger.info(f"Cleared existing data for {snapshot_date}")
-            except Exception as e:
-                logger.warning(f"Could not clear existing data (this is normal for first import): {e}")
+            self._clear_existing_data(snapshot_date)
 
-        # Find all Parquet files
         parquet_files = list(snapshot_dir.glob("*.parquet"))
         if not parquet_files:
             raise ValueError(f"No Parquet files found in {snapshot_dir}")
 
-        logger.info(f"Found {len(parquet_files)} Parquet files")
-
-        # Import each Parquet file
+        # 2. Stream Data (Low Memory Phase)
         total_rows = 0
         total_size = 0
 
         for parquet_file in parquet_files:
             logger.info(f"Processing {parquet_file.name}...")
-
             file_start = time.time()
-            rows, size = self._import_parquet_file(parquet_file, snapshot_date)
+            
+            rows, size = self._import_parquet_file_stream(parquet_file, snapshot_date)
 
             total_rows += rows
             total_size += size
-
+            
             duration = time.time() - file_start
             logger.info(
-                f"  Imported {rows:,} rows ({size / 1024 / 1024:.1f} MB) "
-                f"in {duration:.1f}s ({rows / duration:.0f} rows/s)"
+                f"  Finished {parquet_file.name}: {rows:,} rows "
+                f"in {duration:.1f}s"
             )
+            gc.collect() # Force cleanup
 
-        # Update snapshot metadata
+        # 3. Fix Directory Flags (Structure Preservation Phase)
+        # This replaces the logic that used to run in Python memory
+        self._finalize_directory_flags(snapshot_date)
+
+        # 4. Update Metadata (Now that flags are correct)
         self._update_snapshot_metadata(snapshot_date)
 
         total_duration = time.time() - start_time
+        throughput = total_rows / total_duration if total_duration > 0 else 0
 
         stats = {
             'snapshot_date': snapshot_date,
             'total_rows': total_rows,
             'total_size_mb': total_size / 1024 / 1024,
             'total_duration_seconds': total_duration,
-            'rows_per_second': total_rows / total_duration,
-            'files_processed': len(parquet_files),
+            'rows_per_second': throughput,
         }
 
-        logger.info("=" * 60)
-        logger.info(f"Import completed successfully!")
-        logger.info(f"  Total rows: {total_rows:,}")
-        logger.info(f"  Total size: {total_size / 1024 / 1024:.1f} MB")
-        logger.info(f"  Duration: {total_duration:.1f}s")
-        logger.info(f"  Throughput: {total_rows / total_duration:.0f} rows/s")
-        logger.info("=" * 60)
-
+        self._log_summary(stats)
         return stats
 
-    def _import_parquet_file(self, parquet_file: Path, snapshot_date: str) -> tuple[int, int]:
-        """
-        Import single Parquet file into ClickHouse.
-
-        Returns:
-            (row_count, file_size_bytes)
-        """
-        # Read Parquet file with Polars (fast)
-        df = pl.read_parquet(parquet_file)
-
+    def _import_parquet_file_stream(self, parquet_file: Path, snapshot_date: str) -> tuple[int, int]:
+        """Stream Parquet file in chunks."""
         file_size = parquet_file.stat().st_size
-        row_count = len(df)
+        total_rows_imported = 0
+        BATCH_SIZE = 500_000 
 
-        # Extract filename from path (last component)
-        df = df.with_columns([
-            pl.col('path').str.split('/').list.last().alias('name')
-        ])
+        try:
+            pq_file = pq.ParquetFile(parquet_file)
+        except Exception as e:
+            logger.error(f"Failed to open {parquet_file}: {e}")
+            return 0, 0
 
-        # Add snapshot_date column (convert string to date object)
-        from datetime import datetime
+        num_batches = (pq_file.metadata.num_rows + BATCH_SIZE - 1) // BATCH_SIZE
+        batch_idx = 0
+
+        for batch in pq_file.iter_batches(batch_size=BATCH_SIZE):
+            batch_idx += 1
+            
+            # Convert to Polars for fast transform
+            df = pl.from_arrow(batch)
+            
+            # Transform
+            df = self._transform_batch(df, snapshot_date)
+            
+            # Insert
+            self._insert_batch(df)
+
+            total_rows_imported += len(df)
+            
+            if batch_idx % 10 == 0:
+                logger.debug(f"    Batch {batch_idx}/{num_batches}...")
+
+            del df # Free memory
+
+        return total_rows_imported, file_size
+
+    def _transform_batch(self, df: pl.DataFrame, snapshot_date: str) -> pl.DataFrame:
+        """Prepare batch for ClickHouse."""
         snapshot_date_obj = datetime.strptime(snapshot_date, '%Y-%m-%d').date()
+
+        # Basic extractions
         df = df.with_columns([
+            pl.col('path').str.split('/').list.last().alias('name'),
             pl.lit(snapshot_date_obj).alias('snapshot_date')
         ])
 
-        # Determine if path is a directory
-        # (appears as parent_path in the dataset)
-        all_parents = set(df['parent_path'].unique().to_list())
-        df = df.with_columns([
-            pl.col('path').is_in(all_parents).cast(pl.UInt8).alias('is_directory')
-        ])
+        # Handle 'is_directory':
+        # If 'file_type' exists, use it. If not, default to 0.
+        # The database fixup step later will correct any mistakes here.
+        if 'file_type' in df.columns:
+            df = df.with_columns([
+                (pl.col('file_type') == 'directory').cast(pl.UInt8).alias('is_directory')
+            ])
+        else:
+            df = df.with_columns([pl.lit(0).cast(pl.UInt8).alias('is_directory')])
 
-        # Rename 'group' to 'group_name' if it exists
+        # Handle Group/GroupName rename
         if 'group' in df.columns and 'group_name' not in df.columns:
             df = df.rename({'group': 'group_name'})
 
-        # Fill null values in string columns with defaults
+        # Fill Defaults efficiently
+        defaults = {
+            'owner': 'unknown', 'group_name': 'unknown', 'file_type': 'unknown',
+            'uid': 0, 'gid': 0, 
+            'modified_time': 0, 'accessed_time': 0, 'created_time': 0
+        }
+        
+        # Create missing columns
+        new_cols = []
+        for col, val in defaults.items():
+            if col not in df.columns:
+                dtype = pl.UInt32 if isinstance(val, int) else pl.Utf8
+                new_cols.append(pl.lit(val).cast(dtype).alias(col))
+        if new_cols:
+            df = df.with_columns(new_cols)
+
+        # Handle Nulls in existing columns
         df = df.with_columns([
             pl.col('owner').fill_null('unknown'),
-            pl.col('group_name').fill_null('unknown') if 'group_name' in df.columns else pl.lit('unknown').alias('group_name'),
+            pl.col('group_name').fill_null('unknown'),
             pl.col('file_type').fill_null('unknown'),
         ])
-
-        # Handle missing columns with defaults
-        if 'owner' not in df.columns:
-            df = df.with_columns([pl.lit('unknown').alias('owner')])
-        if 'group_name' not in df.columns:
-            df = df.with_columns([pl.lit('unknown').alias('group_name')])
-        if 'uid' not in df.columns:
-            df = df.with_columns([pl.lit(0).cast(pl.UInt32).alias('uid')])
-        if 'gid' not in df.columns:
-            df = df.with_columns([pl.lit(0).cast(pl.UInt32).alias('gid')])
-
-        # Convert timestamps to UInt32 (handle nulls by replacing with 0)
+        
+        # Cast Times
         for time_col in ['modified_time', 'accessed_time', 'created_time']:
-            df = df.with_columns([
-                pl.col(time_col).fill_null(0).cast(pl.UInt32)
-            ])
+            df = df.with_columns([pl.col(time_col).fill_null(0).cast(pl.UInt32)])
 
-        # Select and order columns to match ClickHouse schema
+        return df
+
+    def _insert_batch(self, df: pl.DataFrame):
+        """Insert batch."""
         columns_order = [
-            'snapshot_date',
-            'path',
-            'parent_path',
-            'name',
-            'depth',
-            'top_level_dir',
-            'size',
-            'file_type',
-            'is_directory',
-            'modified_time',
-            'accessed_time',
-            'created_time',
-            'inode',
-            'permissions',
-            'owner',
-            'group_name',
-            'uid',
-            'gid',
+            'snapshot_date', 'path', 'parent_path', 'name', 'depth',
+            'top_level_dir', 'size', 'file_type', 'is_directory',
+            'modified_time', 'accessed_time', 'created_time',
+            'inode', 'permissions', 'owner', 'group_name', 'uid', 'gid'
         ]
-
-        # Only include columns that exist
+        
+        # Only select columns that actually exist in dataframe
         available_columns = [col for col in columns_order if col in df.columns]
         df = df.select(available_columns)
+        
+        query = f"INSERT INTO filesystem.entries ({', '.join(available_columns)}) VALUES"
+        self.client.execute(query, df.rows())
 
-        # Convert to list of tuples for batch insert
-        data = df.rows()
-
-        # Batch insert into ClickHouse
-        batch_size = 1000000  # 1M rows per batch
-        total_batches = (len(data) + batch_size - 1) // batch_size
-
-        for i in range(0, len(data), batch_size):
-            batch = data[i:i + batch_size]
-            batch_num = i // batch_size + 1
-
-            logger.debug(f"    Inserting batch {batch_num}/{total_batches} ({len(batch):,} rows)")
-
-            self.client.execute(
-                f"""
-                INSERT INTO filesystem.entries ({', '.join(available_columns)})
-                VALUES
-                """,
-                batch
+    def _finalize_directory_flags(self, snapshot_date: str):
+        """
+        CRITICAL: This ensures 'is_directory' is correct without using Python RAM.
+        It runs a SQL query to mark any path that appears as a 'parent_path' as a directory.
+        """
+        logger.info("Finalizing directory structure (Calculating is_directory flags)...")
+        
+        # 1. Trigger the update
+        query = f"""
+            ALTER TABLE filesystem.entries
+            UPDATE is_directory = 1
+            WHERE snapshot_date = '{snapshot_date}'
+              AND path IN (
+                SELECT DISTINCT parent_path
+                FROM filesystem.entries
+                WHERE snapshot_date = '{snapshot_date}'
             )
+        """
+        self.client.execute(query)
 
-        return row_count, file_size
+        # 2. Wait for the update to complete
+        # ClickHouse mutations are async. We must wait or stats will be wrong.
+        logger.info("Waiting for database to apply structure updates...")
+        while True:
+            # Check if there are active mutations for this table
+            pending = self.client.execute("""
+                SELECT count()
+                FROM system.mutations
+                WHERE database = 'filesystem' 
+                  AND table = 'entries' 
+                  AND is_done = 0
+            """)[0][0]
+            
+            if pending == 0:
+                break
+            time.sleep(2)
+        
+        logger.info("Directory structure finalized.")
 
     def _update_snapshot_metadata(self, snapshot_date: str):
-        """Update snapshot metadata table."""
+        """Calculate and insert snapshot metadata."""
         logger.info("Updating snapshot metadata...")
-
-        # Convert snapshot_date string to date object
-        snapshot_date_obj = datetime.strptime(snapshot_date, '%Y-%m-%d').date()
-
-        # Delete existing metadata for this date first (to avoid duplicates)
-        self.client.execute(
-            "ALTER TABLE filesystem.snapshots DELETE WHERE snapshot_date = %(date)s",
-            {'date': snapshot_date}
-        )
-
-        # Calculate snapshot statistics
+        
+        # We calculate stats AFTER the finalize step, so 'total_directories' is correct
         stats = self.client.execute(f"""
             SELECT
                 count() as total_entries,
@@ -278,127 +261,68 @@ class SnapshotImporter:
         """)[0]
 
         total_entries, total_size, total_directories, total_files, top_level_dirs = stats
+        
+        self.client.execute(
+            "ALTER TABLE filesystem.snapshots DELETE WHERE snapshot_date = %(date)s",
+            {'date': snapshot_date}
+        )
 
-        # Insert snapshot metadata
         self.client.execute("""
             INSERT INTO filesystem.snapshots
             (snapshot_date, scan_started, scan_completed, total_entries, total_size,
              total_directories, total_files, top_level_dirs, scanner_version, import_duration_seconds)
             VALUES
         """, [(
-            snapshot_date_obj,
-            datetime.now(),  # Placeholder - actual scan time not available
-            datetime.now(),
-            total_entries,
-            total_size,
-            total_directories,
-            total_files,
-            top_level_dirs,
-            'unknown',  # Scanner version not in Parquet
-            0.0,  # Will be updated later
+            datetime.strptime(snapshot_date, '%Y-%m-%d').date(),
+            datetime.now(), datetime.now(),
+            total_entries, total_size, total_directories, total_files, top_level_dirs,
+            'unknown', 0.0,
         )])
 
-        logger.info(f"  Total entries: {total_entries:,}")
-        logger.info(f"  Total size: {total_size / 1024 / 1024 / 1024:.2f} GB")
-        logger.info(f"  Directories: {total_directories:,}")
-        logger.info(f"  Files: {total_files:,}")
-        logger.info(f"  Top-level dirs: {', '.join(top_level_dirs)}")
+    def _clear_existing_data(self, snapshot_date: str):
+        logger.info(f"Clearing existing data for {snapshot_date}...")
+        try:
+            self.client.execute(
+                "ALTER TABLE filesystem.entries DELETE WHERE snapshot_date = %(date)s",
+                {'date': snapshot_date}
+            )
+        except Exception:
+            pass
+
+    def _log_summary(self, stats):
+        logger.info("=" * 60)
+        logger.info(f"Import completed successfully!")
+        logger.info(f"  Total rows: {stats['total_rows']:,}")
+        logger.info(f"  Total size: {stats['total_size_mb']:.1f} MB")
+        logger.info("=" * 60)
 
     def verify_import(self, snapshot_date: str) -> bool:
-        """
-        Verify import completed successfully.
-
-        Checks:
-        - Data exists in main table
-        - Materialized views populated
-        - Row counts match
-        """
-        logger.info("Verifying import...")
-
-        # Check main table
-        main_count = self.client.execute(f"""
-            SELECT count()
-            FROM filesystem.entries
-            WHERE snapshot_date = '{snapshot_date}'
-        """)[0][0]
-
-        logger.info(f"  Main table: {main_count:,} rows")
-
-        if main_count == 0:
-            logger.error("  ERROR: No data in main table!")
-            return False
-
-        # Check materialized views
-        views_to_check = [
-            'directory_sizes',
-            'directory_hierarchy',
-            'file_type_distribution',
-            'owner_distribution',
-        ]
-
-        for view in views_to_check:
-            count = self.client.execute(f"""
-                SELECT count()
-                FROM filesystem.{view}
-                WHERE snapshot_date = '{snapshot_date}'
-            """)[0][0]
-
-            logger.info(f"  {view}: {count:,} rows")
-
-            if count == 0:
-                logger.warning(f"  WARNING: No data in {view} view!")
-
-        logger.info("Verification complete!")
-        return True
+        count = self.client.execute(f"SELECT count() FROM filesystem.entries WHERE snapshot_date = '{snapshot_date}'")[0][0]
+        return count > 0
 
     def close(self):
-        """Close ClickHouse connection."""
         self.client.disconnect()
 
-
 def main():
-    """Main entry point."""
     import argparse
-
-    parser = argparse.ArgumentParser(description='Import filesystem snapshot from Parquet files')
-    parser.add_argument('snapshot_dir', help='Path to snapshot directory (e.g., /path/to/2025-12-27)')
-    parser.add_argument('--no-clear', action='store_true', help='Do not clear existing data for this date')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('snapshot_dir')
+    parser.add_argument('--no-clear', action='store_true')
     args = parser.parse_args()
 
     snapshot_dir = Path(args.snapshot_dir)
-
-    if not snapshot_dir.exists():
-        print(f"Error: Directory not found: {snapshot_dir}")
-        sys.exit(1)
-
-    if not snapshot_dir.is_dir():
-        print(f"Error: Not a directory: {snapshot_dir}")
-        sys.exit(1)
-
-    # Import snapshot
     importer = SnapshotImporter()
-
+    
     try:
-        stats = importer.import_snapshot(snapshot_dir, clear_existing=not args.no_clear)
-
-        # Verify import
-        snapshot_date = snapshot_dir.name
-        success = importer.verify_import(snapshot_date)
-
-        if success:
-            print("\nImport completed successfully!")
+        importer.import_snapshot(snapshot_dir, clear_existing=not args.no_clear)
+        if importer.verify_import(snapshot_dir.name):
             sys.exit(0)
-        else:
-            print("\nImport completed with warnings!")
-            sys.exit(1)
-
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Import failed: {e}", exc_info=True)
         sys.exit(1)
-
     finally:
         importer.close()
-
 
 if __name__ == "__main__":
     main()
