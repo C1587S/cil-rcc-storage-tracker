@@ -1,0 +1,154 @@
+========================================
+RCC STORAGE TRACKER – FULL SETUP STEPS
+========================================
+
+# 0) Connect to the VM
+ssh root@<PUBLIC_IP>
+
+----------------------------------------
+# 1) Install Docker (one time only)
+----------------------------------------
+
+apt update
+apt install -y docker.io docker-compose
+systemctl enable docker
+systemctl start docker
+
+# Verify installation
+docker --version
+docker compose version
+
+----------------------------------------
+# 2) Clone the repository
+----------------------------------------
+
+cd /root
+git clone https://github.com/C1587S/cil-rcc-storage-tracker.git
+cd cil-rcc-storage-tracker
+
+----------------------------------------
+# 3) Copy and unzip scan data
+----------------------------------------
+
+# Assume the zip file is in /root
+ls
+# Expect: cil_scans.zip
+
+unzip cil_scans.zip
+
+# Zip creates a deep directory tree; move it
+mv project/cil/home_dirs/rcc/cil_scans /root/
+
+# Move scans into the repo
+mv /root/cil_scans /root/cil-rcc-storage-tracker/
+
+# Verify structure
+ls cil_scans
+# battuta_shares gcp home_dirs kupe_shares norgay sacagawea_shares ...
+
+----------------------------------------
+# 4) Start all services (DB + API + Web)
+----------------------------------------
+
+docker compose up -d
+
+# Verify containers are running
+docker compose ps
+# clickhouse, api, web should be "Up"
+
+----------------------------------------
+# 5) (Optional) Reset database (clean start)
+----------------------------------------
+
+docker compose down
+docker volume rm cil-rcc-storage-tracker_clickhouse-data
+docker compose up -d
+
+----------------------------------------
+# 6) IMPORT DATA – DIRECTORY BY DIRECTORY
+----------------------------------------
+
+# IMPORTANT:
+# - First import clears the database
+# - All following imports MUST use --no-clear
+
+# 6.1) First import (example: gcp)
+docker compose run --rm importer \
+python scripts/import_snapshot.py /scans/gcp/2025-12-27
+
+# 6.2) Remaining directories (one by one)
+docker compose run --rm importer \
+python scripts/import_snapshot.py /scans/battuta_shares/2025-12-27 --no-clear
+
+docker compose run --rm importer \
+python scripts/import_snapshot.py /scans/battuta-shares-S3-archive/2025-12-27 --no-clear
+
+docker compose run --rm importer \
+python scripts/import_snapshot.py /scans/home_dirs/2025-12-27 --no-clear
+
+docker compose run --rm importer \
+python scripts/import_snapshot.py /scans/kupe_shares/2025-12-27 --no-clear
+
+docker compose run --rm importer \
+python scripts/import_snapshot.py /scans/norgay/2025-12-27 --no-clear
+
+docker compose run --rm importer \
+python scripts/import_snapshot.py /scans/sacagawea_shares/2025-12-27 --no-clear
+
+----------------------------------------
+# 7) Verify that all data was imported
+----------------------------------------
+
+docker compose exec clickhouse clickhouse-client --query "
+SELECT top_level_dir, count()
+FROM filesystem.entries
+WHERE snapshot_date='2025-12-27'
+GROUP BY top_level_dir
+ORDER BY count() DESC
+"
+
+----------------------------------------
+# 8) Compute recursive directory sizes (REQUIRED)
+----------------------------------------
+
+# Aggregates child sizes into parent directories
+docker compose run --rm importer \
+python scripts/compute_recursive_sizes_v2.py 2025-12-27
+
+----------------------------------------
+# 9) Generate Voronoi visualization (REQUIRED)
+----------------------------------------
+
+docker compose run --rm importer \
+python scripts/compute_voronoi_unified.py 2025-12-27
+
+----------------------------------------
+# 10) Optimize tables (recommended)
+----------------------------------------
+
+docker compose exec clickhouse clickhouse-client --query \
+"OPTIMIZE TABLE filesystem.directory_hierarchy FINAL"
+
+----------------------------------------
+# 11) Verify Voronoi data
+----------------------------------------
+
+docker compose exec clickhouse clickhouse-client --query "
+SELECT name, size, depth
+FROM filesystem.voronoi_precomputed
+WHERE snapshot_date='2025-12-27'
+ORDER BY size DESC
+LIMIT 10
+"
+
+----------------------------------------
+# 12) Open the dashboard
+----------------------------------------
+
+# From your local browser:
+http://<PUBLIC_IP>:3000
+
+# You should see:
+# - Snapshot selector
+# - All top-level directories
+# - Full Voronoi visualization
