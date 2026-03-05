@@ -23,6 +23,10 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ARG API_URL=http://api:8000
 ENV API_URL=${API_URL}
 
+# Base path baked into client bundle at build time
+ARG NEXT_PUBLIC_BASE_PATH=""
+ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
+
 # Build the application
 RUN npm run build
 

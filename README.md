@@ -226,12 +226,51 @@ Using Cloudflare (free plan):
    - Proxy: Enabled (orange cloud)
 3. Access: `https://tracker.yourdomain.com`
 
-**Or use Cloudflare Tunnel (no public IP needed):**
+**Or use Cloudflare Tunnel (no public IP needed, recommended for local machine):**
+
+Install cloudflared:
 ```bash
-cloudflared tunnel create storage-tracker
-cloudflared tunnel route dns storage-tracker tracker.yourdomain.com
-cloudflared tunnel run storage-tracker
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+chmod +x cloudflared && sudo mv cloudflared /usr/local/bin
 ```
+
+One-time setup:
+```bash
+cloudflared tunnel login
+cloudflared tunnel create dev-tracker
+# Note the tunnel ID printed (e.g. 367f2abe-...)
+```
+
+Create `~/.cloudflared/config.yml`:
+```yaml
+tunnel: dev-tracker
+credentials-file: /home/<user>/.cloudflared/<TUNNEL-ID>.json
+
+ingress:
+  - hostname: your-domain.com
+    path: /cil-rcc-tracker
+    service: http://localhost:3000
+  - service: http_status:404
+```
+
+Route DNS and start:
+```bash
+cloudflared tunnel route dns dev-tracker your-domain.com
+```
+
+Start with auto-reconnect (survives internet drops):
+```bash
+nohup bash -c 'while true; do cloudflared tunnel run dev-tracker; sleep 5; done' &
+```
+
+Stop:
+```bash
+pkill cloudflared
+```
+
+Access: `https://your-domain.com/cil-rcc-tracker`
+
+**Note**: The app must be built with the correct `NEXT_PUBLIC_BASE_PATH` matching the subpath. This is already configured in `docker-compose.yml` as `/cil-rcc-tracker`.
 
 ---
 

@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  basePath: '/cil-rcc-tracker',
   reactStrictMode: true,
   output: 'standalone',
   eslint: {

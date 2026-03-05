@@ -230,6 +230,8 @@ services:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BASE_PATH: /cil-rcc-tracker
     container_name: tracker-web
     hostname: web
 
@@ -237,10 +239,9 @@ services:
       - "3000:3000"
 
     environment:
-      # API URL for server-side rewrites
       API_URL: http://api:8000
-      # Public API URL for client-side requests (optional)
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: ""
+      NEXT_BASE_PATH: /cil-rcc-tracker
 
     depends_on:
       - api
