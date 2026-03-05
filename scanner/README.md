@@ -264,6 +264,37 @@ files = glob.glob('scan_output_chunk_*.parquet')
 df = pd.concat([pd.read_parquet(f) for f in files])
 ```
 
+## Sharing Results via HTTP (Midway2)
+
+Scan results can be published to a public URL using the `public_html` directory on Midway2.
+
+> **Note:** HTTP sharing is only supported on Midway2. `/scratch/midway3` is mounted on Midway2, so no data transfer between clusters is needed.
+
+### Setup (one time)
+```bash
+ssh midway2.rcc.uchicago.edu
+chmod o+x $HOME
+mkdir -p $HOME/public_html
+chmod o+x $HOME/public_html
+```
+
+### Publish scan results
+```bash
+bash scripts/publish_scans.sh
+```
+
+Files will be available at:
+```
+http://users.rcc.uchicago.edu/~[your_CNetID]/cil_scans/
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SOURCE_DIR` | `/scratch/midway3/$USER/cil_scans` | Source directory with scan results |
+| `PUBLISH_DIR` | `~/public_html/cil_scans` | Destination directory |
+
 ## Development
 
 ### Running Tests
