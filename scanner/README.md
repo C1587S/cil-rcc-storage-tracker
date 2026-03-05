@@ -295,6 +295,24 @@ http://users.rcc.uchicago.edu/~[your_CNetID]/cil_scans/
 | `SOURCE_DIR` | `/scratch/midway3/$USER/cil_scans` | Source directory with scan results |
 | `PUBLISH_DIR` | `~/public_html/cil_scans` | Destination directory |
 
+### Download to local machine and import into dashboard
+
+Once files are published, download and import them from your local machine (project root):
+
+```bash
+# Fix permissions if needed (first time only)
+sudo chown $USER:$USER cil_scans
+
+# Download latest scan from RCC public URL (auto-detects date)
+./scanner/scripts/download-scans.sh
+
+# Or specify URL and date explicitly
+./scanner/scripts/download-scans.sh https://users.rcc.uchicago.edu/~cadavidsanchez/cil_scans 2026-03-05
+
+# Import into ClickHouse and update dashboard
+./scripts/docker-import.sh
+```
+
 ## Development
 
 ### Running Tests

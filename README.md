@@ -65,16 +65,24 @@ See [scanner/README.md](scanner/README.md) for performance tuning.
 
 ### Step 2: Download Parquet Files to Local Machine
 
-**From your local machine:**
+**From your local machine (recommended — downloads via RCC public_html):**
 
 ```bash
-# Download scans from RCC
-rsync -avz --progress \
-  <your-cnetid>@midway3.rcc.uchicago.edu:~/storage-tracker/cil_scans/ \
-  ./cil_scans/
+./scanner/scripts/download-scans.sh
 ```
 
-Or use Globus transfer for large files.
+This script:
+- Auto-detects the latest scan date from the public URL
+- Downloads all parquet chunks into `cil_scans/<source>/<date>/`
+- Validates every file (deletes and re-downloads any corrupted ones)
+- Skips files already present (safe to re-run)
+
+**Alternative: rsync directly from RCC:**
+```bash
+rsync -avz --progress \
+  <your-cnetid>@midway3.rcc.uchicago.edu:/scratch/midway3/<cnetid>/cil_scans/ \
+  ./cil_scans/
+```
 
 **IMPORTANT**: Parquet files stay on your local machine. You will upload them to the cloud server in Step 3.
 
@@ -302,6 +310,64 @@ Dashboard (Browser)
   docker compose exec clickhouse clickhouse-client --query \
     "ALTER TABLE filesystem.entries DELETE WHERE snapshot_date='2025-12-27'"
   ```
+
+### Managing Snapshots
+
+**List all snapshots in the database:**
+```bash
+docker compose exec clickhouse clickhouse-client --query \
+  "SELECT snapshot_date, formatReadableQuantity(count()) as entries
+   FROM filesystem.entries
+   GROUP BY snapshot_date
+   ORDER BY snapshot_date DESC"
+```
+
+**Delete a specific snapshot (keeps everything else):**
+```bash
+DATE="2025-12-27"
+docker compose exec clickhouse clickhouse-client --query \
+  "ALTER TABLE filesystem.entries DELETE WHERE snapshot_date='${DATE}'"
+docker compose exec clickhouse clickhouse-client --query \
+  "ALTER TABLE filesystem.directory_hierarchy DELETE WHERE snapshot_date='${DATE}'"
+docker compose exec clickhouse clickhouse-client --query \
+  "ALTER TABLE filesystem.voronoi_precomputed DELETE WHERE snapshot_date='${DATE}'"
+docker compose exec clickhouse clickhouse-client --query \
+  "OPTIMIZE TABLE filesystem.entries FINAL"
+```
+
+**Keep only the latest snapshot (delete all others):**
+```bash
+# Find the latest date
+LATEST=$(docker compose exec clickhouse clickhouse-client --query \
+  "SELECT max(snapshot_date) FROM filesystem.entries" | tr -d '\r')
+
+echo "Keeping: ${LATEST}"
+
+# Delete everything older
+for table in entries directory_hierarchy voronoi_precomputed; do
+  docker compose exec clickhouse clickhouse-client --query \
+    "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date != '${LATEST}'"
+done
+docker compose exec clickhouse clickhouse-client --query \
+  "OPTIMIZE TABLE filesystem.entries FINAL"
+echo "Done. Only ${LATEST} remains."
+```
+
+**Replace the current snapshot with a new one:**
+```bash
+NEW_DATE="2026-03-05"
+
+# 1. Delete old data for this date (if re-importing)
+for table in entries directory_hierarchy voronoi_precomputed; do
+  docker compose exec clickhouse clickhouse-client --query \
+    "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${NEW_DATE}'"
+done
+
+# 2. Import fresh
+./scripts/docker-import.sh
+```
+
+---
 
 ### Updating Scans
 
@@ -554,8 +620,8 @@ This provides faster iteration during development.
 cd ~/storage-tracker/scanner/scripts
 ./scan_cil_parallel.sh
 
-# 2. On local machine: Download from RCC
-rsync -avz <cnetid>@midway3:~/storage-tracker/cil_scans/ ./cil_scans/
+# 2. On local machine: Download from RCC public_html
+./scanner/scripts/download-scans.sh  # auto-detects date, validates files
 
 # 3. On local machine: Upload to cloud VM
 rsync -avz ./cil_scans/ ubuntu@<VM_IP>:~/storage-tracker/cil_scans/
