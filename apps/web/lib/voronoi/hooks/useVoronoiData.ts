@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useVoronoiNode, type VoronoiNodeExtended } from './useVoronoiNode'
 import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
+import { API_BASE_URL } from '@/lib/api'
 
 /**
  * Options for useVoronoiData hook
@@ -77,7 +78,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath }: UseVoronoiDa
       }
 
       const response = await fetch(
-        `/api/voronoi/node/${selectedSnapshot}/batch?node_ids=${nodeIds.join(',')}`
+        `${API_BASE_URL}/api/voronoi/node/${selectedSnapshot}/batch?node_ids=${nodeIds.join(',')}`
       )
 
       if (!response.ok) {
@@ -210,7 +211,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath }: UseVoronoiDa
           // CRITICAL: Fetch ONE EXTRA DEPTH beyond targetDepth
           // If targetDepth=2, we need depths 0,1,2,3 so that depth-2 nodes can have their children loaded for preview
           const fetchDepth = targetDepth + 1
-          const subtreeUrl = `/api/voronoi/node/${selectedSnapshot}/subtree?path=${encodeURIComponent(node.path)}&max_depth=${fetchDepth}`
+          const subtreeUrl = `${API_BASE_URL}/api/voronoi/node/${selectedSnapshot}/subtree?path=${encodeURIComponent(node.path)}&max_depth=${fetchDepth}`
           console.log('[expandToPreviewDepth] Fetching subtree:', {
             url: subtreeUrl,
             nodePath: node.path,
@@ -406,7 +407,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath }: UseVoronoiDa
       // Fetch directly by path from backend
       try {
         const response = await fetch(
-          `/api/voronoi/node/${selectedSnapshot}/by-path?path=${encodeURIComponent(targetPath)}`
+          `${API_BASE_URL}/api/voronoi/node/${selectedSnapshot}/by-path?path=${encodeURIComponent(targetPath)}`
         )
 
         if (!response.ok) {

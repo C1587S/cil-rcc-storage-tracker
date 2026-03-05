@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { type VoronoiNode } from '@/lib/voronoi-data-adapter'
+import { API_BASE_URL } from '@/lib/api'
 
 /**
  * Backend voronoi node response (from ClickHouse)
@@ -91,7 +92,7 @@ export function useVoronoiNode(
         throw new Error('Snapshot and nodeId are required')
       }
 
-      const response = await fetch(`/api/voronoi/node/${snapshot}/${nodeId}`)
+      const response = await fetch(`${API_BASE_URL}/api/voronoi/node/${snapshot}/${nodeId}`)
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -120,7 +121,7 @@ export function useVoronoiNode(
       await queryClient.prefetchQuery({
         queryKey: ['voronoi-node', snapshot, prefetchNodeId],
         queryFn: async () => {
-          const response = await fetch(`/api/voronoi/node/${snapshot}/${prefetchNodeId}`)
+          const response = await fetch(`${API_BASE_URL}/api/voronoi/node/${snapshot}/${prefetchNodeId}`)
           if (!response.ok) throw new Error('Failed to prefetch node')
           const data: VoronoiNodeResponse = await response.json()
           return convertNode(data)
