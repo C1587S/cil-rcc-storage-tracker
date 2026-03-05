@@ -328,7 +328,7 @@ docker compose exec clickhouse clickhouse-client --query \
 **Delete a specific snapshot (keeps everything else):**
 ```bash
 DATE="2025-12-27"
-for table in entries directory_hierarchy voronoi_precomputed; do
+for table in entries directory_hierarchy voronoi_precomputed snapshots; do
   docker compose exec clickhouse clickhouse-client --query \
     "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${DATE}'"
 done
@@ -344,7 +344,7 @@ LATEST=$(docker compose exec clickhouse clickhouse-client --query \
 
 echo "Keeping: ${LATEST}"
 
-for table in entries directory_hierarchy voronoi_precomputed; do
+for table in entries directory_hierarchy voronoi_precomputed snapshots; do
   docker compose exec clickhouse clickhouse-client --query \
     "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date != '${LATEST}'"
 done
@@ -359,7 +359,7 @@ echo "Done. Only ${LATEST} remains."
 NEW_DATE="2026-03-05"
 
 # 1. Delete old data for this date (if re-importing)
-for table in entries directory_hierarchy voronoi_precomputed; do
+for table in entries directory_hierarchy voronoi_precomputed snapshots; do
   docker compose exec clickhouse clickhouse-client --query \
     "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${NEW_DATE}'"
 done
