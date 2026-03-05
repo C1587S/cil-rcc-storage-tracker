@@ -313,6 +313,9 @@ Dashboard (Browser)
 
 ### Managing Snapshots
 
+> All commands below run **from the project root on your local machine** (where `docker-compose.yml` lives).
+> You do NOT need to enter any container — `docker compose exec` sends the command into the running `clickhouse` container for you.
+
 **List all snapshots in the database:**
 ```bash
 docker compose exec clickhouse clickhouse-client --query \
@@ -325,25 +328,22 @@ docker compose exec clickhouse clickhouse-client --query \
 **Delete a specific snapshot (keeps everything else):**
 ```bash
 DATE="2025-12-27"
-docker compose exec clickhouse clickhouse-client --query \
-  "ALTER TABLE filesystem.entries DELETE WHERE snapshot_date='${DATE}'"
-docker compose exec clickhouse clickhouse-client --query \
-  "ALTER TABLE filesystem.directory_hierarchy DELETE WHERE snapshot_date='${DATE}'"
-docker compose exec clickhouse clickhouse-client --query \
-  "ALTER TABLE filesystem.voronoi_precomputed DELETE WHERE snapshot_date='${DATE}'"
+for table in entries directory_hierarchy voronoi_precomputed; do
+  docker compose exec clickhouse clickhouse-client --query \
+    "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${DATE}'"
+done
 docker compose exec clickhouse clickhouse-client --query \
   "OPTIMIZE TABLE filesystem.entries FINAL"
 ```
 
 **Keep only the latest snapshot (delete all others):**
 ```bash
-# Find the latest date
+# Run from project root
 LATEST=$(docker compose exec clickhouse clickhouse-client --query \
   "SELECT max(snapshot_date) FROM filesystem.entries" | tr -d '\r')
 
 echo "Keeping: ${LATEST}"
 
-# Delete everything older
 for table in entries directory_hierarchy voronoi_precomputed; do
   docker compose exec clickhouse clickhouse-client --query \
     "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date != '${LATEST}'"
@@ -355,6 +355,7 @@ echo "Done. Only ${LATEST} remains."
 
 **Replace the current snapshot with a new one:**
 ```bash
+# Run from project root
 NEW_DATE="2026-03-05"
 
 # 1. Delete old data for this date (if re-importing)
