@@ -63,3 +63,4 @@ cil_scans.zip
 # OS
 .DS_Store
 Thumbs.db
+.ipynb_checkpoints/
