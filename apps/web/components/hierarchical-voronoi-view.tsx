@@ -14,7 +14,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
-import { Maximize2, Minimize2, Focus, BarChart2 } from 'lucide-react'
+import { Maximize2, Minimize2, Focus, BarChart2, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
 import {
@@ -231,7 +231,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
       className={cn(
         // ESTILOS BASE - Adaptado al theme
         "space-y-3 font-mono text-xs flex flex-col",
-        theme === 'dark' ? 'bg-[#0a0e14]' : 'bg-card',
+        theme === 'dark' ? 'bg-[#1e1e1e]' : 'bg-background',
 
         // MODO PANTALLA COMPLETA - expande verticalmente
         isFullscreen && "fixed inset-0 z-50 p-4 h-screen",
@@ -239,7 +239,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         // MODO EXPANDIDO (PORTAL)
         isPortalMode && cn(
           "w-full h-full p-6 rounded-xl border-2 shadow-2xl backdrop-blur-sm",
-          theme === 'dark' ? 'border-cyan-800 shadow-black bg-[#0a0e14]/95' : 'border-primary/20 shadow-gray-400 bg-card/95'
+          theme === 'dark' ? 'border-border shadow-black bg-[#1e1e1e]/95' : 'border-primary/20 shadow-gray-400 bg-card/95'
         ),
 
         // Si NO es portal ni fullscreen (estado normal)
@@ -258,33 +258,37 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         isFullscreen={isFullscreen}
       />
 
-      {/* PANELS */}
-      <VoronoiPartitionPanel
-        activePartition={activePartition}
-        selectedFileInPanel={selectedFileInPanel}
-        onFileClick={handleFileClickInPanel}
-        isExpanded={false}
-        isFullscreen={isFullscreen}
-        isPartitionFixed={selectedPartition !== null}
-      />
+      {/* PANELS — only after visualization has been run */}
+      {hasRun && (
+        <VoronoiPartitionPanel
+          activePartition={activePartition}
+          selectedFileInPanel={selectedFileInPanel}
+          onFileClick={handleFileClickInPanel}
+          isExpanded={false}
+          isFullscreen={isFullscreen}
+          isPartitionFixed={selectedPartition !== null}
+        />
+      )}
 
-      {/* BREADCRUMB */}
-      <VoronoiBreadcrumb
-        breadcrumbParts={breadcrumbParts}
-        canGoBack={canGoBack}
-        isLocked={isLocked}
-        currentData={data}
-        onNavigateBack={navigateBack}
-        onNavigateToBreadcrumb={navigateToBreadcrumb}
-        onDrillDown={performDrillDown}
-      />
+      {/* BREADCRUMB — only after visualization has been run */}
+      {hasRun && (
+        <VoronoiBreadcrumb
+          breadcrumbParts={breadcrumbParts}
+          canGoBack={canGoBack}
+          isLocked={isLocked}
+          currentData={data}
+          onNavigateBack={navigateBack}
+          onNavigateToBreadcrumb={navigateToBreadcrumb}
+          onDrillDown={performDrillDown}
+        />
+      )}
 
       {/* VISUALIZER CONTAINER */}
       <div
         ref={containerRef}
         className={cn(
           "relative border rounded-lg overflow-hidden",
-          theme === 'dark' ? 'border-gray-800 bg-[#0a0e14]' : 'border-border bg-card',
+          theme === 'dark' ? 'border-border bg-[#1e1e1e]' : 'border-border bg-card',
           isLocked && "pointer-events-none",
           // En fullscreen, flex-1 toma todo el espacio disponible verticalmente
           isFullscreen ? "flex-1" : ""
@@ -295,98 +299,95 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           minHeight: isFullscreen ? '0' : '550px'
         }}
       >
-        {!hasRun ? (
-          /* Gate UI — shown until user explicitly triggers the visualization */
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className={cn(
-              "w-72 flex flex-col items-center gap-6 p-8 rounded-2xl",
-              theme === 'dark'
-                ? 'bg-[#0d1117] border border-white/[0.06] shadow-2xl shadow-black/60'
-                : 'bg-white border border-black/[0.06] shadow-xl shadow-black/[0.08]'
-            )}>
-              {/* Icon badge */}
-              <div className={cn(
-                "w-11 h-11 rounded-xl flex items-center justify-center",
-                theme === 'dark' ? 'bg-cyan-500/10' : 'bg-primary/10'
-              )}>
-                <BarChart2 className={cn("w-5 h-5", theme === 'dark' ? 'text-cyan-400' : 'text-primary')} strokeWidth={1.5} />
-              </div>
+        {/* SVG canvas — always mounted, hidden behind gate when not running */}
+        <svg
+          ref={svgRef}
+          className={cn(
+            "w-full h-full cursor-crosshair transition-opacity duration-500",
+            !hasRun && "opacity-0",
+            isLocked && "pointer-events-none"
+          )}
+          style={{
+            background: theme === 'dark' ? '#1e1e1e' : '#f6f5f4'
+          }}
+        />
 
-              {/* Text */}
-              <div className="text-center space-y-2">
-                <p className={cn(
-                  "text-[11px] font-semibold tracking-wide uppercase",
-                  theme === 'dark' ? 'text-white/50' : 'text-muted-foreground/70'
-                )}>
-                  Storage Map
-                </p>
-                <p className={cn(
-                  "text-[11px] leading-relaxed",
-                  theme === 'dark' ? 'text-white/35' : 'text-muted-foreground/80'
-                )}>
-                  Area-proportional visualization of the directory tree. Useful for identifying storage hotspots. Loading may take 20–60 s.
-                </p>
-              </div>
+        {/* Gate UI — fades out when hasRun becomes true */}
+        <div className={cn(
+          "absolute inset-0 flex justify-center pt-5 px-6 transition-all duration-500",
+          hasRun ? "opacity-0 pointer-events-none" : "opacity-100"
+        )}>
+          <div className={cn(
+            "flex items-center gap-5 px-6 py-3 rounded-xl w-full max-w-[720px] h-fit",
+            theme === 'dark'
+              ? 'bg-card border border-white/[0.06] shadow-lg shadow-black/40'
+              : 'bg-card border border-black/[0.06] shadow-md shadow-black/[0.06]'
+          )}>
+            {/* Icon */}
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-primary/10">
+              <BarChart2 className="w-4 h-4 text-primary" strokeWidth={1.5} />
+            </div>
 
-              {/* Action */}
+            {/* Text */}
+            <div className="flex-1 min-w-0">
+              <span className="text-[11px] font-semibold tracking-wide text-muted-foreground/60 mr-2">Storage Map</span>
+              <span className="text-[11px] text-muted-foreground/40">
+                Area-proportional visualization of storage usage. Identifies hotspots. May take 20-60 s.
+              </span>
+            </div>
+
+            {/* Action */}
+            <div className="flex-shrink-0">
               {selectedSnapshot ? (
                 <button
                   onClick={() => setHasRun(true)}
+                  title="Run visualization"
                   className={cn(
-                    "h-8 px-6 text-[11px] font-medium rounded-lg transition-all duration-150",
+                    "w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200",
                     theme === 'dark'
-                      ? 'bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/20 hover:border-cyan-500/40'
-                      : 'bg-primary/90 hover:bg-primary text-white shadow-sm'
+                      ? 'bg-primary/15 hover:bg-primary/30 text-primary border border-primary/20 hover:border-primary/50'
+                      : 'bg-primary/10 hover:bg-primary/20 text-primary border border-primary/25 hover:border-primary/50'
                   )}
                 >
-                  Run Visualization
+                  <Play className="w-3.5 h-3.5 ml-0.5" strokeWidth={2} />
                 </button>
               ) : (
-                <p className={cn(
-                  "text-[10px]",
-                  theme === 'dark' ? 'text-white/20' : 'text-muted-foreground/40'
-                )}>
-                  Select a snapshot to continue
+                <p className="text-[10px] text-muted-foreground/30 whitespace-nowrap">
+                  Select a snapshot
                 </p>
               )}
             </div>
           </div>
-        ) : (
-          <>
-            <svg
-              ref={svgRef}
-              className={cn("w-full h-full cursor-crosshair", isLocked && "pointer-events-none")}
-              style={{
-                background: theme === 'dark' ? '#0a0e14' : '#eceff4'
-              }}
-            />
+        </div>
 
+        {/* Loading overlays — only when running */}
+        {hasRun && (
+          <>
             {error && <div className="absolute inset-0 flex items-center justify-center bg-black/80"><p className="text-red-500 font-bold">Failed to compute Voronoi: {error.toString()}</p></div>}
 
             {isLocked && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
-                  <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                  <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
+              <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-sm animate-in fade-in duration-300">
+                <div className="bg-card border border-border px-6 py-4 rounded-xl flex flex-col items-center gap-3 shadow-lg">
+                  <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <div className="text-muted-foreground text-[10px]">Computing visualization — may take 20-60 s</div>
                 </div>
               </div>
             )}
 
             {!isLocked && isRendering && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
-                <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
-                  <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                  <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
+              <div className="absolute inset-0 flex items-center justify-center bg-background/40 backdrop-blur-[2px] pointer-events-none animate-in fade-in duration-200">
+                <div className="bg-card border border-border px-5 py-3 rounded-xl flex items-center gap-3 shadow-md">
+                  <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <div className="text-muted-foreground text-[10px]">Rendering...</div>
                 </div>
               </div>
             )}
 
             {isTransitioning && !isLocked && !isRendering && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px] pointer-events-none">
-                <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
-                  <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                  <div className="text-cyan-400/70 text-[10px] font-normal italic">Resizing visualization...</div>
-                  <div className="text-cyan-600/60 text-[9px] font-light">Complex partitions may take a few seconds</div>
+              <div className="absolute inset-0 flex items-center justify-center bg-background/20 backdrop-blur-[1px] pointer-events-none">
+                <div className="bg-card/80 border border-border/50 px-5 py-3 rounded-xl flex items-center gap-3 shadow-sm">
+                  <div className="w-4 h-4 border-2 border-primary/60 border-t-transparent rounded-full animate-spin" />
+                  <div className="text-muted-foreground/60 text-[10px]">Navigating...</div>
                 </div>
               </div>
             )}

@@ -21,7 +21,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<TabId>("query");
   const isVoronoiFullscreen = useAppStore(state => state.isVoronoiFullscreen);
 
-  const containerClass = "max-w-6xl mx-auto px-6";
+  const containerClass = "max-w-[1440px] mx-auto px-8";
 
   return (
     <main className={cn("min-h-screen", isVoronoiFullscreen ? "p-0" : "pb-8")}>

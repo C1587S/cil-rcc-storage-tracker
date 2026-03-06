@@ -30,8 +30,8 @@ export function VoronoiPartitionPanel({
   isPartitionFixed = false
 }: VoronoiPartitionPanelProps) {
   const theme = useAppStore(state => state.theme)
-  const [showFloatingPanel, setShowFloatingPanel] = useState(true)  // Expandido por defecto
-  const [isPanelPinned, setIsPanelPinned] = useState(true)  // Fijado por defecto
+  const [showFloatingPanel, setShowFloatingPanel] = useState(false)
+  const [isPanelPinned, setIsPanelPinned] = useState(false)
   const [sortColumn, setSortColumn] = useState<SortColumn>('size')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [searchQuery, setSearchQuery] = useState('')

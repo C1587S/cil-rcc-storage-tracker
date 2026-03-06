@@ -11,12 +11,8 @@ import {
   Database,
   Code,
   FileText,
-  HardDrive,
-  FolderTree,
   AlertCircle,
-  Sparkles,
   Download,
-  Copy
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
@@ -35,6 +31,8 @@ interface FilterState {
   includeFiles: boolean;
   includeDirs: boolean;
   limit: number;
+  minSizeMB: number | null;
+  maxSizeMB: number | null;
 }
 
 const INITIAL_FILTERS: FilterState = {
@@ -44,126 +42,75 @@ const INITIAL_FILTERS: FilterState = {
   customPath: "",
   includeFiles: true,
   includeDirs: true,
-  limit: 100,
+  limit: 500,
+  minSizeMB: null,
+  maxSizeMB: null,
 };
 
 interface ExamplePreset {
   id: string;
-  category: "code" | "data" | "storage" | "directories";
-  icon: React.ReactNode;
+  category: "code" | "data" | "storage" | "dir";
   title: string;
   description: string;
   filters: Partial<FilterState>;
 }
 
 const EXAMPLE_PRESETS: ExamplePreset[] = [
-  // Code Analysis
-  {
-    id: "python-transform",
-    category: "code",
-    icon: <Code className="h-4 w-4 text-blue-400" />,
-    title: "Python files with 'transform'",
-    description: "Find .py files containing 'transform' in /project/cil (semantic code search)",
-    filters: {
-      searchText: "transform.py",
-      searchMode: "contains",
-      includeFiles: true,
-      includeDirs: false,
-      scopeMode: "custom",
-      customPath: "/project/cil",
-      limit: 100,
-    },
-  },
+  // Code
+  { id: "python-transform", category: "code",
+    title: ".py — 'transform' in name",
+    description: "Python files with 'transform' in filename under /project/cil",
+    filters: { searchText: "transform.py", searchMode: "contains", includeFiles: true, includeDirs: false, scopeMode: "custom", customPath: "/project/cil", limit: 100 } },
+  { id: "preprocess-code", category: "code",
+    title: "code — 'preprocess' in name",
+    description: "Any code file with 'preprocess' in filename",
+    filters: { searchText: "preprocess", searchMode: "contains", includeFiles: true, includeDirs: false, scopeMode: "custom", customPath: "/project/cil", limit: 100 } },
 
-  // Data Workflows
-  {
-    id: "weights-csv",
-    category: "data",
-    icon: <FileText className="h-4 w-4 text-green-400" />,
-    title: "CSV files with 'weight'",
-    description: "Data files containing 'weight' in name (realistic data exploration)",
-    filters: {
-      searchText: "weight",
-      searchMode: "contains",
-      includeFiles: true,
-      includeDirs: false,
-      scopeMode: "custom",
-      customPath: "/project/cil",
-      limit: 100,
-    },
-  },
+  // Data
+  { id: "weights-csv", category: "data",
+    title: "CSV — 'weight' in name",
+    description: "Data files with 'weight' in filename",
+    filters: { searchText: "weight", searchMode: "contains", includeFiles: true, includeDirs: false, scopeMode: "custom", customPath: "/project/cil", limit: 100 } },
+  { id: "nc-hdf5", category: "data",
+    title: "scientific data (.nc, .h5, .hdf5)",
+    description: "NetCDF and HDF5 files by extension suffix",
+    filters: { searchText: ".nc,.h5,.hdf5,.hdf,.he5", searchMode: "suffix", includeFiles: true, includeDirs: false, scopeMode: "custom", customPath: "/project/cil", limit: 100 } },
 
-  // Storage Triage
-  {
-    id: "largest-gcp",
-    category: "storage",
-    icon: <Sparkles className="h-4 w-4 text-orange-400" />,
-    title: "Largest files in /gcp",
-    description: "Top 50 largest files in /project/cil/gcp (storage cleanup workflow)",
-    filters: {
-      searchText: ".",
-      searchMode: "contains",
-      includeFiles: true,
-      includeDirs: false,
-      scopeMode: "custom",
-      customPath: "/project/cil/gcp",
-      limit: 50,
-    },
-  },
-  {
-    id: "log-files-storage",
-    category: "storage",
-    icon: <FileText className="h-4 w-4 text-yellow-400" />,
-    title: "Log files (cleanup candidate)",
-    description: "Find .log files for potential cleanup",
-    filters: {
-      searchText: ".log",
-      searchMode: "suffix",
-      includeFiles: true,
-      includeDirs: false,
-      scopeMode: "custom",
-      customPath: "/project/cil",
-      limit: 100,
-    },
-  },
+  // Storage
+  { id: "biggest-files", category: "storage",
+    title: "top files by size (>100 MB)",
+    description: "Largest files across the entire filesystem, sorted by size descending",
+    filters: { searchText: "", includeFiles: true, includeDirs: false, scopeMode: "all", limit: 500, minSizeMB: 100, maxSizeMB: null } },
+  { id: "largest-gcp", category: "storage",
+    title: "all files in /gcp",
+    description: "Files under /project/cil/gcp sorted by size — useful for cleanup triage",
+    filters: { searchText: ".", searchMode: "contains", includeFiles: true, includeDirs: false, scopeMode: "custom", customPath: "/project/cil/gcp", limit: 50 } },
+  { id: "log-files-storage", category: "storage",
+    title: ".log files — cleanup candidates",
+    description: "Log files that may be safe to archive or remove",
+    filters: { searchText: ".log", searchMode: "suffix", includeFiles: true, includeDirs: false, scopeMode: "custom", customPath: "/project/cil", limit: 100 } },
+  { id: "archives", category: "storage",
+    title: "archives (.zip, .tar, .gz)",
+    description: "Compressed archive files — potential storage reclaim targets",
+    filters: { searchText: ".zip,.tar,.gz,.tgz,.bz2,.xz", searchMode: "suffix", includeFiles: true, includeDirs: false, scopeMode: "custom", customPath: "/project/cil", limit: 100 } },
 
-  // Directory Discovery
-  {
-    id: "stations-dirs",
-    category: "directories",
-    icon: <FolderTree className="h-4 w-4 text-indigo-400" />,
-    title: "Folders with 'stations'",
-    description: "Discover directories containing 'stations' (folder-level search)",
-    filters: {
-      searchText: "stations",
-      searchMode: "contains",
-      includeFiles: false,
-      includeDirs: true,
-      scopeMode: "custom",
-      customPath: "/project/cil",
-      limit: 50,
-    },
-  },
-  {
-    id: "outputs-dirs",
-    category: "directories",
-    icon: <FolderTree className="h-4 w-4 text-pink-400" />,
-    title: "Output directories",
-    description: "Find all 'outputs' or 'output' folders",
-    filters: {
-      searchText: "output",
-      searchMode: "contains",
-      includeFiles: false,
-      includeDirs: true,
-      scopeMode: "custom",
-      customPath: "/project/cil",
-      limit: 50,
-    },
-  },
+  // Directories
+  { id: "stations-dirs", category: "dir",
+    title: "dirs — 'stations' in name",
+    description: "Directories with 'stations' in name",
+    filters: { searchText: "stations", searchMode: "contains", includeFiles: false, includeDirs: true, scopeMode: "custom", customPath: "/project/cil", limit: 50 } },
+  { id: "output-dirs", category: "dir",
+    title: "dirs — 'output' in name",
+    description: "Output and outputs directories",
+    filters: { searchText: "output", searchMode: "contains", includeFiles: false, includeDirs: true, scopeMode: "custom", customPath: "/project/cil", limit: 50 } },
+  { id: "home-dirs", category: "dir",
+    title: "dirs in home_dirs",
+    description: "Top-level user directories under /project/cil/home_dirs",
+    filters: { searchText: ".", searchMode: "contains", includeFiles: false, includeDirs: true, scopeMode: "custom", customPath: "/project/cil/home_dirs", limit: 100 } },
 ];
 
 // Helper function to generate SQL from filters
-function generateSQLFromFilters(filters: FilterState, snapshotDate: string): string {
+function generateSQLFromFilters(filters: FilterState): string {
   const patterns = filters.searchText.split(",").map(p => p.trim()).filter(Boolean);
 
   const buildNameCondition = (pattern: string) => {
@@ -189,27 +136,37 @@ function generateSQLFromFilters(filters: FilterState, snapshotDate: string): str
 
   let pathCondition = "";
   if (filters.scopeMode === "custom" && filters.customPath.trim()) {
-    pathCondition = `path LIKE '${filters.customPath}/%'`;
+    pathCondition = `startsWith(path, '${filters.customPath}/')`;
   }
 
+  const minSizeCondition = filters.minSizeMB != null && filters.minSizeMB > 0
+    ? `size >= ${Math.round(filters.minSizeMB * 1024 * 1024)}`
+    : "";
+  const maxSizeCondition = filters.maxSizeMB != null && filters.maxSizeMB > 0
+    ? `size <= ${Math.round(filters.maxSizeMB * 1024 * 1024)}`
+    : "";
+
   const conditions = [
-    `snapshot_date = '${snapshotDate}'`,
+    `snapshot_date = %(snapshot_date)s`,
     nameCondition,
     typeCondition,
     pathCondition,
+    minSizeCondition,
+    maxSizeCondition,
   ].filter(c => c);
 
   return `SELECT
   path,
   name,
-  formatReadableSize(size) AS size,
+  size,
+  formatReadableSize(size) AS readable_size,
   owner,
   toDateTime(modified_time) AS modified,
   toDateTime(accessed_time) AS accessed
 FROM filesystem.entries
 WHERE ${conditions.join("\n  AND ")}
 ORDER BY size DESC
-LIMIT ${filters.limit};`;
+LIMIT ${filters.limit}`;
 }
 
 // SQL Templates for Guided Mode
@@ -240,7 +197,7 @@ const SQL_TEMPLATES: SQLTemplate[] = [
   toDateTime(modified_time) AS modified
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('${params.path}', '/%')
+  AND startsWith(path, '${params.path}/')
   AND is_directory = 0
 ORDER BY size DESC
 LIMIT ${params.limit}`,
@@ -264,7 +221,7 @@ LIMIT ${params.limit}`,
   dateDiff('day', toDateTime(accessed_time), now()) AS days_since_access
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('${params.path}', '/%')
+  AND startsWith(path, '${params.path}/')
   AND is_directory = 0
   AND accessed_time < toUnixTimestamp(now() - INTERVAL ${params.days} DAY)
 ORDER BY size DESC
@@ -285,7 +242,7 @@ LIMIT ${params.limit}`,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('${params.path}', '/%')
+  AND startsWith(path, '${params.path}/')
   AND is_directory = 0
   AND size = 0
 GROUP BY parent_path
@@ -305,13 +262,13 @@ LIMIT ${params.limit}`,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('${params.path}', '/%')
+  AND startsWith(path, '${params.path}/')
   AND is_directory = 0
   AND size = 0`,
   },
   {
     id: "home-dirs-by-file-count",
-    name: "home_dirs — users with most files",
+    name: "home_dirs -- users with most files",
     description: "Rank home directories by number of files (useful for storage audits)",
     category: "directories",
     params: [
@@ -324,7 +281,7 @@ WHERE snapshot_date = %(snapshot_date)s
   formatReadableSize(avg(size)) AS avg_file_size
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE '/project/cil/home_dirs/%'
+  AND startsWith(path, '/project/cil/home_dirs/')
   AND is_directory = 0
   AND length(splitByChar('/', path)) >= 6
 GROUP BY user
@@ -366,7 +323,7 @@ LIMIT ${params.limit}`,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('${params.path}', '/%')
+  AND startsWith(path, '${params.path}/')
   AND is_directory = 0
   AND file_type != ''
 GROUP BY file_type
@@ -389,9 +346,9 @@ LIMIT ${params.limit}`,
   toDateTime(modified_time) AS modified
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('/project/cil/gcp', '/%')
+  AND startsWith(path, '/project/cil/gcp/')
   AND is_directory = 0
-  AND (name LIKE concat('%.shp', '%') OR name LIKE concat('%shapefile', '%') OR parent_path LIKE concat('%output', '%'))
+  AND (positionCaseInsensitive(name, '.shp') > 0 OR positionCaseInsensitive(name, 'shapefile') > 0 OR positionCaseInsensitive(parent_path, 'output') > 0)
 ORDER BY size DESC
 LIMIT ${params.limit}`,
   },
@@ -443,21 +400,7 @@ function GuidedSQLMode({
     queryFn: async () => {
       if (!selectedSnapshot) throw new Error("No snapshot selected");
 
-      // Sanitize SQL: remove trailing semicolons and trim whitespace
       const sanitizedSQL = generatedSQL.trim().replace(/;+\s*$/, '');
-
-      // DEBUG: Log exact SQL being sent to backend
-      console.log('=== GUIDED SQL DEBUG ===');
-      console.log('Original SQL:', generatedSQL);
-      console.log('Sanitized SQL:', sanitizedSQL);
-      console.log('SQL length:', sanitizedSQL.length);
-      console.log('Contains semicolon:', sanitizedSQL.includes(';'));
-      console.log('Statement count:', sanitizedSQL.split(';').filter(s => s.trim()).length);
-      console.log('Exact payload:', {
-        snapshot_date: selectedSnapshot,
-        sql: sanitizedSQL,
-        limit: 5000,
-      });
 
       return executeQuery({
         snapshot_date: selectedSnapshot,
@@ -574,24 +517,6 @@ function GuidedSQLMode({
         </div>
       )}
 
-      {/* DEBUG: Show exact SQL that will be sent to backend */}
-      {generatedSQL && (
-        <div className="border border-yellow-500/30 rounded-sm bg-yellow-500/5 p-3">
-          <div className="text-[10px] font-mono font-semibold text-yellow-600 mb-2">
-            🔍 DEBUG: SQL to be executed (after sanitization)
-          </div>
-          <pre className="text-[10px] font-mono text-foreground whitespace-pre-wrap break-all bg-black/20 p-2 rounded-sm border border-yellow-500/20">
-            {generatedSQL.trim().replace(/;+\s*$/, '')}
-          </pre>
-          <div className="mt-2 text-[10px] text-muted-foreground space-y-1 font-mono">
-            <div>Length: <span className="text-foreground">{generatedSQL.trim().replace(/;+\s*$/, '').length}</span> chars</div>
-            <div>Has semicolon: <span className={generatedSQL.trim().replace(/;+\s*$/, '').includes(';') ? 'text-red-400 font-bold' : 'text-green-400'}>{generatedSQL.trim().replace(/;+\s*$/, '').includes(';') ? 'YES ⚠️' : 'NO ✓'}</span></div>
-            <div>Statements: <span className={generatedSQL.trim().replace(/;+\s*$/, '').split(';').filter(s => s.trim()).length > 1 ? 'text-red-400 font-bold' : 'text-green-400'}>{generatedSQL.trim().replace(/;+\s*$/, '').split(';').filter(s => s.trim()).length}</span></div>
-            <div className="text-[9px] text-yellow-600 mt-1">Check browser console for full debug output</div>
-          </div>
-        </div>
-      )}
-
       {/* Execute Button */}
       {generatedSQL && (
         <div className="flex justify-end">
@@ -647,7 +572,7 @@ const EXAMPLE_RAW_QUERIES = [
   toDateTime(modified_time) AS modified
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('/project/cil/gcp', '/%')
+  AND startsWith(path, '/project/cil/gcp/')
   AND is_directory = 0
 ORDER BY size DESC
 LIMIT 15`,
@@ -664,9 +589,9 @@ LIMIT 15`,
   toDateTime(modified_time) AS modified
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('/project/cil/gcp', '/%')
+  AND startsWith(path, '/project/cil/gcp/')
   AND is_directory = 0
-  AND (name LIKE concat('%.shp', '%') OR name LIKE concat('%shapefile', '%') OR parent_path LIKE concat('%output', '%'))
+  AND (positionCaseInsensitive(name, '.shp') > 0 OR positionCaseInsensitive(name, 'shapefile') > 0 OR positionCaseInsensitive(parent_path, 'output') > 0)
 ORDER BY size DESC
 LIMIT 15`,
   },
@@ -680,7 +605,7 @@ LIMIT 15`,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('/project/cil', '/%')
+  AND startsWith(path, '/project/cil/')
   AND is_directory = 0
   AND size = 0
 GROUP BY parent_path
@@ -697,7 +622,7 @@ LIMIT 20`,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('/project/cil/gcp', '/%')
+  AND startsWith(path, '/project/cil/gcp/')
   AND is_directory = 0
   AND file_type != ''
 GROUP BY file_type
@@ -800,7 +725,7 @@ function RawSQLMode({
           placeholder={`SELECT path, name, formatReadableSize(size) AS size, owner
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND path LIKE concat('/project/cil/gcp', '/%')
+  AND startsWith(path, '/project/cil/gcp/')
   AND is_directory = 0
 ORDER BY size DESC
 LIMIT 100`}
@@ -1021,7 +946,7 @@ function QueryResultsTable({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="text-[10px] font-mono text-muted-foreground">
-              {result.row_count} rows • {result.execution_time_ms}ms
+              {result.row_count} rows -- {Number(result.execution_time_ms).toFixed(3)} ms
             </div>
 
             {/* Aggregation Toggle */}
@@ -1287,8 +1212,20 @@ export function SearchConsole() {
   const [mode, setMode] = useState<ConsoleMode>("filters");
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
   const [hasSearched, setHasSearched] = useState(false);
-  const [isExamplesExpanded, setIsExamplesExpanded] = useState(true);
+  const [isExamplesExpanded, setIsExamplesExpanded] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  // Route through SQL when multi-pattern (commas) or size filters are active
+  const isComplexQuery = filters.searchText.includes(",") ||
+    filters.minSizeMB != null ||
+    filters.maxSizeMB != null;
+
+  // Generate SQL for complex queries
+  const complexSQL = useMemo(() => {
+    if (!selectedSnapshot) return "";
+    if (!isComplexQuery) return "";
+    return generateSQLFromFilters(filters);
+  }, [filters, selectedSnapshot, isComplexQuery]);
 
   // Report Builder state
   const [reportEntries, setReportEntries] = useState<ReportEntry[]>([]);
@@ -1354,6 +1291,7 @@ export function SearchConsole() {
 
   const updateFilter = <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
+    setHasSearched(false);
   };
 
   const applyPreset = (preset: ExamplePreset) => {
@@ -1371,9 +1309,9 @@ export function SearchConsole() {
   const handleSearch = () => {
     if (!selectedSnapshot) return;
 
-    // Validate: q cannot be empty (backend requires min_length=1)
-    if (!filters.searchText.trim()) {
-      setSearchError("Search text is required. Backend requires at least 1 character.");
+    // Simple search requires text; complex (SQL) path allows empty text when size filters set
+    if (!isComplexQuery && !filters.searchText.trim()) {
+      setSearchError("Search text is required.");
       return;
     }
 
@@ -1400,21 +1338,23 @@ export function SearchConsole() {
     return params;
   };
 
-  // Execute search query
+  // Execute simple search query (single pattern, no size filters)
   const { data: searchResults, isLoading: isSearching, error: queryError } = useQuery({
     queryKey: ["search", selectedSnapshot, filters, hasSearched],
     queryFn: () => search(buildSearchParams()),
-    enabled: hasSearched && !!selectedSnapshot && !!filters.searchText.trim(),
+    enabled: hasSearched && !isComplexQuery && !!selectedSnapshot && !!filters.searchText.trim(),
     retry: false,
   });
 
-  // Group presets by category
-  const presetsByCategory = {
-    "code": EXAMPLE_PRESETS.filter((p) => p.category === "code"),
-    "data": EXAMPLE_PRESETS.filter((p) => p.category === "data"),
-    "storage": EXAMPLE_PRESETS.filter((p) => p.category === "storage"),
-    "directories": EXAMPLE_PRESETS.filter((p) => p.category === "directories"),
-  };
+  // Execute complex query via SQL (multi-pattern or size filters)
+  const { data: complexResults, isLoading: isComplexSearching, error: complexError } = useQuery({
+    queryKey: ["search-complex", selectedSnapshot, complexSQL, hasSearched],
+    queryFn: () => executeQuery({ snapshot_date: selectedSnapshot!, sql: complexSQL, limit: 5000 }),
+    enabled: hasSearched && isComplexQuery && !!selectedSnapshot && !!complexSQL,
+    retry: false,
+  });
+
+  // (presets rendered as flat list — no grouping needed)
 
   return (
     <Card className="border-t-2 border-border/50">
@@ -1463,125 +1403,51 @@ export function SearchConsole() {
           {mode === "filters" && (
             <div className="space-y-4">
               {/* Example Presets - Expandable */}
-              <div className="border border-border/30 rounded-sm">
+              <div className={cn(
+                "rounded-sm border transition-colors duration-150",
+                isExamplesExpanded ? "border-primary/30" : "border-border/30"
+              )}>
                 <button
                   onClick={() => setIsExamplesExpanded(!isExamplesExpanded)}
-                  className="w-full flex items-center justify-between p-3 hover:bg-muted/5 transition-colors"
+                  className={cn(
+                    "w-full flex items-center justify-between px-3 py-2.5 transition-colors",
+                    isExamplesExpanded
+                      ? "text-primary bg-primary/5 hover:bg-primary/10"
+                      : "text-muted-foreground hover:bg-muted/5 hover:text-foreground"
+                  )}
                 >
-                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide">
                     Example Searches
                   </h4>
                   {isExamplesExpanded ? (
-                    <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                    <ChevronUp className="h-3.5 w-3.5" />
                   ) : (
-                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                    <ChevronDown className="h-3.5 w-3.5" />
                   )}
                 </button>
 
                 {isExamplesExpanded && (
-                  <div className="px-3 pb-3 space-y-3">
-                    {/* Code Analysis */}
-                    <div>
-                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-                        Code Analysis
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {presetsByCategory["code"].map((preset) => (
-                          <button
-                            key={preset.id}
-                            onClick={() => applyPreset(preset)}
-                            className="flex items-start gap-2 p-2.5 bg-muted/5 hover:bg-muted/10 border border-border/20 rounded-sm transition-colors text-left"
-                          >
-                            <div className="mt-0.5">{preset.icon}</div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-medium text-foreground">
-                                {preset.title}
-                              </div>
-                              <div className="text-[10px] text-muted-foreground mt-0.5">
-                                {preset.description}
-                              </div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Data Workflows */}
-                    <div>
-                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-                        Data Workflows
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {presetsByCategory["data"].map((preset) => (
-                          <button
-                            key={preset.id}
-                            onClick={() => applyPreset(preset)}
-                            className="flex items-start gap-2 p-2.5 bg-muted/5 hover:bg-muted/10 border border-border/20 rounded-sm transition-colors text-left"
-                          >
-                            <div className="mt-0.5">{preset.icon}</div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-medium text-foreground">
-                                {preset.title}
-                              </div>
-                              <div className="text-[10px] text-muted-foreground mt-0.5">
-                                {preset.description}
-                              </div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Storage Triage */}
-                    <div>
-                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-                        Storage Triage
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {presetsByCategory["storage"].map((preset) => (
-                          <button
-                            key={preset.id}
-                            onClick={() => applyPreset(preset)}
-                            className="flex items-start gap-2 p-2.5 bg-muted/5 hover:bg-muted/10 border border-border/20 rounded-sm transition-colors text-left"
-                          >
-                            <div className="mt-0.5">{preset.icon}</div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-medium text-foreground">
-                                {preset.title}
-                              </div>
-                              <div className="text-[10px] text-muted-foreground mt-0.5">
-                                {preset.description}
-                              </div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Directory Discovery */}
-                    <div>
-                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
-                        Directory Discovery
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {presetsByCategory["directories"].map((preset) => (
-                          <button
-                            key={preset.id}
-                            onClick={() => applyPreset(preset)}
-                            className="flex items-start gap-2 p-2.5 bg-muted/5 hover:bg-muted/10 border border-border/20 rounded-sm transition-colors text-left"
-                          >
-                            <div className="mt-0.5">{preset.icon}</div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-medium text-foreground">
-                                {preset.title}
-                              </div>
-                              <div className="text-[10px] text-muted-foreground mt-0.5">
-                                {preset.description}
-                              </div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
+                  <div className="pb-1 border-t border-primary/20">
+                    <div className="divide-y divide-border/20">
+                      {EXAMPLE_PRESETS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          onClick={() => applyPreset(preset)}
+                          title={preset.description}
+                          className="w-full flex items-center gap-3 pl-2 pr-3 py-1.5 text-left transition-colors group border-l-2 border-transparent hover:border-primary/40 hover:bg-muted/30"
+                        >
+                          <span className="text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wide w-12 flex-shrink-0 text-right">
+                            {preset.category}
+                          </span>
+                          <span className="w-px h-3 bg-border/50 flex-shrink-0" />
+                          <span className="text-[11px] text-foreground/80 font-mono flex-1 truncate group-hover:text-foreground transition-colors">
+                            {preset.title}
+                          </span>
+                          <span className="text-primary/40 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-xs">
+                            ↵
+                          </span>
+                        </button>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -1682,7 +1548,7 @@ export function SearchConsole() {
                     {/* Result Limit */}
                     <div>
                       <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                        Result Limit <span className="text-red-400">*</span>
+                        Result Limit
                       </label>
                       <select
                         value={filters.limit}
@@ -1696,9 +1562,35 @@ export function SearchConsole() {
                         <option value={5000}>5000 results</option>
                         <option value={8000}>8000 results (max)</option>
                       </select>
-                      <div className="mt-1 text-[10px] text-muted-foreground/60">
-                        Backend enforces maximum of 8000 rows
+                    </div>
+
+                    {/* Size Range */}
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                        Size range <span className="text-muted-foreground/40 font-normal">(MB)</span>
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          value={filters.minSizeMB ?? ""}
+                          onChange={(e) => updateFilter("minSizeMB", e.target.value ? parseFloat(e.target.value) : null)}
+                          placeholder="Min"
+                          min={0}
+                          className="w-full px-2 py-1.5 text-xs bg-background border border-border rounded-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                        />
+                        <span className="text-xs text-muted-foreground/50 flex-shrink-0">–</span>
+                        <input
+                          type="number"
+                          value={filters.maxSizeMB ?? ""}
+                          onChange={(e) => updateFilter("maxSizeMB", e.target.value ? parseFloat(e.target.value) : null)}
+                          placeholder="Max"
+                          min={0}
+                          className="w-full px-2 py-1.5 text-xs bg-background border border-border rounded-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+                        />
                       </div>
+                      {isComplexQuery && (
+                        <div className="mt-1 text-[10px] text-primary/60">SQL path active</div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1714,11 +1606,13 @@ export function SearchConsole() {
                 )}
 
                 {/* Query Error Display */}
-                {queryError && (
+                {(queryError || complexError) && (
                   <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
                     <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
                     <div className="text-[10px] text-red-400 leading-relaxed font-mono">
-                      {queryError instanceof Error ? queryError.message : "Search failed"}
+                      {(queryError || complexError) instanceof Error
+                        ? (queryError || complexError)?.message
+                        : "Search failed"}
                     </div>
                   </div>
                 )}
@@ -1736,7 +1630,7 @@ export function SearchConsole() {
                   <Button
                     size="sm"
                     onClick={handleSearch}
-                    disabled={!selectedSnapshot || !filters.searchText.trim()}
+                    disabled={!selectedSnapshot || (!isComplexQuery && !filters.searchText.trim())}
                     className="text-xs"
                   >
                     <Search className="h-3.5 w-3.5 mr-1.5" />
@@ -1748,13 +1642,23 @@ export function SearchConsole() {
               {/* Results */}
               {hasSearched && !searchError && (
                 <div className="border-t border-border/20 pt-4">
-                  {isSearching ? (
+                  {(isSearching || isComplexSearching) ? (
                     <div className="flex items-center justify-center py-8 text-xs text-muted-foreground font-mono">
                       <div className="flex items-center gap-2">
                         <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full"></div>
                         <span>Searching...</span>
                       </div>
                     </div>
+                  ) : isComplexQuery ? (
+                    complexResults && (
+                      <QueryResultsTable
+                        result={complexResults}
+                        isLoading={isComplexSearching}
+                        sql={complexSQL}
+                        mode="filters"
+                        onAddToReport={addToReport}
+                      />
+                    )
                   ) : (
                     <SearchResultsTable
                       results={searchResults?.results || []}

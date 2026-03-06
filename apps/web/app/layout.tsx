@@ -5,6 +5,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "CIL-rcc-tracker",
   description: "Filesystem snapshot explorer",
+  icons: {
+    icon: "/logo_tracker.png",
+    apple: "/logo_tracker.png",
+  },
 };
 
 export default function RootLayout({

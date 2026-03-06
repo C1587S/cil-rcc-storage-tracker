@@ -41,24 +41,33 @@ export function SnapshotSelector() {
       ) : error ? (
         <span className="text-xs text-destructive">Failed to load snapshots</span>
       ) : (
-        <Select
-          id="snapshot-select"
-          value={selectedSnapshot || ""}
-          onChange={handleChange}
-          className="h-8 text-xs max-w-[220px] border-border/60 bg-transparent"
-        >
-          <option value="">Select a snapshot…</option>
-          {snapshots.map((snapshot) => (
-            <option key={snapshot.snapshot_date} value={snapshot.snapshot_date}>
-              {snapshot.snapshot_date}
-            </option>
-          ))}
-        </Select>
+        <div className="relative inline-flex items-center">
+          <Select
+            id="snapshot-select"
+            value={selectedSnapshot || ""}
+            onChange={handleChange}
+            className="h-8 text-xs max-w-[220px] border-border/60 bg-transparent pr-8"
+          >
+            <option value="">Select a snapshot…</option>
+            {snapshots.map((snapshot) => (
+              <option key={snapshot.snapshot_date} value={snapshot.snapshot_date}>
+                {snapshot.snapshot_date}
+              </option>
+            ))}
+          </Select>
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/50 text-xs pointer-events-none font-mono">…</span>
+        </div>
       )}
 
       {selectedSnapshot_?.import_time && (
         <span className="text-xs text-muted-foreground/60 ml-1">
           DB updated {formatTimestamp(selectedSnapshot_.import_time)}
+        </span>
+      )}
+
+      {!selectedSnapshot && !isLoading && !error && (
+        <span className="snapshot-prompt text-xs text-muted-foreground/35 font-mono ml-2 flex-shrink-0">
+          select a snapshot to begin
         </span>
       )}
     </div>
