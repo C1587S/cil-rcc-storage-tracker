@@ -17,7 +17,7 @@ async def search_files(
     scope_path: str | None = Query(None, description="Limit search to this directory subtree"),
     include_files: bool = Query(True, description="Include files in results"),
     include_dirs: bool = Query(True, description="Include directories in results"),
-    limit: int = Query(100, ge=1, le=5000, description="Maximum results to return"),
+    limit: int = Query(100, ge=1, le=8000, description="Maximum results to return"),
 ):
     """
     Search for files and directories by name.

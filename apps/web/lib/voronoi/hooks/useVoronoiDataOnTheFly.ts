@@ -7,6 +7,7 @@ import { buildVoronoiTree, type VoronoiNode } from '@/lib/voronoi-data-adapter'
 interface UseVoronoiDataOnTheFlyOptions {
   selectedSnapshot: string | null
   effectivePath: string
+  enabled?: boolean
 }
 
 /**
@@ -32,6 +33,7 @@ interface UseVoronoiDataOnTheFlyOptions {
 export function useVoronoiDataOnTheFly({
   selectedSnapshot,
   effectivePath,
+  enabled = true,
 }: UseVoronoiDataOnTheFlyOptions) {
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['voronoi-tree-on-the-fly', selectedSnapshot, effectivePath],
@@ -43,7 +45,7 @@ export function useVoronoiDataOnTheFly({
       // On-the-fly computation using legacy buildVoronoiTree
       return buildVoronoiTree(selectedSnapshot, effectivePath, 2, 1000)
     },
-    enabled: !!selectedSnapshot && !!effectivePath,
+    enabled: !!selectedSnapshot && !!effectivePath && enabled,
     staleTime: 1000 * 60 * 5, // 5 minutes
     gcTime: 1000 * 60 * 30, // 30 minutes (previously cacheTime)
   })

@@ -51,6 +51,12 @@ export interface HierarchicalVoronoiViewProps {
 
 export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVoronoiViewProps = {}) {
   const { selectedSnapshot, referencePath, highlightColor, theme } = useAppStore()
+  const [hasRun, setHasRun] = useState(false)
+
+  // Reset gate when snapshot changes
+  useEffect(() => {
+    setHasRun(false)
+  }, [selectedSnapshot])
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -100,11 +106,13 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
   const precomputedResult = useVoronoiData({
     selectedSnapshot,
     effectivePath,
+    enabled: hasRun,
   })
 
   const onTheFlyResult = useVoronoiDataOnTheFly({
     selectedSnapshot,
     effectivePath,
+    enabled: hasRun,
   })
 
   // Select the appropriate result based on mode
@@ -287,32 +295,104 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           minHeight: isFullscreen ? '0' : '550px'
         }}
       >
-        <svg
-          ref={svgRef}
-          className={cn("w-full h-full cursor-crosshair", isLocked && "pointer-events-none")}
-          style={{
-            background: theme === 'dark' ? '#0a0e14' : '#eceff4'
-          }}
-        />
+        {!hasRun ? (
+          /* Gate UI — shown until user explicitly triggers the visualization */
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className={cn(
+              "max-w-xs text-center flex flex-col items-center gap-4 p-6 rounded-xl border",
+              theme === 'dark'
+                ? 'border-cyan-900/60 bg-cyan-950/30'
+                : 'border-primary/20 bg-card/80'
+            )}>
+              <p className={cn(
+                "text-[11px] leading-relaxed",
+                theme === 'dark' ? 'text-cyan-400/80' : 'text-muted-foreground'
+              )}>
+                Renders the full directory tree as an interactive area-proportional map.
+                Useful for spotting storage hotspots. May take 20–60 seconds for large directories.
+              </p>
+              {selectedSnapshot ? (
+                <Button
+                  size="sm"
+                  onClick={() => setHasRun(true)}
+                  className={cn(
+                    "h-8 px-5 text-xs font-mono",
+                    theme === 'dark'
+                      ? 'bg-cyan-700/80 hover:bg-cyan-600 text-white border-cyan-600'
+                      : 'bg-primary hover:bg-primary/90 text-primary-foreground'
+                  )}
+                >
+                  Run Visualization
+                </Button>
+              ) : (
+                <p className={cn("text-[10px]", theme === 'dark' ? 'text-cyan-600/60' : 'text-muted-foreground/60')}>
+                  Select a snapshot first
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <svg
+              ref={svgRef}
+              className={cn("w-full h-full cursor-crosshair", isLocked && "pointer-events-none")}
+              style={{
+                background: theme === 'dark' ? '#0a0e14' : '#eceff4'
+              }}
+            />
+
+            {error && <div className="absolute inset-0 flex items-center justify-center bg-black/80"><p className="text-red-500 font-bold">Failed to compute Voronoi: {error.toString()}</p></div>}
+
+            {isLocked && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
+                  <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                  <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
+                </div>
+              </div>
+            )}
+
+            {!isLocked && isRendering && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
+                <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
+                  <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                  <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
+                </div>
+              </div>
+            )}
+
+            {isTransitioning && !isLocked && !isRendering && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px] pointer-events-none">
+                <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
+                  <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                  <div className="text-cyan-400/70 text-[10px] font-normal italic">Resizing visualization...</div>
+                  <div className="text-cyan-600/60 text-[9px] font-light">Complex partitions may take a few seconds</div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
 
         <div className="absolute bottom-3 right-3 flex gap-2">
           {isFullscreen && <ThemeToggle />}
 
-          <Button
-            size="icon"
-            variant="outline"
-            className={cn(
-              "w-8 h-8",
-              theme === 'dark'
-                ? 'bg-black/80 border-gray-700 hover:bg-gray-800 hover:border-cyan-700'
-                : 'bg-white/90 border-gray-300 hover:bg-gray-50 hover:border-primary'
-            )}
-            onClick={() => resetZoom(svgRef)}
-            disabled={isLocked}
-            title="Recenter View"
-          >
-            <Focus className="w-4 h-4" />
-          </Button>
+          {hasRun && (
+            <Button
+              size="icon"
+              variant="outline"
+              className={cn(
+                "w-8 h-8",
+                theme === 'dark'
+                  ? 'bg-black/80 border-gray-700 hover:bg-gray-800 hover:border-cyan-700'
+                  : 'bg-white/90 border-gray-300 hover:bg-gray-50 hover:border-primary'
+              )}
+              onClick={() => resetZoom(svgRef)}
+              disabled={isLocked}
+              title="Recenter View"
+            >
+              <Focus className="w-4 h-4" />
+            </Button>
+          )}
 
           {!isFullscreen && (
             <Button
@@ -352,36 +432,6 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
             </Button>
           )}
         </div>
-
-        {error && <div className="absolute inset-0 flex items-center justify-center bg-black/80"><p className="text-red-500 font-bold">Failed to compute Voronoi: {error.toString()}</p></div>}
-
-        {isLocked && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
-              <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-              <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
-            </div>
-          </div>
-        )}
-
-        {!isLocked && isRendering && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
-            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
-              <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-              <div className="text-cyan-600/80 text-[10px] font-normal">This may take 20-60 seconds for large directories</div>
-            </div>
-          </div>
-        )}
-
-        {isTransitioning && !isLocked && !isRendering && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px] pointer-events-none">
-            <div className="bg-cyan-950/50 border border-cyan-600 px-6 py-4 rounded-lg flex flex-col items-center gap-2">
-              <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-              <div className="text-cyan-400/70 text-[10px] font-normal italic">Resizing visualization...</div>
-              <div className="text-cyan-600/60 text-[9px] font-light">Complex partitions may take a few seconds</div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* LEGENDS - Layout: File Categories izquierda (2 filas), Bubble+Quota derecha (vertical) */}

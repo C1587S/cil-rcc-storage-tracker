@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Query limits and timeouts
     max_execution_time: int = 20  # seconds
-    max_result_rows: int = 5000
+    max_result_rows: int = 8000
     max_result_bytes: int = 50_000_000  # ~50MB
 
     # API settings

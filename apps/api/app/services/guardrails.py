@@ -27,7 +27,7 @@ class QueryValidationError(ValueError):
     pass
 
 
-def enforce_sql_guardrails(sql: str, limit: int = 5000) -> str:
+def enforce_sql_guardrails(sql: str, limit: int = 8000) -> str:
     """
     Enforce strict SQL guardrails for user-provided queries.
 

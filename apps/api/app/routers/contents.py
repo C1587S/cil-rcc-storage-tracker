@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/contents", tags=["contents"])
 async def get_contents(
     snapshot_date: date = Query(..., description="Snapshot date"),
     parent_path: str = Query("/", description="Parent directory path"),
-    limit: int = Query(100, ge=1, le=5000, description="Maximum entries to return"),
+    limit: int = Query(100, ge=1, le=8000, description="Maximum entries to return"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     sort: Literal["size_desc", "size_asc", "name_asc", "name_desc", "modified_desc"] = Query(
         "size_desc", description="Sort order"

@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/browse", tags=["browse"])
 async def browse_folders(
     snapshot_date: date = Query(..., description="Snapshot date"),
     parent_path: str = Query("/", description="Parent directory path"),
-    limit: int = Query(1000, ge=1, le=5000, description="Maximum number of folders to return"),
+    limit: int = Query(1000, ge=1, le=8000, description="Maximum number of folders to return"),
 ):
     """
     Get child folders for a given parent directory (folders only, no files).

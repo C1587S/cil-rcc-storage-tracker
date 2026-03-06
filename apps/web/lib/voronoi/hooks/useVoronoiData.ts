@@ -9,6 +9,7 @@ import { API_BASE_URL } from '@/lib/api'
 interface UseVoronoiDataOptions {
   selectedSnapshot: string | null
   effectivePath: string
+  enabled?: boolean
 }
 
 /**
@@ -36,7 +37,7 @@ type NodeCache = Map<string, VoronoiNodeExtended>
  * @param options - Configuration options
  * @returns Query result with data, loading states, and error
  */
-export function useVoronoiData({ selectedSnapshot, effectivePath }: UseVoronoiDataOptions) {
+export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true }: UseVoronoiDataOptions) {
   // In-memory node cache (persistent across renders)
   const nodeCacheRef = useRef<NodeCache>(new Map())
 
@@ -50,7 +51,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath }: UseVoronoiDa
     isLoading: isLoadingRoot,
     isFetching: isFetchingRoot,
     error: rootError,
-  } = useVoronoiNode(selectedSnapshot, 'root', Boolean(selectedSnapshot))
+  } = useVoronoiNode(selectedSnapshot, 'root', Boolean(selectedSnapshot) && enabled)
 
   /**
    * Add node to cache
@@ -459,7 +460,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath }: UseVoronoiDa
 
   // Navigate to effectivePath and expand to preview depth
   useEffect(() => {
-    if (!rootNode || !selectedSnapshot) {
+    if (!rootNode || !selectedSnapshot || !enabled) {
       setVisibleRoot(null)
       return
     }

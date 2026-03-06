@@ -164,17 +164,21 @@ const EXAMPLE_PRESETS: ExamplePreset[] = [
 
 // Helper function to generate SQL from filters
 function generateSQLFromFilters(filters: FilterState, snapshotDate: string): string {
-  let nameCondition = "";
+  const patterns = filters.searchText.split(",").map(p => p.trim()).filter(Boolean);
 
-  if (filters.searchMode === "exact") {
-    nameCondition = `name = '${filters.searchText}'`;
-  } else if (filters.searchMode === "contains") {
-    nameCondition = `positionCaseInsensitive(name, '${filters.searchText}') > 0`;
-  } else if (filters.searchMode === "prefix") {
-    nameCondition = `startsWith(name, '${filters.searchText}')`;
-  } else if (filters.searchMode === "suffix") {
-    nameCondition = `endsWith(name, '${filters.searchText}')`;
-  }
+  const buildNameCondition = (pattern: string) => {
+    const safe = pattern.replace(/'/g, "\\'");
+    if (filters.searchMode === "exact") return `name = '${safe}'`;
+    if (filters.searchMode === "contains") return `positionCaseInsensitive(name, '${safe}') > 0`;
+    if (filters.searchMode === "prefix") return `startsWith(lower(name), lower('${safe}'))`;
+    if (filters.searchMode === "suffix") return `endsWith(lower(name), lower('${safe}'))`;
+    return "";
+  };
+
+  const nameParts = patterns.map(buildNameCondition).filter(Boolean);
+  const nameCondition = nameParts.length > 1
+    ? `(${nameParts.join(" OR ")})`
+    : nameParts[0] ?? "";
 
   let typeCondition = "";
   if (!filters.includeFiles && filters.includeDirs) {
@@ -304,6 +308,28 @@ WHERE snapshot_date = %(snapshot_date)s
   AND path LIKE concat('${params.path}', '/%')
   AND is_directory = 0
   AND size = 0`,
+  },
+  {
+    id: "home-dirs-by-file-count",
+    name: "home_dirs — users with most files",
+    description: "Rank home directories by number of files (useful for storage audits)",
+    category: "directories",
+    params: [
+      { name: "limit", label: "Limit", type: "number", default: 20 },
+    ],
+    generateSQL: (params) => `SELECT
+  splitByChar('/', path)[5] AS user,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size,
+  formatReadableSize(avg(size)) AS avg_file_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND path LIKE '/project/cil/home_dirs/%'
+  AND is_directory = 0
+  AND length(splitByChar('/', path)) >= 6
+GROUP BY user
+ORDER BY file_count DESC
+LIMIT ${params.limit}`,
   },
   {
     id: "size-by-top-level-dir",
@@ -1573,7 +1599,7 @@ export function SearchConsole() {
                       type="text"
                       value={filters.searchText}
                       onChange={(e) => updateFilter("searchText", e.target.value)}
-                      placeholder="Enter filename or pattern... (required)"
+                      placeholder="e.g. report, data, .py"
                       className="flex-1 px-3 py-1.5 text-xs bg-background border border-border rounded-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
                     />
                     <select
@@ -1588,7 +1614,7 @@ export function SearchConsole() {
                     </select>
                   </div>
                   <div className="mt-1 text-[10px] text-muted-foreground/60">
-                    Searches match on filename only (not full path). Backend requires at least 1 character.
+                    Matches on filename only. Comma-separate for multiple patterns — any match is returned.
                   </div>
                 </div>
 
@@ -1667,10 +1693,11 @@ export function SearchConsole() {
                         <option value={100}>100 results</option>
                         <option value={500}>500 results</option>
                         <option value={1000}>1000 results</option>
-                        <option value={5000}>5000 results (max)</option>
+                        <option value={5000}>5000 results</option>
+                        <option value={8000}>8000 results (max)</option>
                       </select>
                       <div className="mt-1 text-[10px] text-muted-foreground/60">
-                        Backend enforces maximum of 5000 rows
+                        Backend enforces maximum of 8000 rows
                       </div>
                     </div>
                   </div>

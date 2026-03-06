@@ -93,7 +93,7 @@ class SearchRequest(BaseModel):
     scope_path: str | None = Field(None, description="Limit search to this directory subtree")
     include_files: bool = True
     include_dirs: bool = True
-    limit: int = Field(100, ge=1, le=5000)
+    limit: int = Field(100, ge=1, le=8000)
 
 
 class QueryRequest(BaseModel):
@@ -101,4 +101,4 @@ class QueryRequest(BaseModel):
 
     snapshot_date: date
     sql: str = Field(..., min_length=10, description="SQL query to execute")
-    limit: int = Field(1000, ge=1, le=5000)
+    limit: int = Field(1000, ge=1, le=8000)
