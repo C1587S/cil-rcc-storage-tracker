@@ -14,7 +14,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
-import { Maximize2, Minimize2, Focus } from 'lucide-react'
+import { Maximize2, Minimize2, Focus, BarChart2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
 import {
@@ -299,34 +299,54 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           /* Gate UI — shown until user explicitly triggers the visualization */
           <div className="absolute inset-0 flex items-center justify-center">
             <div className={cn(
-              "max-w-xs text-center flex flex-col items-center gap-4 p-6 rounded-xl border",
+              "w-72 flex flex-col items-center gap-6 p-8 rounded-2xl",
               theme === 'dark'
-                ? 'border-cyan-900/60 bg-cyan-950/30'
-                : 'border-primary/20 bg-card/80'
+                ? 'bg-[#0d1117] border border-white/[0.06] shadow-2xl shadow-black/60'
+                : 'bg-white border border-black/[0.06] shadow-xl shadow-black/[0.08]'
             )}>
-              <p className={cn(
-                "text-[11px] leading-relaxed",
-                theme === 'dark' ? 'text-cyan-400/80' : 'text-muted-foreground'
+              {/* Icon badge */}
+              <div className={cn(
+                "w-11 h-11 rounded-xl flex items-center justify-center",
+                theme === 'dark' ? 'bg-cyan-500/10' : 'bg-primary/10'
               )}>
-                Renders the full directory tree as an interactive area-proportional map.
-                Useful for spotting storage hotspots. May take 20–60 seconds for large directories.
-              </p>
+                <BarChart2 className={cn("w-5 h-5", theme === 'dark' ? 'text-cyan-400' : 'text-primary')} strokeWidth={1.5} />
+              </div>
+
+              {/* Text */}
+              <div className="text-center space-y-2">
+                <p className={cn(
+                  "text-[11px] font-semibold tracking-wide uppercase",
+                  theme === 'dark' ? 'text-white/50' : 'text-muted-foreground/70'
+                )}>
+                  Storage Map
+                </p>
+                <p className={cn(
+                  "text-[11px] leading-relaxed",
+                  theme === 'dark' ? 'text-white/35' : 'text-muted-foreground/80'
+                )}>
+                  Area-proportional visualization of the directory tree. Useful for identifying storage hotspots. Loading may take 20–60 s.
+                </p>
+              </div>
+
+              {/* Action */}
               {selectedSnapshot ? (
-                <Button
-                  size="sm"
+                <button
                   onClick={() => setHasRun(true)}
                   className={cn(
-                    "h-8 px-5 text-xs font-mono",
+                    "h-8 px-6 text-[11px] font-medium rounded-lg transition-all duration-150",
                     theme === 'dark'
-                      ? 'bg-cyan-700/80 hover:bg-cyan-600 text-white border-cyan-600'
-                      : 'bg-primary hover:bg-primary/90 text-primary-foreground'
+                      ? 'bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/20 hover:border-cyan-500/40'
+                      : 'bg-primary/90 hover:bg-primary text-white shadow-sm'
                   )}
                 >
                   Run Visualization
-                </Button>
+                </button>
               ) : (
-                <p className={cn("text-[10px]", theme === 'dark' ? 'text-cyan-600/60' : 'text-muted-foreground/60')}>
-                  Select a snapshot first
+                <p className={cn(
+                  "text-[10px]",
+                  theme === 'dark' ? 'text-white/20' : 'text-muted-foreground/40'
+                )}>
+                  Select a snapshot to continue
                 </p>
               )}
             </div>

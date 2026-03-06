@@ -4,7 +4,16 @@ import { useQuery } from "@tanstack/react-query";
 import { getSnapshots } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { Select } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+const formatTimestamp = (ts?: string) => {
+  if (!ts) return null;
+  const utc = ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z";
+  const d = new Date(utc);
+  return d.toLocaleString(undefined, {
+    month: "short", day: "numeric", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+};
 
 export function SnapshotSelector() {
   const { selectedSnapshot, setSelectedSnapshot } = useAppStore();
@@ -15,76 +24,43 @@ export function SnapshotSelector() {
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value;
-    setSelectedSnapshot(value || null);
+    setSelectedSnapshot(e.target.value || null);
   };
-
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Snapshot</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-xs text-muted-foreground">Loading snapshots...</div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (error) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Snapshot</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-xs text-destructive">
-            Error loading snapshots: {error.message}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
 
   const snapshots = data || [];
-
-  const formatTimestamp = (ts?: string) => {
-    if (!ts) return null;
-    const utc = ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z";
-    const d = new Date(utc);
-    return d.toLocaleString(undefined, {
-      month: "short", day: "numeric", year: "numeric",
-      hour: "2-digit", minute: "2-digit",
-    });
-  };
-
   const selectedSnapshot_ = snapshots.find((s) => s.snapshot_date === selectedSnapshot);
 
   return (
-    <Card>
-      <CardContent className="py-4">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-3">
-            <label htmlFor="snapshot-select" className="text-sm font-semibold whitespace-nowrap">
-              Snapshot:
-            </label>
-            <Select id="snapshot-select" value={selectedSnapshot || ""} onChange={handleChange} className="flex-1">
-              <option value="">Select a snapshot...</option>
-              {snapshots.map((snapshot) => (
-                <option key={snapshot.snapshot_date} value={snapshot.snapshot_date}>
-                  {snapshot.snapshot_date}
-                </option>
-              ))}
-            </Select>
-          </div>
-          {selectedSnapshot_?.import_time && (
-            <div className="text-xs text-muted-foreground pl-[85px]">
-              DB updated: {formatTimestamp(selectedSnapshot_.import_time)}
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+    <div className="flex items-center gap-4 py-3 border-b border-border/50">
+      <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+        Snapshot
+      </span>
+
+      {isLoading ? (
+        <span className="text-xs text-muted-foreground/60">Loading…</span>
+      ) : error ? (
+        <span className="text-xs text-destructive">Failed to load snapshots</span>
+      ) : (
+        <Select
+          id="snapshot-select"
+          value={selectedSnapshot || ""}
+          onChange={handleChange}
+          className="h-8 text-xs max-w-[220px] border-border/60 bg-transparent"
+        >
+          <option value="">Select a snapshot…</option>
+          {snapshots.map((snapshot) => (
+            <option key={snapshot.snapshot_date} value={snapshot.snapshot_date}>
+              {snapshot.snapshot_date}
+            </option>
+          ))}
+        </Select>
+      )}
+
+      {selectedSnapshot_?.import_time && (
+        <span className="text-xs text-muted-foreground/60 ml-1">
+          DB updated {formatTimestamp(selectedSnapshot_.import_time)}
+        </span>
+      )}
+    </div>
   );
 }

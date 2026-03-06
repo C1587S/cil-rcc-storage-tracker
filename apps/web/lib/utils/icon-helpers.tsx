@@ -17,11 +17,11 @@ import { cn } from "@/lib/utils";
  */
 export function getSizeColor(sizeBytes: number): string {
   const sizeGB = sizeBytes / (1024 ** 3);
-  if (sizeGB >= 50) return "text-red-500";         // ≥50GB: red (very large)
-  if (sizeGB >= 10) return "text-orange-400";      // ≥10GB: orange (large)
-  if (sizeGB >= 1) return "text-yellow-400";       // ≥1GB: yellow (medium)
-  if (sizeGB >= 0.01) return "text-green-400";     // ≥10MB: green (small)
-  return "text-muted-foreground/40";               // <10MB: near-white (negligible)
+  if (sizeGB >= 50) return "text-red-500";          // ≥50GB: red (very large)
+  if (sizeGB >= 10) return "text-orange-500";       // ≥10GB: orange (large)
+  if (sizeGB >= 1) return "text-amber-600";         // ≥1GB: amber (medium) — readable on both light/dark
+  if (sizeGB >= 0.01) return "text-green-600";      // ≥10MB: green (small) — readable on both light/dark
+  return "text-muted-foreground/40";                // <10MB: muted (negligible)
 }
 
 /**

@@ -49,13 +49,13 @@ function getQuotaTextColor(percent: number): string {
   if (percent >= 95) return "text-red-600";
   if (percent >= 85) return "text-red-500";
   if (percent >= 75) return "text-orange-500";
-  if (percent >= 65) return "text-orange-400";
-  if (percent >= 50) return "text-yellow-400";
-  if (percent >= 35) return "text-yellow-300";
-  if (percent >= 25) return "text-lime-400";
-  if (percent >= 15) return "text-green-400";
-  if (percent >= 5) return "text-green-500";
-  return "text-green-600";
+  if (percent >= 65) return "text-orange-500";
+  if (percent >= 50) return "text-amber-600";
+  if (percent >= 35) return "text-amber-600";
+  if (percent >= 25) return "text-lime-700";
+  if (percent >= 15) return "text-green-700";
+  if (percent >= 5) return "text-green-700";
+  return "text-green-700";
 }
 
 interface TreeNodeProps {
@@ -254,7 +254,7 @@ function TreeNode({
           "flex items-center gap-2 px-2 py-1 hover:bg-accent/30 cursor-pointer group relative",
           "border-l-2 border-transparent hover:border-primary/20 transition-all duration-200",
           isReferenceRow && "bg-green-500/10 border-l-2 border-green-500/60 shadow-sm",
-          isSelectedRow && !isReferenceRow && "border-b-2 border-cyan-500/60"
+          isSelectedRow && !isReferenceRow && "border-b-2 border-primary/50"
         )}
         style={{ paddingLeft: `${level * 12 + 8}px` }}
         onClick={handleToggle}
@@ -606,10 +606,10 @@ export function DiskUsageExplorerV2() {
               <span className="text-muted-foreground/70">Quota:</span>
               <span className={cn(
                 "font-medium",
-                referenceSize && ((referenceSize / 1024 ** 4) / STORAGE_QUOTA_TB * 100) > 90 ? "text-red-400" :
-                referenceSize && ((referenceSize / 1024 ** 4) / STORAGE_QUOTA_TB * 100) > 75 ? "text-orange-400" :
-                referenceSize && ((referenceSize / 1024 ** 4) / STORAGE_QUOTA_TB * 100) > 50 ? "text-yellow-400" :
-                "text-green-400"
+                referenceSize && ((referenceSize / 1024 ** 4) / STORAGE_QUOTA_TB * 100) > 90 ? "text-red-600" :
+                referenceSize && ((referenceSize / 1024 ** 4) / STORAGE_QUOTA_TB * 100) > 75 ? "text-orange-500" :
+                referenceSize && ((referenceSize / 1024 ** 4) / STORAGE_QUOTA_TB * 100) > 50 ? "text-amber-600" :
+                "text-green-700"
               )}>
                 {referenceSize ? `${((referenceSize / 1024 ** 4) / STORAGE_QUOTA_TB * 100).toFixed(1)}%` : "—"}
               </span>
@@ -619,14 +619,14 @@ export function DiskUsageExplorerV2() {
 
         {/* Selected Item Card */}
         {state.selectedPath && (
-          <div className="w-[280px] bg-muted/20 border-2 border-cyan-500/40 rounded-md p-3">
+          <div className="w-[280px] bg-muted/20 border-2 border-primary/30 rounded-md p-3">
             <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border/30">
               {state.selectedPath && getFileIcon(
                 state.selectedPath.split('/').pop() || "",
                 undefined,
                 0
               )}
-              <h4 className="text-xs font-semibold text-cyan-400/90">Item</h4>
+              <h4 className="text-xs font-semibold text-primary/80">Item</h4>
             </div>
 
             <div className="space-y-1.5 text-[10px] font-mono">
@@ -676,15 +676,15 @@ export function DiskUsageExplorerV2() {
                 <span className="text-muted-foreground/70">Negligible (&lt;10MB)</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="text-green-400">●</span>
+                <span className="text-green-600">●</span>
                 <span className="text-muted-foreground/70">Small (≥10MB)</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="text-yellow-400">●</span>
+                <span className="text-amber-600">●</span>
                 <span className="text-muted-foreground/70">Medium (≥1GB)</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="text-orange-400">●</span>
+                <span className="text-orange-500">●</span>
                 <span className="text-muted-foreground/70">Large (≥10GB)</span>
               </div>
               <div className="flex items-center gap-1.5">

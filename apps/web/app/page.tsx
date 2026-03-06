@@ -21,7 +21,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<TabId>("query");
   const isVoronoiFullscreen = useAppStore(state => state.isVoronoiFullscreen);
 
-  const containerClass = "max-w-7xl mx-auto px-8";
+  const containerClass = "max-w-6xl mx-auto px-6";
 
   return (
     <main className={cn("min-h-screen", isVoronoiFullscreen ? "p-0" : "pb-8")}>
@@ -55,7 +55,7 @@ export default function Home() {
                       "relative px-5 py-3 text-sm font-medium tracking-wide transition-colors",
                       "focus:outline-none",
                       activeTab === tab.id
-                        ? "text-foreground after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-cyan-500"
+                        ? "text-foreground after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary"
                         : "text-muted-foreground hover:text-foreground"
                     )}
                   >
@@ -67,14 +67,14 @@ export default function Home() {
           </div>
 
           {/* Snapshot selector */}
-          <div className={cn(containerClass, "mt-6 mb-6")}>
+          <div className={cn(containerClass, "mt-0")}>
             <SnapshotSelector />
           </div>
         </>
       )}
 
       {/* Tab content */}
-      <div className="relative">
+      <div className="relative mt-6">
         <div className={cn("space-y-6", containerClass, activeTab !== "query" && "hidden")}>
           <SearchConsole />
         </div>

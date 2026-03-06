@@ -24,7 +24,7 @@ export const useAppStore = create<AppState>((set) => ({
   referenceSize: null,
   isVoronoiFullscreen: false,
   highlightColor: "#f3e5ab",  // Default: Vanilla
-  theme: 'dark',  // Default: dark mode
+  theme: 'light',  // Default: light mode
   setSelectedSnapshot: (snapshot) => set({ selectedSnapshot: snapshot }),
   setSelectedPath: (path) => set({ selectedPath: path }),
   setReferencePath: (path) => set({ referencePath: path }),
