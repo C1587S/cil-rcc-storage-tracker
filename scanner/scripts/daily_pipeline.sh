@@ -8,11 +8,10 @@
 #SBATCH --time=2:00:00
 #SBATCH -o ./slurm_out/pipeline_%j.out
 #SBATCH -e ./slurm_out/pipeline_%j.err
-# Daily pipeline orchestrator
-# Submits the scan array, waits for completion, publishes and cleans scratch.
-# At the end, resubmits itself to run again the next day at 2am.
+# Daily scan orchestrator - runs on Midway3 at 2am
+# Submits the scan job array, waits for completion, and leaves a flag for the publish job.
 #
-# First run (manual):
+# First run (manual, from Midway3):
 #   sbatch --begin=02:00 scanner/scripts/daily_pipeline.sh
 #
 # After that it resubmits itself automatically every day.
@@ -23,8 +22,8 @@
 set -e
 
 SCAN_SCRIPT="./scanner/scripts/scan_cil_parallel.sh"
-PUBLISH_SCRIPT="./scanner/scripts/publish_scans.sh"
 OUTPUT_DIR="/scratch/midway3/${USER}/cil_scans"
+FLAG_FILE="${OUTPUT_DIR}/.scan_complete"
 
 echo "Daily pipeline started at $(date)"
 echo "Running on: $(hostname)"
@@ -33,6 +32,9 @@ echo "Running on: $(hostname)"
 echo "Cleaning previous slurm logs..."
 mkdir -p slurm_out
 rm -f slurm_out/scan_*.out slurm_out/scan_*.err
+
+# Remove previous flag
+rm -f "$FLAG_FILE"
 
 # Submit scan job array
 echo "Submitting scan job array..."
@@ -61,31 +63,23 @@ if [ -n "$FAILED" ]; then
     echo "Warning: Some jobs did not complete successfully:"
     echo "$FAILED"
     echo "Check logs in slurm_out/ for details."
-    echo "Skipping publish step."
+    echo "Skipping flag — publish job will not run."
 else
     # Verify output files exist
-    echo ""
-    echo "Verifying output files..."
     FILE_COUNT=$(ls "$OUTPUT_DIR"/*.parquet 2>/dev/null | wc -l)
     if [ "$FILE_COUNT" -eq 0 ]; then
         echo "Error: No parquet files found in $OUTPUT_DIR"
+        echo "Skipping flag — publish job will not run."
     else
-        echo "Found $FILE_COUNT parquet file(s) in $OUTPUT_DIR"
-        du -sh "$OUTPUT_DIR"
-
-        # Publish and clean
-        echo ""
-        echo "Publishing results..."
-        bash "$PUBLISH_SCRIPT" --clean
-        echo "Results available at: http://users.rcc.uchicago.edu/~${USER}/cil_scans/"
+        echo "Found $FILE_COUNT parquet file(s). Writing flag for publish job..."
+        echo "$(date)" > "$FLAG_FILE"
+        echo "Flag written to $FLAG_FILE"
     fi
 fi
 
 # Resubmit itself for tomorrow at 2am
 echo ""
-echo "Scheduling next run for tomorrow at 2am..."
+echo "Scheduling next scan for tomorrow at 2am..."
 sbatch --begin=$(date -d "tomorrow 02:00" +%Y-%m-%dT%H:%M:%S) "$0"
-echo "Done. Next run scheduled."
 
-echo ""
 echo "Pipeline finished at $(date)"

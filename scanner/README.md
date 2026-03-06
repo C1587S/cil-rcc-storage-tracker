@@ -301,19 +301,23 @@ http://users.rcc.uchicago.edu/~[your_CNetID]/cil_scans/
 
 ### Automated daily pipeline
 
-To run the full pipeline automatically every day, submit the daily pipeline job once from Midway2:
+The pipeline runs in two separate jobs since scanning happens on Midway3 and publishing on Midway2. Submit each once to activate them:
+
+**From Midway3:**
 ```bash
-sbatch --begin=02:00 scanner/scripts/daily_pipeline.sh
+sbatch --begin=2026-03-07T02:00:00 scanner/scripts/daily_pipeline.sh
 ```
 
-This will scan, publish, and clean scratch every night at 2am, then resubmit itself for the next day automatically. To stop it:
+**From Midway2:**
 ```bash
-scancel <job_id>  # find it with: squeue -u $USER
+sbatch --begin=2026-03-07T04:00:00 scanner/scripts/daily_publish.sh
 ```
 
-To run the pipeline manually on demand:
+After that both jobs resubmit themselves automatically every day. The scan job leaves a flag in scratch when it completes successfully, and the publish job checks for that flag before running.
+
+To stop them:
 ```bash
-bash scanner/scripts/run_pipeline.sh
+scancel   # find it with: squeue -u $USER
 ```
 
 ### Download to local machine and import into dashboard
