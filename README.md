@@ -408,6 +408,54 @@ done
 
 ---
 
+### Automated Updates
+
+Two scripts handle the full update lifecycle:
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/update-snapshot.sh` | Downloads latest, imports, deletes old — run manually or via cron |
+| `scripts/setup-cron.sh` | Installs cron jobs (5am / noon / 9pm daily) |
+
+**Manual update (run once to test):**
+```bash
+# From project root — downloads latest, imports, deletes old snapshot automatically
+./scripts/update-snapshot.sh
+
+# To keep old snapshots instead of deleting:
+./scripts/update-snapshot.sh --keep-old
+
+# To force re-import even if the date is already in the DB
+# (use when a newer scan was published for the same day):
+./scripts/update-snapshot.sh --force
+```
+
+The script:
+1. Checks the latest published date at the RCC public URL
+2. Compares it against what's in the DB — exits if already up to date
+3. Downloads new files (`download-scans.sh`)
+4. Imports into ClickHouse (`docker-import.sh`)
+5. Deletes the old snapshot from all DB tables + cleans disk
+
+**Enable automatic daily updates (run once after `docker compose up -d`):**
+```bash
+./scripts/setup-cron.sh
+```
+
+This installs 3 cron jobs — at **5am**, **noon**, and **9pm** — so at least one will catch any new scan published that day. The script is idempotent: if nothing is new, it exits silently.
+
+Logs are written to:
+- `logs/auto-update.log` — full output from every run
+- `logs/cron.log` — cron stdout/stderr
+
+**Check or remove:**
+```bash
+crontab -l                         # see installed jobs
+./scripts/setup-cron.sh --remove   # remove all auto-update jobs
+```
+
+---
+
 ### Updating Scans
 
 **1. Run new scan on RCC**

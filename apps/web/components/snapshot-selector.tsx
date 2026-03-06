@@ -48,6 +48,16 @@ export function SnapshotSelector() {
   }
 
   const snapshots = data || [];
+  const selectedData = snapshots.find((s) => s.snapshot_date === selectedSnapshot);
+
+  const formatTimestamp = (ts?: string) => {
+    if (!ts) return null;
+    const d = new Date(ts);
+    return d.toLocaleString(undefined, {
+      month: "short", day: "numeric", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  };
 
   return (
     <Card>
@@ -66,9 +76,9 @@ export function SnapshotSelector() {
               ))}
             </Select>
           </div>
-          {selectedSnapshot && (
+          {selectedData && (
             <p className="text-xs text-muted-foreground/70 italic pl-[85px]">
-              Note: Data shown is current up to {selectedSnapshot}
+              Last imported: {formatTimestamp(selectedData.import_time) ?? selectedSnapshot}
             </p>
           )}
         </div>
