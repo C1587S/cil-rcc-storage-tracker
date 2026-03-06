@@ -35,6 +35,10 @@ if [ ! -d "$SOURCE_DIR" ]; then
     exit 1
 fi
 
+# Clear previously published files
+echo "Clearing previous scan from $PUBLISH_DIR..."
+rm -rf "$PUBLISH_DIR"
+
 # Set up publish directory with correct permissions
 mkdir -p "$PUBLISH_DIR"
 chmod o+x "$HOME"
