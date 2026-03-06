@@ -204,6 +204,9 @@ export function SearchResultsTable({
   const [showAggregation, setShowAggregation] = useState(false);
   const [aggGroupBy, setAggGroupBy] = useState<("parent_dir" | "top_level_dir" | "owner" | "file_type")[]>(["top_level_dir"]);
   const [postQueryFilter, setPostQueryFilter] = useState("");
+  const [includeRegex, setIncludeRegex] = useState(false);
+  const [excludeFilter, setExcludeFilter] = useState("");
+  const [excludeRegex, setExcludeRegex] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // Enrich results with derived columns
@@ -249,25 +252,63 @@ export function SearchResultsTable({
     });
   }, [enrichedResults, sortField, sortDirection]);
 
-  // Post-query filtering
+  // Post-query filtering (include)
   const filteredResults = useMemo(() => {
-    if (!postQueryFilter.trim()) return sortedResults;
+    const term = postQueryFilter.trim();
+    if (!term) return sortedResults;
 
-    const filterLower = postQueryFilter.toLowerCase();
-    return sortedResults.filter(entry => {
-      const filename = extractFilename(entry.path).toLowerCase();
-      const path = entry.path.toLowerCase();
-      const owner = (entry.owner || "").toLowerCase();
-      const parentDir = entry.parent_dir.toLowerCase();
-      const topLevelDir = entry.top_level_dir.toLowerCase();
+    const getFields = (entry: any) => [
+      extractFilename(entry.path),
+      entry.path,
+      entry.owner || "",
+      entry.parent_dir,
+      entry.top_level_dir,
+    ].map(s => s.toLowerCase());
 
-      return filename.includes(filterLower) ||
-             path.includes(filterLower) ||
-             owner.includes(filterLower) ||
-             parentDir.includes(filterLower) ||
-             topLevelDir.includes(filterLower);
-    });
-  }, [sortedResults, postQueryFilter]);
+    if (includeRegex) {
+      try {
+        const re = new RegExp(term, "i");
+        return sortedResults.filter(entry => getFields(entry).some(f => re.test(f)));
+      } catch {
+        return sortedResults;
+      }
+    }
+
+    const patterns = term.split(",").map(p => p.trim().toLowerCase()).filter(Boolean);
+    return sortedResults.filter(entry =>
+      getFields(entry).some(f => patterns.some(p => f.includes(p)))
+    );
+  }, [sortedResults, postQueryFilter, includeRegex]);
+
+  // Exclusion filtering (applied on top of filteredResults)
+  const displayResults = useMemo(() => {
+    const term = excludeFilter.trim();
+    if (!term) return filteredResults;
+
+    const matchesEntry = (entry: any): boolean => {
+      const fields = [
+        extractFilename(entry.path),
+        entry.path,
+        entry.owner || "",
+        entry.parent_dir,
+        entry.top_level_dir,
+      ].map(s => s.toLowerCase());
+
+      if (excludeRegex) {
+        try {
+          const re = new RegExp(term, "i");
+          return fields.some(f => re.test(f));
+        } catch {
+          return false;
+        }
+      } else {
+        const patterns = term.split(",").map(p => p.trim().toLowerCase()).filter(Boolean);
+        return fields.some(f => patterns.some(p => f.includes(p)));
+      }
+    };
+
+    return filteredResults.filter(entry => !matchesEntry(entry));
+  }, [filteredResults, excludeFilter, excludeRegex]);
 
   // Compute aggregations
   const aggregations = useMemo(() => {
@@ -398,7 +439,7 @@ export function SearchResultsTable({
   }
 
   const handleCopyMarkdown = async () => {
-    await navigator.clipboard.writeText(generateMarkdownTable(filteredResults));
+    await navigator.clipboard.writeText(generateMarkdownTable(displayResults));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -453,29 +494,76 @@ export function SearchResultsTable({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="text-[10px] font-mono text-muted-foreground">
-              {filteredResults.length} {postQueryFilter ? `filtered (of ${results.length})` : `of ${totalCount.toLocaleString()} results`}
-              {!postQueryFilter && totalCount > results.length && " (server limit)"}
+              {displayResults.length}{(postQueryFilter || excludeFilter) ? ` filtered (of ${results.length})` : ` of ${totalCount.toLocaleString()} results`}
+              {!postQueryFilter && !excludeFilter && totalCount > results.length && " (server limit)"}
             </div>
 
-            {/* Post-query filter input */}
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Filter results..."
-                value={postQueryFilter}
-                onChange={(e) => setPostQueryFilter(e.target.value)}
-                className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-border/20 rounded-sm bg-background/50 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 w-40"
-              />
-              <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/50" />
-              {postQueryFilter && (
-                <button
-                  onClick={() => setPostQueryFilter("")}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground text-[10px] px-1"
-                  title="Clear filter"
-                >
-                  ×
-                </button>
-              )}
+            {/* Include filter */}
+            <div className="group relative flex items-center gap-0.5">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder={includeRegex ? "e.g. \\.py$|report" : "e.g. data, report"}
+                  value={postQueryFilter}
+                  onChange={(e) => setPostQueryFilter(e.target.value)}
+                  className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-sky-500/30 rounded-sm bg-sky-500/5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-sky-500/50 focus:ring-1 focus:ring-sky-500/20 w-36"
+                />
+                <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-sky-400/70" />
+                {postQueryFilter && (
+                  <button
+                    onClick={() => setPostQueryFilter("")}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground text-[10px] px-1"
+                  >×</button>
+                )}
+              </div>
+              <button
+                onClick={() => setIncludeRegex(r => !r)}
+                className={`px-1.5 py-0.5 text-[9px] font-mono border rounded-sm transition-colors ${
+                  includeRegex
+                    ? "border-sky-500/50 bg-sky-500/15 text-sky-400"
+                    : "border-border/20 text-muted-foreground/50 hover:border-sky-500/30 hover:text-sky-400/70"
+                }`}
+              >/rx</button>
+              <div className="pointer-events-none absolute top-full left-0 mt-1.5 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+                <div className="bg-popover border border-border/40 rounded px-2 py-1.5 text-[10px] text-muted-foreground shadow-md whitespace-nowrap">
+                  Keep rows matching any pattern.<br />
+                  Comma-separate for multiple. Toggle <span className="font-mono text-sky-400">/rx</span> for regex.
+                </div>
+              </div>
+            </div>
+
+            {/* Exclusion filter */}
+            <div className="group relative flex items-center gap-0.5">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder={excludeRegex ? "e.g. \\.log$|tmp" : "e.g. tmp, cache"}
+                  value={excludeFilter}
+                  onChange={(e) => setExcludeFilter(e.target.value)}
+                  className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-rose-500/30 rounded-sm bg-rose-500/5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/20 w-36"
+                />
+                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-rose-400/70 text-[10px] font-bold leading-none">−</span>
+                {excludeFilter && (
+                  <button
+                    onClick={() => setExcludeFilter("")}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground text-[10px] px-1"
+                  >×</button>
+                )}
+              </div>
+              <button
+                onClick={() => setExcludeRegex(r => !r)}
+                className={`px-1.5 py-0.5 text-[9px] font-mono border rounded-sm transition-colors ${
+                  excludeRegex
+                    ? "border-rose-500/50 bg-rose-500/15 text-rose-400"
+                    : "border-border/20 text-muted-foreground/50 hover:border-rose-500/30 hover:text-rose-400/70"
+                }`}
+              >/rx</button>
+              <div className="pointer-events-none absolute top-full left-0 mt-1.5 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+                <div className="bg-popover border border-border/40 rounded px-2 py-1.5 text-[10px] text-muted-foreground shadow-md whitespace-nowrap">
+                  Remove rows matching any pattern.<br />
+                  Comma-separate for multiple. Toggle <span className="font-mono text-rose-400">/rx</span> for regex.
+                </div>
+              </div>
             </div>
 
             {/* View Mode Toggle */}
@@ -542,7 +630,7 @@ export function SearchResultsTable({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => downloadAsCSV(filteredResults)}
+              onClick={() => downloadAsCSV(displayResults)}
               className="h-6 px-2 text-[10px] font-mono"
             >
               <Download className="h-3 w-3 mr-1" />
@@ -551,7 +639,7 @@ export function SearchResultsTable({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => downloadAsTXT(filteredResults)}
+              onClick={() => downloadAsTXT(displayResults)}
               className="h-6 px-2 text-[10px] font-mono"
             >
               <Download className="h-3 w-3 mr-1" />
@@ -591,7 +679,7 @@ export function SearchResultsTable({
       {viewMode === "markdown" && (
         <div className="bg-background p-4 max-h-[500px] overflow-auto">
           <pre className="text-[11px] font-mono text-foreground whitespace-pre">
-            {generateMarkdownTable(filteredResults)}
+            {generateMarkdownTable(displayResults)}
           </pre>
         </div>
       )}
@@ -742,7 +830,7 @@ export function SearchResultsTable({
 
         {/* Results with vertical scrolling - fixed column widths */}
         <div className="divide-y divide-border/30 bg-background max-h-[500px] overflow-y-auto">
-          {filteredResults.map((entry, idx) => {
+          {displayResults.map((entry, idx) => {
             const filename = extractFilename(entry.path);
             return (
               <div

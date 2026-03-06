@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   ChevronDown,
@@ -1258,7 +1258,6 @@ function ReportPanel({
 
 export function SearchConsole() {
   const { selectedSnapshot } = useAppStore();
-  const [isExpanded, setIsExpanded] = useState(false);
   const [mode, setMode] = useState<ConsoleMode>("filters");
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
   const [hasSearched, setHasSearched] = useState(false);
@@ -1393,26 +1392,7 @@ export function SearchConsole() {
 
   return (
     <Card className="border-t-2 border-border/50">
-      <CardHeader
-        className="cursor-pointer hover:bg-muted/5 transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-mono text-muted-foreground">
-            Search & Query Console
-          </CardTitle>
-          <Button variant="ghost" size="sm">
-            {isExpanded ? (
-              <ChevronUp className="h-4 w-4" />
-            ) : (
-              <ChevronDown className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
-      </CardHeader>
-
-      {isExpanded && (
-        <CardContent className="space-y-4 pt-0">
+      <CardContent className="space-y-4 pt-4">
           {/* Mode tabs */}
           <div className="flex items-center gap-2 border-b border-border/30 pb-3">
             <button
@@ -1797,7 +1777,6 @@ export function SearchConsole() {
             onToggle={() => setShowReport(!showReport)}
           />
         </CardContent>
-      )}
     </Card>
   );
 }
