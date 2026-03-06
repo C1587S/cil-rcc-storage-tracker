@@ -32,11 +32,8 @@ export default function Home() {
           <nav className="border-b border-border bg-card sticky top-0 z-40">
             <div className={cn(containerClass, "py-4")}>
               <div className="flex items-center justify-between">
-                <h1 className="text-2xl font-bold tracking-tight">
-                  <span style={{ color: '#8B1538' }}>C</span>
-                  <span className="text-muted-foreground">I</span>
-                  <span style={{ color: '#4169E1' }}>L</span>
-                  <span className="text-muted-foreground">-RCC-TRACKER</span>
+                <h1 className="text-lg font-semibold tracking-tight text-foreground">
+                  CIL RCC <span className="font-normal text-muted-foreground">Console</span>
                 </h1>
                 <ThemeToggle />
               </div>

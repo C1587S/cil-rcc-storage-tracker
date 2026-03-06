@@ -2,13 +2,19 @@ import type { Metadata } from "next";
 import { Providers } from "@/lib/providers";
 import "./globals.css";
 
+const basePath = "/cil-rcc-tracker";
+
 export const metadata: Metadata = {
-  title: "CIL-rcc-tracker",
-  description: "Filesystem snapshot explorer",
+  title: "CRC",
+  description: "CIL RCC Console",
   icons: {
-    icon: "/logo_tracker.png",
-    apple: "/logo_tracker.png",
+    icon: [
+      { url: `${basePath}/favicon-32x32.png`, sizes: "32x32", type: "image/png" },
+      { url: `${basePath}/favicon-16x16.png`, sizes: "16x16", type: "image/png" },
+    ],
+    apple: `${basePath}/apple-touch-icon.png`,
   },
+  manifest: `${basePath}/site.webmanifest`,
 };
 
 export default function RootLayout({
