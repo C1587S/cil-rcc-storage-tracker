@@ -299,6 +299,23 @@ http://users.rcc.uchicago.edu/~[your_CNetID]/cil_scans/
 | `SOURCE_DIR` | `/scratch/midway3/$USER/cil_scans` | Source directory with scan results |
 | `PUBLISH_DIR` | `~/public_html/cil_scans` | Destination directory |
 
+### Automated daily pipeline
+
+To run the full pipeline automatically every day, submit the daily pipeline job once from Midway2:
+```bash
+sbatch --begin=02:00 scanner/scripts/daily_pipeline.sh
+```
+
+This will scan, publish, and clean scratch every night at 2am, then resubmit itself for the next day automatically. To stop it:
+```bash
+scancel <job_id>  # find it with: squeue -u $USER
+```
+
+To run the pipeline manually on demand:
+```bash
+bash scanner/scripts/run_pipeline.sh
+```
+
 ### Download to local machine and import into dashboard
 
 Once files are published, download and import them from your local machine (project root):
