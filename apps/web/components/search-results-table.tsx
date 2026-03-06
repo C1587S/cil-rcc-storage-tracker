@@ -204,6 +204,7 @@ export function SearchResultsTable({
   const [showAggregation, setShowAggregation] = useState(false);
   const [aggGroupBy, setAggGroupBy] = useState<("parent_dir" | "top_level_dir" | "owner" | "file_type")[]>(["top_level_dir"]);
   const [postQueryFilter, setPostQueryFilter] = useState("");
+  const [copied, setCopied] = useState(false);
 
   // Enrich results with derived columns
   const enrichedResults = useMemo(() => results.map(enrichEntry), [results]);
@@ -396,9 +397,10 @@ export function SearchResultsTable({
     );
   }
 
-  const handleCopyMarkdown = () => {
-    const markdown = generateMarkdownTable(results);
-    navigator.clipboard.writeText(markdown);
+  const handleCopyMarkdown = async () => {
+    await navigator.clipboard.writeText(generateMarkdownTable(results));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   };
 
   const handleAddToReport = () => {
@@ -532,9 +534,9 @@ export function SearchResultsTable({
                 variant="ghost"
                 size="sm"
                 onClick={handleCopyMarkdown}
-                className="h-6 px-2 text-[10px] font-mono"
+                className={`h-6 px-2 text-[10px] font-mono transition-all duration-300 ${copied ? "text-emerald-500 bg-emerald-500/10" : ""}`}
               >
-                Copy
+                {copied ? "Copied!" : "Copy"}
               </Button>
             )}
             <Button

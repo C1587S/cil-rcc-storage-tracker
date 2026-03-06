@@ -383,6 +383,7 @@ function GuidedSQLMode({
   const [templateParams, setTemplateParams] = useState<Record<string, any>>({});
   const [generatedSQL, setGeneratedSQL] = useState("");
   const [hasExecuted, setHasExecuted] = useState(false);
+  const [copiedSQL, setCopiedSQL] = useState(false);
 
   // Update params when template changes
   useEffect(() => {
@@ -442,8 +443,10 @@ function GuidedSQLMode({
     retry: false,
   });
 
-  const handleCopySQL = () => {
-    navigator.clipboard.writeText(generatedSQL);
+  const handleCopySQL = async () => {
+    await navigator.clipboard.writeText(generatedSQL);
+    setCopiedSQL(true);
+    setTimeout(() => setCopiedSQL(false), 1500);
   };
 
   const templatesByCategory = {
@@ -534,9 +537,9 @@ function GuidedSQLMode({
               variant="ghost"
               size="sm"
               onClick={handleCopySQL}
-              className="h-6 px-2 text-[10px] font-mono"
+              className={cn("h-6 px-2 text-[10px] font-mono transition-all duration-300", copiedSQL && "text-emerald-500 bg-emerald-500/10")}
             >
-              Copy SQL
+              {copiedSQL ? "Copied!" : "Copy SQL"}
             </Button>
           </div>
           <pre className="p-3 text-[11px] font-mono text-foreground overflow-x-auto max-h-[300px] overflow-y-auto">
@@ -861,6 +864,7 @@ function QueryResultsTable({
 }) {
   const [showAggregation, setShowAggregation] = useState(false);
   const [aggGroupByColumns, setAggGroupByColumns] = useState<string[]>([]);
+  const [copiedMD, setCopiedMD] = useState(false);
 
   if (isLoading) {
     return (
@@ -917,8 +921,10 @@ function QueryResultsTable({
     return [header, separator, ...rows].join("\n");
   };
 
-  const copyMarkdown = () => {
-    navigator.clipboard.writeText(generateMarkdown());
+  const copyMarkdown = async () => {
+    await navigator.clipboard.writeText(generateMarkdown());
+    setCopiedMD(true);
+    setTimeout(() => setCopiedMD(false), 1500);
   };
 
   // Build aggregations
@@ -1047,9 +1053,9 @@ function QueryResultsTable({
               variant="ghost"
               size="sm"
               onClick={copyMarkdown}
-              className="h-6 px-2 text-[10px] font-mono"
+              className={cn("h-6 px-2 text-[10px] font-mono transition-all duration-300", copiedMD && "text-emerald-500 bg-emerald-500/10")}
             >
-              Copy MD
+              {copiedMD ? "Copied!" : "Copy MD"}
             </Button>
           </div>
         </div>
