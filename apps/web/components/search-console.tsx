@@ -816,6 +816,10 @@ function QueryResultsTable({
   const [showAggregation, setShowAggregation] = useState(false);
   const [aggGroupByColumns, setAggGroupByColumns] = useState<string[]>([]);
   const [copiedMD, setCopiedMD] = useState(false);
+  const [includeFilter, setIncludeFilter] = useState("");
+  const [includeRegex, setIncludeRegex] = useState(false);
+  const [excludeFilter, setExcludeFilter] = useState("");
+  const [excludeRegex, setExcludeRegex] = useState(false);
 
   if (isLoading) {
     return (
@@ -827,10 +831,42 @@ function QueryResultsTable({
     );
   }
 
+  // Include filtering
+  const includedRows = useMemo(() => {
+    const term = includeFilter.trim();
+    if (!term) return result.rows;
+    const matchRow = (row: any[]) => {
+      const fields = row.map(c => String(c || "").toLowerCase());
+      if (includeRegex) {
+        try { const re = new RegExp(term, "i"); return fields.some(f => re.test(f)); } catch { return true; }
+      }
+      const patterns = term.split(",").map(p => p.trim().toLowerCase()).filter(Boolean);
+      return fields.some(f => patterns.some(p => f.includes(p)));
+    };
+    return result.rows.filter(matchRow);
+  }, [result.rows, includeFilter, includeRegex]);
+
+  // Exclude filtering
+  const filteredRows = useMemo(() => {
+    const term = excludeFilter.trim();
+    if (!term) return includedRows;
+    const matchRow = (row: any[]) => {
+      const fields = row.map(c => String(c || "").toLowerCase());
+      if (excludeRegex) {
+        try { const re = new RegExp(term, "i"); return fields.some(f => re.test(f)); } catch { return false; }
+      }
+      const patterns = term.split(",").map(p => p.trim().toLowerCase()).filter(Boolean);
+      return fields.some(f => patterns.some(p => f.includes(p)));
+    };
+    return includedRows.filter(row => !matchRow(row));
+  }, [includedRows, excludeFilter, excludeRegex]);
+
+  const isFiltered = includeFilter.trim() !== "" || excludeFilter.trim() !== "";
+
   const downloadCSV = () => {
     const csvContent = [
       result.columns.join(","),
-      ...result.rows.map((row) => row.map((cell) => `"${cell}"`).join(",")),
+      ...filteredRows.map((row) => row.map((cell) => `"${cell}"`).join(",")),
     ].join("\n");
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -843,7 +879,7 @@ function QueryResultsTable({
   const downloadTXT = () => {
     // Calculate column widths
     const colWidths = result.columns.map((col, idx) => {
-      const cellWidths = result.rows.map(row => String(row[idx] || "").length);
+      const cellWidths = filteredRows.map(row => String(row[idx] || "").length);
       return Math.max(col.length, ...cellWidths);
     });
 
@@ -852,7 +888,7 @@ function QueryResultsTable({
     const separator = colWidths.map(w => "-".repeat(w)).join("-+-");
 
     // Create rows
-    const rows = result.rows.map(row =>
+    const rows = filteredRows.map(row =>
       row.map((cell, idx) => String(cell || "").padEnd(colWidths[idx])).join(" | ")
     );
 
@@ -868,7 +904,7 @@ function QueryResultsTable({
   const generateMarkdown = () => {
     const header = `| ${result.columns.join(" | ")} |`;
     const separator = `| ${result.columns.map(() => "---").join(" | ")} |`;
-    const rows = result.rows.map(row => `| ${row.map(cell => String(cell || "")).join(" | ")} |`);
+    const rows = filteredRows.map(row => `| ${row.map(cell => String(cell || "")).join(" | ")} |`);
     return [header, separator, ...rows].join("\n");
   };
 
@@ -892,7 +928,7 @@ function QueryResultsTable({
       if (groupByIndices.includes(idx)) return -1;
 
       // Check if most values are numeric
-      const sampleValues = result.rows.slice(0, Math.min(10, result.rows.length)).map(row => row[idx]);
+      const sampleValues = filteredRows.slice(0, Math.min(10, filteredRows.length)).map(row => row[idx]);
       const numericCount = sampleValues.filter(v => typeof v === 'number' || !isNaN(Number(v))).length;
       return numericCount > sampleValues.length / 2 ? idx : -1;
     }).filter(idx => idx !== -1);
@@ -900,7 +936,7 @@ function QueryResultsTable({
     // Group by selected columns
     const groups = new Map<string, { keys: Record<string, any>; count: number; sums: number[] }>();
 
-    result.rows.forEach(row => {
+    filteredRows.forEach(row => {
       const key = groupByIndices.map(idx => String(row[idx] || "-")).join("|||");
 
       if (!groups.has(key)) {
@@ -929,12 +965,12 @@ function QueryResultsTable({
       count: group.count,
       numericSums: group.sums,
     }));
-  }, [result, showAggregation, aggGroupByColumns]);
+  }, [result, filteredRows, showAggregation, aggGroupByColumns]);
 
   // Get available grouping columns (text columns)
   const availableGroupByColumns = result.columns.filter((col, idx) => {
     // Check if column contains mostly text values
-    const sampleValues = result.rows.slice(0, Math.min(10, result.rows.length)).map(row => row[idx]);
+    const sampleValues = filteredRows.slice(0, Math.min(10, filteredRows.length)).map(row => row[idx]);
     const textCount = sampleValues.filter(v => typeof v === 'string' || (typeof v !== 'number' && isNaN(Number(v)))).length;
     return textCount > sampleValues.length / 2;
   });
@@ -946,7 +982,69 @@ function QueryResultsTable({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="text-[10px] font-mono text-muted-foreground">
-              {result.row_count} rows -- {Number(result.execution_time_ms).toFixed(3)} ms
+              {isFiltered ? `${filteredRows.length} filtered (of ${result.row_count})` : `${result.row_count} rows`} -- {Number(result.execution_time_ms).toFixed(3)} ms
+            </div>
+
+            {/* Include filter */}
+            <div className="group relative flex items-center gap-0.5">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder={includeRegex ? "e.g. \\.py$|report" : "e.g. data, report"}
+                  value={includeFilter}
+                  onChange={(e) => setIncludeFilter(e.target.value)}
+                  className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-sky-500/30 rounded-sm bg-sky-500/5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-sky-500/50 focus:ring-1 focus:ring-sky-500/20 w-36"
+                />
+                <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-sky-400/70" />
+                {includeFilter && (
+                  <button onClick={() => setIncludeFilter("")} className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground text-[10px] px-1">x</button>
+                )}
+              </div>
+              <button
+                onClick={() => setIncludeRegex(r => !r)}
+                className={`px-1.5 py-0.5 text-[9px] font-mono border rounded-sm transition-colors ${
+                  includeRegex
+                    ? "border-sky-500/50 bg-sky-500/15 text-sky-400"
+                    : "border-border/20 text-muted-foreground/50 hover:border-sky-500/30 hover:text-sky-400/70"
+                }`}
+              >/rx</button>
+              <div className="pointer-events-none absolute top-full left-0 mt-1.5 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+                <div className="bg-popover border border-border/40 rounded px-2 py-1.5 text-[10px] text-muted-foreground shadow-md whitespace-nowrap">
+                  Keep rows matching any pattern.<br />
+                  Comma-separate for multiple. Toggle <span className="font-mono text-sky-400">/rx</span> for regex.
+                </div>
+              </div>
+            </div>
+
+            {/* Exclude filter */}
+            <div className="group relative flex items-center gap-0.5">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder={excludeRegex ? "e.g. \\.log$|tmp" : "e.g. tmp, cache"}
+                  value={excludeFilter}
+                  onChange={(e) => setExcludeFilter(e.target.value)}
+                  className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-rose-500/30 rounded-sm bg-rose-500/5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/20 w-36"
+                />
+                <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-rose-400/70 text-[10px] font-bold leading-none">-</span>
+                {excludeFilter && (
+                  <button onClick={() => setExcludeFilter("")} className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground text-[10px] px-1">x</button>
+                )}
+              </div>
+              <button
+                onClick={() => setExcludeRegex(r => !r)}
+                className={`px-1.5 py-0.5 text-[9px] font-mono border rounded-sm transition-colors ${
+                  excludeRegex
+                    ? "border-rose-500/50 bg-rose-500/15 text-rose-400"
+                    : "border-border/20 text-muted-foreground/50 hover:border-rose-500/30 hover:text-rose-400/70"
+                }`}
+              >/rx</button>
+              <div className="pointer-events-none absolute top-full left-0 mt-1.5 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+                <div className="bg-popover border border-border/40 rounded px-2 py-1.5 text-[10px] text-muted-foreground shadow-md whitespace-nowrap">
+                  Remove rows matching any pattern.<br />
+                  Comma-separate for multiple. Toggle <span className="font-mono text-rose-400">/rx</span> for regex.
+                </div>
+              </div>
             </div>
 
             {/* Aggregation Toggle */}
@@ -973,8 +1071,8 @@ function QueryResultsTable({
                   mode,
                   sql,
                   columns: result.columns,
-                  rows: result.rows,
-                  rowCount: result.row_count,
+                  rows: filteredRows,
+                  rowCount: filteredRows.length,
                 })}
                 className="h-6 px-2 text-[10px] font-mono bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30"
               >
@@ -1042,7 +1140,7 @@ function QueryResultsTable({
       <div className="overflow-x-auto">
         <div className="max-h-[500px] overflow-y-auto">
           <table className="w-full text-xs font-mono">
-            <thead className="bg-muted/10 border-b border-border/30 sticky top-0">
+            <thead className="bg-card border-b border-border/30 sticky top-0 z-10">
               <tr>
                 {result.columns.map((col, idx) => (
                   <th
@@ -1055,7 +1153,7 @@ function QueryResultsTable({
               </tr>
             </thead>
             <tbody className="divide-y divide-border/30">
-              {result.rows.map((row, rowIdx) => (
+              {filteredRows.map((row, rowIdx) => (
                 <tr key={rowIdx} className="hover:bg-muted/5 transition-colors">
                   {row.map((cell, cellIdx) => (
                     <td key={cellIdx} className="px-3 py-2 text-muted-foreground">
@@ -1079,7 +1177,7 @@ function QueryResultsTable({
           </div>
           <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
             <table className="w-full text-xs font-mono">
-              <thead className="bg-muted/10 border-b border-border/30 sticky top-0">
+              <thead className="bg-card border-b border-border/30 sticky top-0 z-10">
                 <tr>
                   {aggGroupByColumns.map(col => (
                     <th key={col} className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">

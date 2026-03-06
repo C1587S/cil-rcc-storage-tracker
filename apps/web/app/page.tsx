@@ -32,9 +32,18 @@ export default function Home() {
           <nav className="border-b border-border bg-card sticky top-0 z-40">
             <div className={cn(containerClass, "py-4")}>
               <div className="flex items-center justify-between">
-                <h1 className="text-lg font-semibold tracking-tight text-foreground">
-                  CIL RCC <span className="font-normal text-muted-foreground">Console</span>
-                </h1>
+                <div className="flex items-center gap-3">
+                  <img
+                    src="/cil-rcc-tracker/cil_rcc_console.png"
+                    alt="CRC"
+                    width={28}
+                    height={28}
+                    className="rounded-full"
+                  />
+                  <h1 className="text-lg font-semibold tracking-tight text-foreground">
+                    CIL RCC <span className="font-normal text-muted-foreground">Console</span>
+                  </h1>
+                </div>
                 <ThemeToggle />
               </div>
             </div>
