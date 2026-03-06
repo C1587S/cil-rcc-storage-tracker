@@ -48,21 +48,23 @@ export function SnapshotSelector() {
   }
 
   const snapshots = data || [];
-  const selectedData = snapshots.find((s) => s.snapshot_date === selectedSnapshot);
 
   const formatTimestamp = (ts?: string) => {
     if (!ts) return null;
-    const d = new Date(ts);
+    const utc = ts.endsWith("Z") || ts.includes("+") ? ts : ts + "Z";
+    const d = new Date(utc);
     return d.toLocaleString(undefined, {
       month: "short", day: "numeric", year: "numeric",
       hour: "2-digit", minute: "2-digit",
     });
   };
 
+  const selectedSnapshot_ = snapshots.find((s) => s.snapshot_date === selectedSnapshot);
+
   return (
     <Card>
       <CardContent className="py-4">
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1">
           <div className="flex items-center gap-3">
             <label htmlFor="snapshot-select" className="text-sm font-semibold whitespace-nowrap">
               Snapshot:
@@ -76,10 +78,10 @@ export function SnapshotSelector() {
               ))}
             </Select>
           </div>
-          {selectedData && (
-            <p className="text-xs text-muted-foreground/70 italic pl-[85px]">
-              Last imported: {formatTimestamp(selectedData.import_time) ?? selectedSnapshot}
-            </p>
+          {selectedSnapshot_?.import_time && (
+            <div className="text-xs text-muted-foreground pl-[85px]">
+              DB updated: {formatTimestamp(selectedSnapshot_.import_time)}
+            </div>
           )}
         </div>
       </CardContent>
