@@ -427,7 +427,10 @@ export function VoronoiPartitionPanel({
 
           </div>
         ) : (
-          <div className="flex items-center gap-3 text-gray-600 py-2"><Focus className="w-5 h-5" /><span className="italic" style={{ fontSize: `${12 * textScale}px` }}>Hover or right-click a partition to view details</span></div>
+          <div className="flex items-center gap-3 text-muted-foreground py-4 justify-center">
+            <div className="loader-morph" />
+            <span style={{ fontSize: `${11 * textScale}px` }}>Hover or right-click a partition to inspect</span>
+          </div>
         )}
       </div>
 

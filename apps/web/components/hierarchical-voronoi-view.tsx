@@ -57,6 +57,15 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
   useEffect(() => {
     setHasRun(false)
   }, [selectedSnapshot])
+
+  // Scroll visualizer into view when loading starts
+  useEffect(() => {
+    if (hasRun && containerRef.current) {
+      setTimeout(() => {
+        containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 100)
+    }
+  }, [hasRun])
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -365,32 +374,50 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           <>
             {error && <div className="absolute inset-0 flex items-center justify-center bg-black/80"><p className="text-red-500 font-bold">Failed to compute Voronoi: {error.toString()}</p></div>}
 
-            {isLocked && (
-              <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-sm animate-in fade-in duration-300">
-                <div className="bg-card border border-border px-6 py-4 rounded-xl flex flex-col items-center gap-3 shadow-lg">
-                  <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                  <div className="text-muted-foreground text-[10px]">Computing visualization — may take 20-60 s</div>
-                </div>
+            <div className={cn(
+              "absolute inset-0 flex items-center justify-center transition-all duration-700 ease-out",
+              isLocked
+                ? "opacity-100 bg-background/50 backdrop-blur-sm"
+                : "opacity-0 pointer-events-none bg-transparent"
+            )}>
+              <div className={cn(
+                "bg-card border border-border px-8 py-5 rounded-xl flex flex-col items-center gap-4 shadow-lg transition-all duration-500",
+                isLocked ? "scale-100 opacity-100" : "scale-95 opacity-0"
+              )}>
+                <div className="loader-squares" />
+                <div className="text-muted-foreground text-[10px]">Computing visualization -- may take 20-60 s</div>
               </div>
-            )}
+            </div>
 
-            {!isLocked && isRendering && (
-              <div className="absolute inset-0 flex items-center justify-center bg-background/40 backdrop-blur-[2px] pointer-events-none animate-in fade-in duration-200">
-                <div className="bg-card border border-border px-5 py-3 rounded-xl flex items-center gap-3 shadow-md">
-                  <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                  <div className="text-muted-foreground text-[10px]">Rendering...</div>
-                </div>
+            <div className={cn(
+              "absolute inset-0 flex items-center justify-center pointer-events-none transition-all duration-500 ease-out",
+              !isLocked && isRendering
+                ? "opacity-100 bg-background/30 backdrop-blur-[2px]"
+                : "opacity-0 bg-transparent"
+            )}>
+              <div className={cn(
+                "bg-card border border-border px-6 py-4 rounded-xl flex items-center gap-3 shadow-md transition-all duration-400",
+                !isLocked && isRendering ? "scale-100 opacity-100" : "scale-95 opacity-0"
+              )}>
+                <div className="loader-morph" />
+                <div className="text-muted-foreground text-[10px]">Rendering...</div>
               </div>
-            )}
+            </div>
 
-            {isTransitioning && !isLocked && !isRendering && (
-              <div className="absolute inset-0 flex items-center justify-center bg-background/20 backdrop-blur-[1px] pointer-events-none">
-                <div className="bg-card/80 border border-border/50 px-5 py-3 rounded-xl flex items-center gap-3 shadow-sm">
-                  <div className="w-4 h-4 border-2 border-primary/60 border-t-transparent rounded-full animate-spin" />
-                  <div className="text-muted-foreground/60 text-[10px]">Navigating...</div>
-                </div>
+            <div className={cn(
+              "absolute inset-0 flex items-center justify-center pointer-events-none transition-all duration-400 ease-out",
+              isTransitioning && !isLocked && !isRendering
+                ? "opacity-100 bg-background/15 backdrop-blur-[1px]"
+                : "opacity-0 bg-transparent"
+            )}>
+              <div className={cn(
+                "bg-card/80 border border-border/50 px-6 py-4 rounded-xl flex items-center gap-3 shadow-sm transition-all duration-300",
+                isTransitioning && !isLocked && !isRendering ? "scale-100 opacity-100" : "scale-95 opacity-0"
+              )}>
+                <div className="loader-morph" />
+                <div className="text-muted-foreground/60 text-[10px]">Navigating...</div>
               </div>
-            )}
+            </div>
           </>
         )}
 
