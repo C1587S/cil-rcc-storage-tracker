@@ -1,6 +1,6 @@
 # RCC Storage Tracker
 
-**Complete workflow**: Scan filesystem on RCC → Download Parquet files → Deploy dashboard on cloud server
+**Complete workflow**: Scan filesystem on RCC, download Parquet files, deploy dashboard on cloud server
 
 ---
 
@@ -63,9 +63,49 @@ See [scanner/README.md](scanner/README.md) for performance tuning.
 
 ---
 
-### Step 2: Download Parquet Files to Local Machine
+### Step 2: Publish and Clean (Automated Daily Pipeline)
 
-**From your local machine (recommended — downloads via RCC public_html):**
+The daily pipeline runs automatically every night at 2am. It scans all directories in parallel, publishes results to a public URL on Midway2, and cleans scratch when done.
+
+**First-time setup on Midway2 (run once):**
+
+```bash
+ssh midway2.rcc.uchicago.edu
+chmod o+x $HOME
+mkdir -p $HOME/public_html
+chmod o+x $HOME/public_html
+```
+
+**Start the daily pipeline (run once to activate):**
+
+```bash
+sbatch --begin=02:00 scanner/scripts/daily_pipeline.sh
+```
+
+After that it resubmits itself automatically every day. To stop it:
+
+```bash
+scancel <job_id>  # find it with: squeue -u $USER
+```
+
+**To run the pipeline manually on demand (from Midway2):**
+
+```bash
+bash scanner/scripts/publish_scans.sh --clean
+```
+
+This copies all scan results to `public_html`, makes them available at the URL below, and cleans scratch when done.
+
+Scan results are published at:
+```
+http://users.rcc.uchicago.edu/~[your_CNetID]/cil_scans/
+```
+
+---
+
+### Step 3: Download Parquet Files to Local Machine
+
+**From your local machine (downloads via RCC public_html):**
 
 ```bash
 ./scanner/scripts/download-scans.sh
@@ -84,11 +124,11 @@ rsync -avz --progress \
   ./cil_scans/
 ```
 
-**IMPORTANT**: Parquet files stay on your local machine. You will upload them to the cloud server in Step 3.
+**IMPORTANT**: Parquet files stay on your local machine. You will upload them to the cloud server in Step 4.
 
 ---
 
-### Step 3: Deploy Dashboard on Cloud Server
+### Step 4: Deploy Dashboard on Cloud Server
 
 **Option A: Oracle Cloud Free Tier (Recommended - $0/month)**
 
@@ -98,8 +138,6 @@ rsync -avz --progress \
    - Storage: 200GB boot volume
 
 2. **Initial setup on cloud VM:**
-
-**SSH into the VM, then:**
 
 ```bash
 # Install Docker
@@ -119,21 +157,16 @@ cd storage-tracker
 **From your LOCAL machine** (not the VM):
 
 ```bash
-# Upload scans to cloud server
 rsync -avz --progress \
   ./cil_scans/ \
   ubuntu@<VM_PUBLIC_IP>:~/storage-tracker/cil_scans/
 ```
-
-This uploads the Parquet files to the server in the `cil_scans/` directory.
 
 4. **Start services on cloud VM:**
 
 ```bash
 docker compose up -d
 ```
-
-This starts ClickHouse, API, and Web frontend.
 
 5. **Initialize database (FIRST TIME ONLY):**
 
@@ -149,7 +182,6 @@ docker compose exec clickhouse clickhouse-client < clickhouse/schema/04_voronoi_
 6. **Import scans into ClickHouse:**
 
 ```bash
-# Import all snapshots automatically
 ./scripts/docker-import.sh
 ```
 
@@ -214,15 +246,9 @@ Open browser: `http://<VM_PUBLIC_IP>:3000`
       mem_limit: 512m
   ```
 
-**Option C: Oracle On-Demand with Auto-Shutdown ($2-9/month)**
-
-- Use when you need 12GB+ RAM but only run occasionally
-- Set up idle timeout or scheduled shutdown
-- See [CLAUDE.md](CLAUDE.md) for auto-shutdown scripts
-
 ---
 
-### Step 4: Add Custom Domain (Optional)
+### Step 5: Add Custom Domain (Optional)
 
 Using Cloudflare (free plan):
 
@@ -288,15 +314,29 @@ Access: `https://your-domain.com/cil-rcc-tracker`
 
 ```
 RCC Filesystem
-    ↓ (Scanner)
-Parquet Files (cil_scans/)
-    ↓ (rsync to local)
+    |
+    | (Scanner)
+    v
+Parquet Files in scratch (midway3)
+    |
+    | (daily_pipeline.sh)
+    v
+public_html on Midway2 (HTTP)
+    |
+    | (download-scans.sh)
+    v
 Local Machine (cil_scans/)
-    ↓ (rsync to cloud VM)
+    |
+    | (rsync to cloud VM)
+    v
 Cloud VM (cil_scans/)
-    ↓ (docker-import.sh)
+    |
+    | (docker-import.sh)
+    v
 ClickHouse Database (Docker volume)
-    ↓ (API queries)
+    |
+    | (API queries)
+    v
 Dashboard (Browser)
 ```
 
@@ -338,7 +378,6 @@ docker compose exec clickhouse clickhouse-client --query \
 
 **Keep only the latest snapshot (delete all others):**
 ```bash
-# Run from project root
 LATEST=$(docker compose exec clickhouse clickhouse-client --query \
   "SELECT max(snapshot_date) FROM filesystem.entries" | tr -d '\r')
 
@@ -355,7 +394,6 @@ echo "Done. Only ${LATEST} remains."
 
 **Replace the current snapshot with a new one:**
 ```bash
-# Run from project root
 NEW_DATE="2026-03-05"
 
 # 1. Delete old data for this date (if re-importing)
@@ -375,12 +413,12 @@ done
 **1. Run new scan on RCC**
 ```bash
 cd ~/storage-tracker/scanner/scripts
-./scan_cil_parallel.sh  # Creates cil_scans/*/2025-12-XX/
+./scan_cil_parallel.sh
 ```
 
 **2. Download new files to local machine**
 ```bash
-rsync -avz <cnetid>@midway3:~/storage-tracker/cil_scans/ ./cil_scans/
+./scanner/scripts/download-scans.sh
 ```
 
 **3. Upload to cloud server**
@@ -392,7 +430,7 @@ rsync -avz ./cil_scans/ ubuntu@<VM_IP>:~/storage-tracker/cil_scans/
 ```bash
 ssh ubuntu@<VM_IP>
 cd ~/storage-tracker
-./scripts/docker-import.sh  # Auto-detects new dates
+./scripts/docker-import.sh
 ```
 
 ---
@@ -403,7 +441,7 @@ cd ~/storage-tracker
 storage-tracker/
 ├── scanner/              # Rust filesystem scanner
 │   ├── src/             # Scanner source code
-│   └── scripts/         # scan_cil_parallel.sh (RCC)
+│   └── scripts/         # Slurm and pipeline scripts
 ├── clickhouse/          # Database layer
 │   ├── schema/          # SQL table definitions (run once)
 │   ├── scripts/         # Import/processing scripts
@@ -513,7 +551,6 @@ curl http://localhost:8000/api/snapshots
 
 **File counts show 0 in Voronoi:**
 ```bash
-# Regenerate Voronoi with --force flag
 docker compose run --rm importer python scripts/compute_voronoi_unified.py 2025-12-27 --force
 ```
 
@@ -528,9 +565,6 @@ docker compose logs clickhouse
 # Verify ClickHouse is responding
 docker compose exec clickhouse clickhouse-client --query "SELECT 1"
 
-# Check network connectivity from API
-docker compose exec api ping clickhouse
-
 # Restart ClickHouse
 docker compose restart clickhouse
 ```
@@ -541,11 +575,6 @@ docker compose restart clickhouse
 lsof -i :3000 :8000 :9000
 
 # Kill the process or change ports in docker-compose.yml
-# Example: Change web port to 3001
-services:
-  web:
-    ports:
-      - "3001:3000"
 ```
 
 **Out of memory:**
@@ -601,13 +630,10 @@ cd apps/web
 npm run dev
 ```
 
-This provides faster iteration during development.
-
 ---
 
 ## Additional Documentation
 
-- **CLAUDE.md** - Cloud deployment options + auto-shutdown
 - **scanner/README.md** - Scanner performance tuning
 - **clickhouse/scripts/README.md** - Import script options
 
@@ -615,14 +641,13 @@ This provides faster iteration during development.
 
 ## Quick Reference
 
-**RCC to Cloud workflow:**
 ```bash
-# 1. On RCC: Scan
+# 1. On RCC: Scan (runs automatically via daily_pipeline.sh)
 cd ~/storage-tracker/scanner/scripts
 ./scan_cil_parallel.sh
 
 # 2. On local machine: Download from RCC public_html
-./scanner/scripts/download-scans.sh  # auto-detects date, validates files
+./scanner/scripts/download-scans.sh
 
 # 3. On local machine: Upload to cloud VM
 rsync -avz ./cil_scans/ ubuntu@<VM_IP>:~/storage-tracker/cil_scans/
@@ -638,7 +663,6 @@ cd ~/storage-tracker
 
 **First-time cloud setup:**
 ```bash
-# On cloud VM
 sudo apt update && sudo apt install -y docker.io docker-compose-v2
 git clone <repo> && cd storage-tracker
 docker compose up -d
