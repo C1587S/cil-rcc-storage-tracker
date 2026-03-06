@@ -398,7 +398,7 @@ export function SearchResultsTable({
   }
 
   const handleCopyMarkdown = async () => {
-    await navigator.clipboard.writeText(generateMarkdownTable(results));
+    await navigator.clipboard.writeText(generateMarkdownTable(filteredResults));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
@@ -591,7 +591,7 @@ export function SearchResultsTable({
       {viewMode === "markdown" && (
         <div className="bg-background p-4 max-h-[500px] overflow-auto">
           <pre className="text-[11px] font-mono text-foreground whitespace-pre">
-            {generateMarkdownTable(results)}
+            {generateMarkdownTable(filteredResults)}
           </pre>
         </div>
       )}
