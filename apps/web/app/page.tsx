@@ -5,6 +5,7 @@ import { DiskUsageExplorerV2 } from "@/components/disk-usage-explorer-v2";
 import { HierarchicalVoronoiView } from "@/components/hierarchical-voronoi-view";
 import { SearchConsole } from "@/components/search-console";
 import { DocsPage } from "@/components/docs-page";
+import { ComputingDashboard } from "@/components/computing-dashboard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -13,8 +14,9 @@ import { useAppStore } from "@/lib/store";
 const TABS = [
   { id: "query",   label: "Query Console" },
   { id: "tree",    label: "Tree Explorer" },
-  { id: "voronoi", label: "Voronoi"       },
-  { id: "docs",    label: "Docs"          },
+  { id: "voronoi",   label: "Voronoi"       },
+  { id: "computing", label: "Computing"    },
+  { id: "docs",      label: "Docs"         },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
@@ -93,6 +95,10 @@ export default function Home() {
 
         <div className={cn("w-full", activeTab !== "voronoi" && "hidden", !isVoronoiFullscreen && containerClass)}>
           <HierarchicalVoronoiView />
+        </div>
+
+        <div className={cn("space-y-6", containerClass, activeTab !== "computing" && "hidden")}>
+          <ComputingDashboard />
         </div>
 
         <div className={cn("space-y-6", containerClass, activeTab !== "docs" && "hidden")}>

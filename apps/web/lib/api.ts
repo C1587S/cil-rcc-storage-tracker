@@ -5,6 +5,7 @@ import type {
   SearchResponse,
   QueryResponse,
   NLToSQLResponse,
+  ComputingReport,
 } from "./types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BASE_PATH || "";
@@ -141,6 +142,10 @@ export async function fixSQLWithAI(params: {
     method: "POST",
     body: JSON.stringify(params),
   });
+}
+
+export async function getComputingReport(): Promise<ComputingReport> {
+  return apiRequest<ComputingReport>("/api/computing/latest");
 }
 
 export const foldersApi = {

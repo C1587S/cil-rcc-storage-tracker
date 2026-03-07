@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     # Groq API (natural language to SQL)
     groq_api_key: str = ""
 
+    # Computing monitoring
+    computing_report_url: str = "https://users.rcc.uchicago.edu/~cadavidsanchez/cil_scans/quotas/latest.json"
+
     def get_cors_origins_list(self) -> list[str]:
         """Get CORS origins as a list from comma-separated string."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
