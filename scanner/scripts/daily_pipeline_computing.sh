@@ -49,9 +49,17 @@ else
     echo "Scan saved to: $SCAN_PATH"
 fi
 
-# Resubmit itself in 15 minutes
+# Calculate next quarter-hour (:00, :15, :30, :45)
+CURRENT_MIN=$(date +%-M)
+NEXT_QUARTER=$(( ((CURRENT_MIN / 15) + 1) * 15 ))
+if [[ "$NEXT_QUARTER" -ge 60 ]]; then
+    NEXT_TIME=$(date -d "+1 hour" +%Y-%m-%dT%H:00:00)
+else
+    NEXT_TIME=$(date +%Y-%m-%dT%H:$(printf '%02d' $NEXT_QUARTER):00)
+fi
+
 echo ""
-echo "Scheduling next scan in 15 minutes..."
-sbatch --begin=now+15minutes "$0"
+echo "Scheduling next scan at $NEXT_TIME..."
+sbatch --begin="$NEXT_TIME" "$0"
 
 echo "Computing scan finished at $(date)"

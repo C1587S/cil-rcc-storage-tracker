@@ -39,18 +39,22 @@ if [[ ! -f "$PUBLISH_SCRIPT" ]]; then
     exit 1
 fi
 
-# Wait 2 minutes for Midway3 scan to land on shared scratch
-echo "Waiting 2 minutes for Midway3 scan..."
-sleep 120
-
 # Run publish (scan + merge + publish + prune)
 # Keep 100 reports (~25 hours at 15 min intervals)
 echo "Running publish..."
 bash "$PUBLISH_SCRIPT" --keep 100
 
-# Resubmit itself in 15 minutes
+# Calculate next quarter-hour + 2 min (:02, :17, :32, :47)
+CURRENT_MIN=$(date +%-M)
+NEXT_QUARTER=$(( ((CURRENT_MIN / 15) + 1) * 15 ))
+if [[ "$NEXT_QUARTER" -ge 60 ]]; then
+    NEXT_TIME=$(date -d "+1 hour" +%Y-%m-%dT%H:02:00)
+else
+    NEXT_TIME=$(date +%Y-%m-%dT%H:$(printf '%02d' $((NEXT_QUARTER + 2))):00)
+fi
+
 echo ""
-echo "Scheduling next publish in 15 minutes..."
-sbatch --begin=now+15minutes "$0"
+echo "Scheduling next publish at $NEXT_TIME..."
+sbatch --begin="$NEXT_TIME" "$0"
 
 echo "Computing publish finished at $(date)"
