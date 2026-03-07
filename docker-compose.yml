@@ -161,6 +161,32 @@ services:
             print('Database initialized successfully!')
         else:
             print('Database already exists, skipping initialization.')
+
+        # Computing monitoring tables
+        print('Checking computing database...')
+        result = client.execute("SELECT name FROM system.databases WHERE name = 'computing'")
+        if not result:
+            print('Creating computing database and tables...')
+            client.execute('CREATE DATABASE computing')
+
+            client.execute('''CREATE TABLE computing.su_usage_daily (
+                date Date, user String, su_consumed Float64
+            ) ENGINE = ReplacingMergeTree() ORDER BY (date, user)''')
+
+            client.execute('''CREATE TABLE computing.su_summary_daily (
+                date Date, su_allocated Float64, su_consumed Float64,
+                su_remaining Float64, su_burn_rate Float64
+            ) ENGINE = ReplacingMergeTree() ORDER BY (date)''')
+
+            client.execute('''CREATE TABLE computing.quota_daily (
+                date Date, cluster String, filesystem String, quota_type String,
+                space_used_gb Float64, space_limit_gb Float64, space_pct Float64,
+                files_used UInt64, files_limit UInt64, files_pct Float64
+            ) ENGINE = ReplacingMergeTree() ORDER BY (date, cluster, filesystem, quota_type)''')
+
+            print('Computing database initialized!')
+        else:
+            print('Computing database already exists, skipping.')
         PYEOF
     networks:
       - tracker-network
