@@ -680,9 +680,17 @@ def parse_size_gb(s):
     return val  # no unit = assume GB
 
 last_fileset = None
+current_section = ""  # track "Capacity", "Cost-Effective", etc.
 for line in lines:
     stripped = line.strip()
-    if not stripped or stripped.startswith("-") or stripped.startswith(">") or stripped.startswith("Quota") or stripped.startswith("fileset"):
+    if not stripped or stripped.startswith("-") or stripped.startswith("Quota") or stripped.startswith("fileset"):
+        continue
+
+    # Capture section headers like ">>> Capacity Filesystem: project ..."
+    if stripped.startswith(">>>"):
+        sm = re.match(r">>>\s*(\S+)\s+Filesystem", stripped)
+        if sm:
+            current_section = sm.group(1)  # "Capacity" or "Cost-Effective"
         continue
 
     # Match: fileset  blocks/files  (user/group)  used  quota  limit  grace
@@ -715,10 +723,15 @@ for line in lines:
         limit = m.group(6)
         last_fileset = fileset
 
-    key = (fileset, qtype)
+    # Disambiguate duplicate filesets (e.g. "cil" in both Capacity and Cost-Effective)
+    display_name = fileset
+    if current_section and qtype == "group":
+        display_name = f"{fileset} ({current_section})"
+
+    key = (display_name, qtype)
     if key not in filesystems:
         filesystems[key] = {
-            "filesystem": fileset,
+            "filesystem": display_name,
             "type": qtype,
             "space_used_gb": None, "space_limit_gb": None, "space_pct": None,
             "files_used": None, "files_limit": None, "files_pct": None,
