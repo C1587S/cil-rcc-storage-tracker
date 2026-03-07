@@ -750,8 +750,8 @@ export function DiskUsageExplorerV2() {
   }
 
   return (
-    <Card className="h-[700px]">
-      <CardContent className="h-full p-6">{content}</CardContent>
+    <Card className="min-h-[400px]" style={{ height: "calc(100vh - 180px)", maxHeight: "calc(100vh - 180px)" }}>
+      <CardContent className="h-full p-6 overflow-y-auto">{content}</CardContent>
     </Card>
   );
 }
