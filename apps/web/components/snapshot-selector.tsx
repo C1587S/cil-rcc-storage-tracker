@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getSnapshots } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
@@ -28,6 +29,14 @@ export function SnapshotSelector() {
   };
 
   const snapshots = data || [];
+
+  // Auto-select the latest snapshot on load
+  useEffect(() => {
+    if (!selectedSnapshot && snapshots.length > 0) {
+      setSelectedSnapshot(snapshots[0].snapshot_date);
+    }
+  }, [snapshots, selectedSnapshot, setSelectedSnapshot]);
+
   const selectedSnapshot_ = snapshots.find((s) => s.snapshot_date === selectedSnapshot);
 
   return (
@@ -48,7 +57,6 @@ export function SnapshotSelector() {
             onChange={handleChange}
             className="h-8 text-xs max-w-[220px] border-border/60 bg-transparent pr-8"
           >
-            <option value="">Select a snapshot…</option>
             {snapshots.map((snapshot) => (
               <option key={snapshot.snapshot_date} value={snapshot.snapshot_date}>
                 {snapshot.snapshot_date}
@@ -65,9 +73,9 @@ export function SnapshotSelector() {
         </span>
       )}
 
-      {!selectedSnapshot && !isLoading && !error && (
-        <span className="snapshot-prompt text-xs text-muted-foreground/35 font-mono ml-2 flex-shrink-0">
-          select a snapshot to begin
+      {!selectedSnapshot && !isLoading && !error && snapshots.length === 0 && (
+        <span className="text-xs text-muted-foreground/35 font-mono ml-2 flex-shrink-0">
+          no snapshots available
         </span>
       )}
     </div>

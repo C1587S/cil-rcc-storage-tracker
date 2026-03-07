@@ -88,7 +88,13 @@ async def execute_sql_query(request: QueryRequest):
     except Exception as e:
         error_msg = str(e)
         # Provide helpful hints for common errors
-        if "snapshot_date" in error_msg.lower():
+        if "max_result_rows" in error_msg.lower() or "limit for result" in error_msg.lower() or "too many rows" in error_msg.lower():
+            hint = "Query returned too many rows. Try adding a smaller LIMIT or narrowing your WHERE filters."
+        elif "max_result_bytes" in error_msg.lower():
+            hint = "Query result is too large. Try selecting fewer columns or adding stricter filters."
+        elif "max_execution_time" in error_msg.lower() or "timeout" in error_msg.lower():
+            hint = "Query took too long. Try narrowing your search with startsWith() on a specific path."
+        elif "snapshot_date" in error_msg.lower():
             hint = "Make sure snapshot_date is included in WHERE clause as: WHERE snapshot_date = '2025-12-12'"
         elif "content-type" in error_msg.lower() or "json" in error_msg.lower():
             hint = "Set Content-Type header to 'application/json'"

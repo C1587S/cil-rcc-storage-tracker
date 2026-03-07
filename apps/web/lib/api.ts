@@ -4,6 +4,7 @@ import type {
   ContentsResponse,
   SearchResponse,
   QueryResponse,
+  NLToSQLResponse,
 } from "./types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BASE_PATH || "";
@@ -120,6 +121,27 @@ export async function executeQuery(params: {
   });
 }
 
+
+export async function generateSQLFromNL(params: {
+  snapshot_date: string;
+  question: string;
+}): Promise<NLToSQLResponse> {
+  return apiRequest<NLToSQLResponse>("/api/nl-to-sql", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function fixSQLWithAI(params: {
+  snapshot_date: string;
+  sql: string;
+  error: string;
+}): Promise<NLToSQLResponse> {
+  return apiRequest<NLToSQLResponse>("/api/nl-to-sql/fix", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
 
 export const foldersApi = {
   async getTree(path: string, snapshot: string) {

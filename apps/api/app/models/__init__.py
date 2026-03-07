@@ -102,3 +102,28 @@ class QueryRequest(BaseModel):
     snapshot_date: date
     sql: str = Field(..., min_length=10, description="SQL query to execute")
     limit: int = Field(1000, ge=1, le=8000)
+
+
+class NLToSQLRequest(BaseModel):
+    """Request for /api/nl-to-sql (natural language to SQL translation)."""
+
+    snapshot_date: date
+    question: str = Field(
+        ..., min_length=3, max_length=500, description="Natural language question"
+    )
+
+
+class NLToSQLResponse(BaseModel):
+    """Response for /api/nl-to-sql."""
+
+    question: str
+    sql: str
+    snapshot_date: date
+
+
+class FixSQLRequest(BaseModel):
+    """Request for /api/nl-to-sql/fix."""
+
+    snapshot_date: date
+    sql: str = Field(..., min_length=10, description="The SQL that failed")
+    error: str = Field(..., min_length=3, description="The error message")

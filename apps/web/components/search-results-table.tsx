@@ -208,6 +208,33 @@ export function SearchResultsTable({
   const [excludeFilter, setExcludeFilter] = useState("");
   const [excludeRegex, setExcludeRegex] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [highlightedCols, setHighlightedCols] = useState<Set<string>>(new Set());
+  const [highlightedRows, setHighlightedRows] = useState<Set<number>>(new Set());
+
+  const toggleRow = (idx: number) => setHighlightedRows(prev => {
+    const next = new Set(prev);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    return next;
+  });
+
+  const toggleCol = (col: string) => setHighlightedCols(prev => {
+    const next = new Set(prev);
+    if (next.has(col)) next.delete(col); else next.add(col);
+    return next;
+  });
+
+  const colHeaderClass = (col: string) => highlightedCols.has(col)
+    ? "bg-primary/15 text-primary"
+    : "hover:bg-muted/20";
+
+  const cellClass = (col: string, rowIdx: number) => {
+    const isCol = highlightedCols.has(col);
+    const isRow = highlightedRows.has(rowIdx);
+    if (isCol && isRow) return "bg-primary/20 text-foreground font-semibold";
+    if (isCol) return "bg-primary/10 text-foreground";
+    if (isRow) return "text-foreground";
+    return "";
+  };
 
   // Enrich results with derived columns
   const enrichedResults = useMemo(() => results.map(enrichEntry), [results]);
@@ -692,9 +719,9 @@ export function SearchResultsTable({
           <div className="flex items-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
             {/* Filename */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
+              className={`px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer transition-colors ${colHeaderClass("filename")}`}
               style={{ width: columnWidths.filename }}
-              onClick={() => handleSort("filename")}
+              onClick={(e) => { if (e.shiftKey) toggleCol("filename"); else handleSort("filename"); }}
             >
               <div className="flex items-center gap-1">
                 <span>Filename</span>
@@ -709,9 +736,9 @@ export function SearchResultsTable({
 
             {/* Parent Dir */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
+              className={`px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer transition-colors ${colHeaderClass("parent_dir")}`}
               style={{ width: columnWidths.parent_dir }}
-              onClick={() => handleSort("parent_dir")}
+              onClick={(e) => { if (e.shiftKey) toggleCol("parent_dir"); else handleSort("parent_dir"); }}
             >
               <div className="flex items-center gap-1">
                 <span>Parent</span>
@@ -726,9 +753,9 @@ export function SearchResultsTable({
 
             {/* Top Level Dir */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
+              className={`px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer transition-colors ${colHeaderClass("top_level_dir")}`}
               style={{ width: columnWidths.top_level_dir }}
-              onClick={() => handleSort("top_level_dir")}
+              onClick={(e) => { if (e.shiftKey) toggleCol("top_level_dir"); else handleSort("top_level_dir"); }}
             >
               <div className="flex items-center gap-1">
                 <span>Top Dir</span>
@@ -743,9 +770,9 @@ export function SearchResultsTable({
 
             {/* Path */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
+              className={`px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer transition-colors ${colHeaderClass("path")}`}
               style={{ width: columnWidths.path }}
-              onClick={() => handleSort("path")}
+              onClick={(e) => { if (e.shiftKey) toggleCol("path"); else handleSort("path"); }}
             >
               <div className="flex items-center gap-1">
                 <span>Full Path</span>
@@ -760,9 +787,9 @@ export function SearchResultsTable({
 
             {/* Size */}
             <div
-              className="px-3 py-2 font-mono text-right flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
+              className={`px-3 py-2 font-mono text-right flex-shrink-0 relative border-r border-border/20 cursor-pointer transition-colors ${colHeaderClass("size")}`}
               style={{ width: columnWidths.size }}
-              onClick={() => handleSort("size")}
+              onClick={(e) => { if (e.shiftKey) toggleCol("size"); else handleSort("size"); }}
             >
               <div className="flex items-center justify-end gap-1">
                 <span>Size</span>
@@ -777,9 +804,9 @@ export function SearchResultsTable({
 
             {/* Owner */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
+              className={`px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer transition-colors ${colHeaderClass("owner")}`}
               style={{ width: columnWidths.owner }}
-              onClick={() => handleSort("owner")}
+              onClick={(e) => { if (e.shiftKey) toggleCol("owner"); else handleSort("owner"); }}
             >
               <div className="flex items-center gap-1">
                 <span>Owner</span>
@@ -794,9 +821,9 @@ export function SearchResultsTable({
 
             {/* Modified */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer hover:bg-muted/20 transition-colors"
+              className={`px-3 py-2 font-mono flex-shrink-0 relative border-r border-border/20 cursor-pointer transition-colors ${colHeaderClass("modified")}`}
               style={{ width: columnWidths.modified }}
-              onClick={() => handleSort("modified")}
+              onClick={(e) => { if (e.shiftKey) toggleCol("modified"); else handleSort("modified"); }}
             >
               <div className="flex items-center gap-1">
                 <span>Modified</span>
@@ -811,9 +838,9 @@ export function SearchResultsTable({
 
             {/* Accessed */}
             <div
-              className="px-3 py-2 font-mono flex-shrink-0 relative cursor-pointer hover:bg-muted/20 transition-colors"
+              className={`px-3 py-2 font-mono flex-shrink-0 relative cursor-pointer transition-colors ${colHeaderClass("accessed")}`}
               style={{ width: columnWidths.accessed }}
-              onClick={() => handleSort("accessed")}
+              onClick={(e) => { if (e.shiftKey) toggleCol("accessed"); else handleSort("accessed"); }}
             >
               <div className="flex items-center gap-1">
                 <span>Accessed</span>
@@ -835,72 +862,60 @@ export function SearchResultsTable({
             return (
               <div
                 key={`${entry.path}-${idx}`}
-                className="flex items-center text-xs hover:bg-muted/5 transition-colors"
+                className={`flex items-center text-xs cursor-pointer transition-colors ${
+                  highlightedRows.has(idx) ? "bg-primary/10" : "hover:bg-muted/5"
+                }`}
+                onClick={() => toggleRow(idx)}
               >
-                {/* Filename */}
                 <div
-                  className="px-3 py-2 font-mono text-foreground flex-shrink-0 truncate border-r border-border/10"
+                  className={`px-3 py-2 font-mono flex-shrink-0 truncate border-r border-border/10 ${cellClass("filename", idx) || "text-foreground"}`}
                   style={{ width: columnWidths.filename }}
                   title={filename}
                 >
                   {filename}
                 </div>
-
-                {/* Parent Dir */}
                 <div
-                  className="px-3 py-2 font-mono text-muted-foreground flex-shrink-0 truncate border-r border-border/10"
+                  className={`px-3 py-2 font-mono flex-shrink-0 truncate border-r border-border/10 ${cellClass("parent_dir", idx) || "text-muted-foreground"}`}
                   style={{ width: columnWidths.parent_dir }}
                   title={entry.parent_dir}
                 >
                   {entry.parent_dir}
                 </div>
-
-                {/* Top Level Dir */}
                 <div
-                  className="px-3 py-2 font-mono text-muted-foreground flex-shrink-0 truncate border-r border-border/10"
+                  className={`px-3 py-2 font-mono flex-shrink-0 truncate border-r border-border/10 ${cellClass("top_level_dir", idx) || "text-muted-foreground"}`}
                   style={{ width: columnWidths.top_level_dir }}
                   title={entry.top_level_dir}
                 >
                   {entry.top_level_dir}
                 </div>
-
-                {/* Path */}
                 <div
-                  className="px-3 py-2 font-mono text-muted-foreground flex-shrink-0 truncate border-r border-border/10"
+                  className={`px-3 py-2 font-mono flex-shrink-0 truncate border-r border-border/10 ${cellClass("path", idx) || "text-muted-foreground"}`}
                   style={{ width: columnWidths.path }}
                   title={entry.path}
                 >
                   {entry.path}
                 </div>
-
-                {/* Size */}
                 <div
-                  className="px-3 py-2 font-mono text-right text-muted-foreground flex-shrink-0 border-r border-border/10"
+                  className={`px-3 py-2 font-mono text-right flex-shrink-0 border-r border-border/10 ${cellClass("size", idx) || "text-muted-foreground"}`}
                   style={{ width: columnWidths.size }}
                 >
                   {formatReadableSize(entry.size)}
                 </div>
-
-                {/* Owner */}
                 <div
-                  className="px-3 py-2 font-mono text-muted-foreground flex-shrink-0 truncate border-r border-border/10"
+                  className={`px-3 py-2 font-mono flex-shrink-0 truncate border-r border-border/10 ${cellClass("owner", idx) || "text-muted-foreground"}`}
                   style={{ width: columnWidths.owner }}
                   title={entry.owner || "-"}
                 >
                   {entry.owner || "-"}
                 </div>
-
-                {/* Modified */}
                 <div
-                  className="px-3 py-2 font-mono text-muted-foreground flex-shrink-0 border-r border-border/10"
+                  className={`px-3 py-2 font-mono flex-shrink-0 border-r border-border/10 ${cellClass("modified", idx) || "text-muted-foreground"}`}
                   style={{ width: columnWidths.modified }}
                 >
                   {formatTimestamp(entry.modified_time)}
                 </div>
-
-                {/* Accessed */}
                 <div
-                  className="px-3 py-2 font-mono text-muted-foreground flex-shrink-0"
+                  className={`px-3 py-2 font-mono flex-shrink-0 ${cellClass("accessed", idx) || "text-muted-foreground"}`}
                   style={{ width: columnWidths.accessed }}
                 >
                   {formatTimestamp(entry.accessed_time)}
@@ -922,7 +937,7 @@ export function SearchResultsTable({
           </div>
           <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
             <table className="w-full text-xs font-mono">
-              <thead className="bg-muted/10 border-b border-border/30 sticky top-0">
+              <thead className="bg-background border-b border-border/30 sticky top-0 z-10">
                 <tr>
                   {aggGroupBy.map(field => (
                     <th key={field} className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">

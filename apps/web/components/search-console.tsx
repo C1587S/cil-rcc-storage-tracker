@@ -13,14 +13,15 @@ import {
   FileText,
   AlertCircle,
   Download,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
-import { search, executeQuery } from "@/lib/api";
+import { search, executeQuery, generateSQLFromNL, fixSQLWithAI } from "@/lib/api";
 import { SearchResultsTable } from "@/components/search-results-table";
 import type { QueryResponse } from "@/lib/types";
 
-type ConsoleMode = "filters" | "guided" | "sql";
+type ConsoleMode = "filters" | "guided" | "sql" | "ai";
 type SearchMode = "contains" | "exact" | "prefix" | "suffix";
 
 interface FilterState {
@@ -799,6 +800,249 @@ LIMIT 100`}
   );
 }
 
+// AI Query Mode Component
+function AIQueryMode({
+  selectedSnapshot,
+  onAddToReport,
+}: {
+  selectedSnapshot: string | null;
+  onAddToReport: (entry: Omit<ReportEntry, "id" | "timestamp">) => void;
+}) {
+  const [question, setQuestion] = useState("");
+  const [generatedSQL, setGeneratedSQL] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [hasExecuted, setHasExecuted] = useState(false);
+  const [copiedSQL, setCopiedSQL] = useState(false);
+  const [isFixing, setIsFixing] = useState(false);
+
+  const handleFix = async () => {
+    if (!generatedSQL || !execError || !selectedSnapshot) return;
+    setIsFixing(true);
+    setHasExecuted(false);
+
+    try {
+      const errorMsg =
+        execError instanceof Error ? execError.message : "Query execution failed";
+      const result = await fixSQLWithAI({
+        snapshot_date: selectedSnapshot,
+        sql: generatedSQL,
+        error: errorMsg,
+      });
+      setGeneratedSQL(result.sql);
+    } catch (err) {
+      setGenerateError(
+        err instanceof Error ? err.message : "Failed to fix SQL"
+      );
+    } finally {
+      setIsFixing(false);
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!question.trim() || !selectedSnapshot) return;
+    setIsGenerating(true);
+    setGenerateError(null);
+    setGeneratedSQL("");
+    setHasExecuted(false);
+
+    try {
+      const result = await generateSQLFromNL({
+        snapshot_date: selectedSnapshot,
+        question: question.trim(),
+      });
+      setGeneratedSQL(result.sql);
+    } catch (err) {
+      setGenerateError(
+        err instanceof Error ? err.message : "Failed to generate SQL"
+      );
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const {
+    data: queryResult,
+    isLoading,
+    error: execError,
+  } = useQuery({
+    queryKey: ["ai-sql", selectedSnapshot, generatedSQL, hasExecuted],
+    queryFn: async () => {
+      if (!selectedSnapshot) throw new Error("No snapshot selected");
+      return executeQuery({
+        snapshot_date: selectedSnapshot,
+        sql: generatedSQL.trim(),
+        limit: 5000,
+      });
+    },
+    enabled: hasExecuted && !!selectedSnapshot && !!generatedSQL.trim(),
+    retry: false,
+  });
+
+  const handleCopySQL = async () => {
+    await navigator.clipboard.writeText(generatedSQL);
+    setCopiedSQL(true);
+    setTimeout(() => setCopiedSQL(false), 1500);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleGenerate();
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Info banner */}
+      <div className="flex items-start gap-2 p-3 bg-primary/5 border border-primary/20 rounded-sm">
+        <Sparkles className="h-3.5 w-3.5 text-primary mt-0.5 flex-shrink-0" />
+        <div className="text-[10px] text-primary/80 leading-relaxed">
+          Put your question in plain English. This uses Groq (llama-3.3-70b) to translate it into a SQL query for you. This service is hosted locally — no API communication or data sharing.
+        </div>
+      </div>
+
+      {/* Question input */}
+      <div>
+        <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+          Your Question
+        </label>
+        <textarea
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="e.g., Show me the 20 largest CSV files under /project/cil/gcp modified in the last 30 days"
+          className="w-full px-3 py-2 text-xs bg-background border border-border rounded-sm focus:outline-none focus:ring-1 focus:ring-primary/50 min-h-[80px] resize-y"
+          maxLength={500}
+        />
+        <div className="flex items-center justify-between mt-1.5">
+          <span className="text-[10px] text-muted-foreground/50">
+            {question.length}/500
+          </span>
+          <Button
+            size="sm"
+            onClick={handleGenerate}
+            disabled={!selectedSnapshot || !question.trim() || isGenerating}
+            className="text-xs"
+          >
+            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+            {isGenerating ? "Generating..." : "Generate SQL"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Generation error */}
+      {generateError && (
+        <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
+          <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
+          <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
+            {generateError}
+          </div>
+        </div>
+      )}
+
+      {/* Generated SQL display */}
+      {generatedSQL && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-muted-foreground">
+              Generated SQL
+            </label>
+            <button
+              onClick={handleCopySQL}
+              className={cn(
+                "text-[10px] transition-colors",
+                copiedSQL
+                  ? "text-emerald-500"
+                  : "text-muted-foreground hover:text-primary"
+              )}
+            >
+              {copiedSQL ? "Copied!" : "Copy"}
+            </button>
+          </div>
+          <pre className="w-full px-3 py-2 text-xs bg-muted/10 border border-border/50 rounded-sm font-mono overflow-x-auto whitespace-pre-wrap">
+            {generatedSQL}
+          </pre>
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setGeneratedSQL("");
+                setHasExecuted(false);
+              }}
+              className="text-xs"
+            >
+              Clear
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setHasExecuted(true)}
+              disabled={!selectedSnapshot}
+              className="text-xs"
+            >
+              <Code className="h-3.5 w-3.5 mr-1.5" />
+              Run Query
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Execution error */}
+      {execError && (
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
+            <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
+            <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
+              {execError instanceof Error
+                ? execError.message
+                : "Query execution failed"}
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleFix}
+            disabled={isFixing}
+            className="text-xs"
+          >
+            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+            {isFixing ? "Fixing..." : "Fix with AI"}
+          </Button>
+        </div>
+      )}
+
+      {/* Results */}
+      {hasExecuted && queryResult && (
+        <div className="border-t border-border/20 pt-4">
+          <QueryResultsTable
+            result={queryResult}
+            isLoading={isLoading}
+            sql={generatedSQL}
+            mode="ai"
+            onAddToReport={onAddToReport}
+          />
+        </div>
+      )}
+
+      {/* Example questions */}
+      <div className="text-[10px] text-muted-foreground/70 space-y-1">
+        <div>
+          <strong>Try asking:</strong>
+        </div>
+        <div>- Biggest 5 directories in home_dirs</div>
+        <div>- Biggest 100 files not accessed in the last 5 years</div>
+        <div>- Find all .log files larger than 100 MB</div>
+        <div>- Largest .tmp, .bak, .old, and .cache files across the filesystem</div>
+        <div>- Directories with more than 10000 files</div>
+        <div>- Files that share the same name and size but exist in different home_dirs — possible duplicates</div>
+        <div>- Total wasted space: empty files grouped by directory, top 20</div>
+        <div>- Duplicate archives (.tar.gz, .zip, .bak) over 500 MB sorted by size</div>
+      </div>
+    </div>
+  );
+}
+
 // Query Results Table Component
 function QueryResultsTable({
   result,
@@ -815,6 +1059,8 @@ function QueryResultsTable({
 }) {
   const [showAggregation, setShowAggregation] = useState(false);
   const [aggGroupByColumns, setAggGroupByColumns] = useState<string[]>([]);
+  const [highlightedCols, setHighlightedCols] = useState<Set<number>>(new Set());
+  const [highlightedRows, setHighlightedRows] = useState<Set<number>>(new Set());
   const [copiedMD, setCopiedMD] = useState(false);
   const [includeFilter, setIncludeFilter] = useState("");
   const [includeRegex, setIncludeRegex] = useState(false);
@@ -1138,28 +1384,60 @@ function QueryResultsTable({
 
       {/* Table */}
       <div className="overflow-x-auto">
+        <table className="w-full text-xs font-mono">
+          <thead className="bg-background border-b border-border/30">
+            <tr>
+              {result.columns.map((col, idx) => (
+                <th
+                  key={idx}
+                  className={`px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide cursor-pointer select-none transition-colors ${
+                    highlightedCols.has(idx)
+                      ? "bg-primary/15 text-primary border-b-2 border-primary/40"
+                      : "text-muted-foreground/70 hover:bg-muted/20"
+                  }`}
+                  onClick={() => setHighlightedCols(prev => {
+                    const next = new Set(prev);
+                    if (next.has(idx)) next.delete(idx); else next.add(idx);
+                    return next;
+                  })}
+                >
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+        </table>
         <div className="max-h-[500px] overflow-y-auto">
           <table className="w-full text-xs font-mono">
-            <thead className="bg-card border-b border-border/30 sticky top-0 z-10">
-              <tr>
-                {result.columns.map((col, idx) => (
-                  <th
-                    key={idx}
-                    className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70"
-                  >
-                    {col}
-                  </th>
-                ))}
-              </tr>
-            </thead>
             <tbody className="divide-y divide-border/30">
               {filteredRows.map((row, rowIdx) => (
-                <tr key={rowIdx} className="hover:bg-muted/5 transition-colors">
-                  {row.map((cell, cellIdx) => (
-                    <td key={cellIdx} className="px-3 py-2 text-muted-foreground">
-                      {String(cell)}
-                    </td>
-                  ))}
+                <tr
+                  key={rowIdx}
+                  className={`cursor-pointer transition-colors ${
+                    highlightedRows.has(rowIdx)
+                      ? "bg-primary/10"
+                      : "hover:bg-muted/5"
+                  }`}
+                  onClick={() => setHighlightedRows(prev => {
+                    const next = new Set(prev);
+                    if (next.has(rowIdx)) next.delete(rowIdx); else next.add(rowIdx);
+                    return next;
+                  })}
+                >
+                  {row.map((cell, cellIdx) => {
+                    const isCol = highlightedCols.has(cellIdx);
+                    const isRow = highlightedRows.has(rowIdx);
+                    return (
+                      <td key={cellIdx} className={`px-3 py-2 transition-colors ${
+                        isCol && isRow ? "bg-primary/20 text-foreground font-semibold"
+                        : isCol ? "bg-primary/10 text-foreground"
+                        : isRow ? "text-foreground"
+                        : "text-muted-foreground"
+                      }`}>
+                        {String(cell)}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -1177,7 +1455,7 @@ function QueryResultsTable({
           </div>
           <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
             <table className="w-full text-xs font-mono">
-              <thead className="bg-card border-b border-border/30 sticky top-0 z-10">
+              <thead className="bg-background border-b border-border/30 sticky top-0 z-10">
                 <tr>
                   {aggGroupByColumns.map(col => (
                     <th key={col} className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
@@ -1470,6 +1748,18 @@ export function SearchConsole() {
             >
               <Search className="h-3.5 w-3.5" />
               Filter Builder
+            </button>
+            <button
+              onClick={() => setMode("ai")}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm transition-colors",
+                mode === "ai"
+                  ? "bg-primary/10 text-primary border border-primary/30"
+                  : "text-muted-foreground hover:bg-muted/20"
+              )}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              AI Query
             </button>
             <button
               onClick={() => setMode("guided")}
@@ -1792,6 +2082,14 @@ export function SearchConsole() {
           {/* Raw SQL Mode */}
           {mode === "sql" && (
             <RawSQLMode
+              selectedSnapshot={selectedSnapshot}
+              onAddToReport={addToReport}
+            />
+          )}
+
+          {/* AI Query Mode */}
+          {mode === "ai" && (
+            <AIQueryMode
               selectedSnapshot={selectedSnapshot}
               onAddToReport={addToReport}
             />

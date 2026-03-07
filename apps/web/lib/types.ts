@@ -60,3 +60,9 @@ export interface QueryResponse {
   row_count: number;
   execution_time_ms: number;
 }
+
+export interface NLToSQLResponse {
+  question: string;
+  sql: string;
+  snapshot_date: string;
+}
