@@ -13,6 +13,14 @@ const nextConfig = {
   },
   // API proxying now handled by app/api/[...path]/route.ts instead of rewrites
   // This allows custom timeout handling for long-running queries
+  webpack: (config) => {
+    // Import .mdx files as raw strings for the docs page
+    config.module.rules.push({
+      test: /\.mdx$/,
+      type: 'asset/source',
+    });
+    return config;
+  },
 };
 
 module.exports = nextConfig;

@@ -5,15 +5,19 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Install dependencies
-COPY package.json package-lock.json ./
+# Install dependencies (from apps/web context within repo root)
+COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm install --frozen-lockfile
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY apps/web/ .
+
+# Copy docs to the same relative position as in the repo
+# (lib/docs-content.ts imports from ../../docs/)
+COPY docs/ /docs/
 
 # Next.js collects anonymous telemetry data about general usage.
 # Disable telemetry during build.

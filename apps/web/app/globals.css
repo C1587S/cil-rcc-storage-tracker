@@ -125,6 +125,29 @@
   100% { aspect-ratio: 1; border-radius: 50px }
 }
 
+/* ReactFlow overrides — remove white backgrounds, match theme */
+.react-flow__node {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.react-flow__edge-text {
+  fill: transparent !important;
+}
+.react-flow__edge-textbg {
+  fill: transparent !important;
+}
+.react-flow__background pattern {
+  /* allow dot pattern to render */
+}
+.react-flow__minimap,
+.react-flow__controls {
+  display: none !important;
+}
+.react-flow__pane {
+  cursor: default !important;
+}
+
 @layer utilities {
   .terminal-texture {
     background-image:
