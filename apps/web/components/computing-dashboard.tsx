@@ -86,6 +86,16 @@ function isMonitoringJob(name: string): boolean {
   return MONITORING_JOB_PATTERNS.some(p => name === p || name.startsWith(p));
 }
 
+// CIL group members (from `getent group cil` on midway3)
+// This is the canonical list — SU data only includes users who consumed SUs
+const CIL_GROUP_MEMBERS = [
+  "aarode", "amirjina", "atiwari2", "blanco", "bmalevich", "bolliger",
+  "cadavidsanchez", "champion", "davidrzhdu", "do1", "egrenier",
+  "emanakayama", "hultgren", "jenniferagbo", "johannarayl", "jonahmgilbert",
+  "jrising", "kmccusker", "maiqi", "mdefranciosi", "mgreenst",
+  "nishkasharma", "nvsl", "pnsinha", "rachely", "rfrost", "wanru",
+];
+
 // User color palette — distinct, accessible colors
 const USER_COLORS = [
   "#3b82f6", // blue
@@ -130,17 +140,21 @@ function ProgressBar({ value, className }: { value: number; className?: string }
 
 // ─── Section Card ─────────────────────────────────────────────
 
-function Section({ title, icon: Icon, children, className }: {
+function Section({ title, icon: Icon, children, className, headerRight }: {
   title: string;
   icon: React.ElementType;
   children: React.ReactNode;
   className?: string;
+  headerRight?: React.ReactNode;
 }) {
   return (
     <div className={cn("border border-border rounded-lg bg-card", className)}>
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
-        <Icon size={14} className="text-muted-foreground" />
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</span>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Icon size={14} className="text-muted-foreground" />
+          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</span>
+        </div>
+        {headerRight}
       </div>
       <div className="p-4">{children}</div>
     </div>
@@ -290,36 +304,33 @@ function ActiveJobs({ report }: { report: ComputingReport }) {
   );
 }
 
-// ─── Partition traffic-light (40/70 thresholds) ───────────────
 
-function partitionPctColor(pct: number): string {
-  if (pct >= 70) return "text-red-500";
-  if (pct >= 40) return "text-amber-500";
-  return "text-emerald-500";
-}
+// ─── PCB Grid Constants ───────────────────────────────────────
 
-function partitionPctBg(pct: number): string {
-  if (pct >= 70) return "bg-red-500/10";
-  if (pct >= 40) return "bg-amber-500/10";
-  return "";
-}
+const CELL = 8;
+const GAP = 1;
+const CPU_COLS = 8;
+const RAM_COLS = 32;
 
-// ─── Build global user color map across all partitions ────────
+// ─── State Badge ──────────────────────────────────────────────
 
-function buildGlobalUserColorMap(
-  partitions: { name: string; data: PartitionData }[]
-): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const { data } of partitions) {
-    for (const node of data.nodes) {
-      for (const u of node.users) {
-        if (!map.has(u.user)) {
-          map.set(u.user, USER_COLORS[map.size % USER_COLORS.length]);
-        }
-      }
-    }
-  }
-  return map;
+function StateBadge({ state }: { state: string }) {
+  const styles: Record<string, { bg: string; fg: string }> = {
+    mixed: { bg: "#fef3c7", fg: "#78600d" },
+    mix: { bg: "#fef3c7", fg: "#78600d" },
+    idle: { bg: "#d1fae5", fg: "#065f46" },
+    allocated: { bg: "#fee2e2", fg: "#991b1b" },
+    alloc: { bg: "#fee2e2", fg: "#991b1b" },
+  };
+  const s = styles[state.toLowerCase()] || styles.idle;
+  return (
+    <span style={{
+      fontSize: 7, fontWeight: 700, textTransform: "uppercase",
+      padding: "0px 4px", borderRadius: 2,
+      background: s.bg, color: s.fg, letterSpacing: "0.06em",
+      lineHeight: "14px",
+    }}>{state}</span>
+  );
 }
 
 // ─── CPU Grid (8×8 solid squares) ─────────────────────────────
@@ -328,214 +339,413 @@ function CpuGrid({ node, userColorMap }: {
   node: PartitionNode;
   userColorMap: Map<string, string>;
 }) {
-  const totalCells = node.cpus_total;
-  const cols = 8;
-  const cells: { color: string; type: "user" | "free" }[] = [];
-
+  const cells: (string | null)[] = [];
   for (const u of node.users) {
     const color = userColorMap.get(u.user) || "#888";
-    for (let i = 0; i < u.cpus; i++) {
-      cells.push({ color, type: "user" });
-    }
+    for (let i = 0; i < u.cpus; i++) cells.push(color);
   }
-  while (cells.length < totalCells) {
-    cells.push({ color: "", type: "free" });
-  }
+  while (cells.length < node.cpus_total) cells.push(null);
 
   return (
-    <div
-      className="grid"
-      style={{ gridTemplateColumns: `repeat(${cols}, 14px)`, gap: "2px" }}
-    >
-      {cells.map((cell, i) => (
-        <div
-          key={i}
-          className={cn(
-            "w-[14px] h-[14px] rounded-[2px]",
-            cell.type === "free" && "bg-muted border border-border/40",
-          )}
-          style={cell.type === "user" ? { backgroundColor: cell.color } : undefined}
-        />
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${CPU_COLS}, ${CELL}px)`,
+      gap: GAP,
+      flexShrink: 0,
+    }}>
+      {cells.map((color, i) => (
+        <div key={i} style={{
+          width: CELL, height: CELL, borderRadius: 1,
+          background: color || "#d4d4d8",
+          border: color ? `1px solid ${color}` : "1px solid rgba(161,161,170,0.25)",
+          boxShadow: color ? `0 0 2px ${color}40` : "none",
+        }} />
       ))}
     </div>
   );
 }
 
-// ─── RAM Grid (16×16 squares with centered dots) ──────────────
+// ─── RAM Grid (32×8 with centered dots) ────────────────────────
 
 function RamGrid({ node, userColorMap }: {
   node: PartitionNode;
   userColorMap: Map<string, string>;
 }) {
-  const totalCells = 256;
-  const cols = 16;
-  const reservedCells = totalCells - Math.round(node.mem_total_gb);
-  const cells: { color: string; type: "reserved" | "user" | "free" }[] = [];
+  const totalCells = Math.round(node.mem_total_gb);
+  const cells: (string | null)[] = [];
 
-  for (let i = 0; i < reservedCells; i++) {
-    cells.push({ color: "", type: "reserved" });
-  }
   for (const u of node.users) {
     const color = userColorMap.get(u.user) || "#888";
-    for (let i = 0; i < Math.round(u.mem_alloc_gb); i++) {
-      cells.push({ color, type: "user" });
-    }
+    for (let i = 0; i < Math.round(u.mem_alloc_gb); i++) cells.push(color);
   }
-  while (cells.length < totalCells) {
-    cells.push({ color: "", type: "free" });
-  }
+  while (cells.length < totalCells) cells.push(null);
 
   return (
-    <div
-      className="grid"
-      style={{ gridTemplateColumns: `repeat(${cols}, 14px)`, gap: "2px" }}
-    >
-      {cells.map((cell, i) => (
-        <div
-          key={i}
-          className={cn(
-            "w-[14px] h-[14px] rounded-[2px] flex items-center justify-center",
-            cell.type === "free" && "bg-muted",
-            cell.type === "reserved" && "bg-border/20",
-          )}
-        >
-          <div
-            className={cn(
-              "w-[6px] h-[6px] rounded-full",
-              cell.type === "free" && "bg-border",
-              cell.type === "reserved" && "bg-border/40",
-            )}
-            style={cell.type === "user" ? { backgroundColor: cell.color } : undefined}
-          />
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${RAM_COLS}, ${CELL}px)`,
+      gap: GAP,
+      flexShrink: 0,
+    }}>
+      {cells.map((color, i) => (
+        <div key={i} style={{
+          width: CELL, height: CELL, borderRadius: 1,
+          background: color ? `${color}25` : "#e4e4e7",
+          border: color ? `1px solid ${color}35` : "1px solid rgba(161,161,170,0.25)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            width: 3, height: 3, borderRadius: "50%",
+            background: color || "#a1a1aa",
+            opacity: color ? 1 : 0.3,
+            boxShadow: color ? `0 0 2px ${color}50` : "none",
+          }} />
         </div>
       ))}
     </div>
   );
 }
 
-// ─── Compact Grid Key ─────────────────────────────────────────
+// ─── Node Slot (horizontal rack unit) ─────────────────────────
 
-function GridKey() {
+function NodeSlot({ node, userColorMap, isFirst, isLast }: {
+  node: PartitionNode;
+  userColorMap: Map<string, string>;
+  isFirst: boolean;
+  isLast: boolean;
+}) {
+  const nodeId = node.name.replace(/^midway\d+-/, "");
+
   return (
-    <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
-      <div className="flex items-center gap-1.5">
-        <div className="w-[14px] h-[14px] rounded-[2px] bg-primary/60" />
-        <span>= CPU core</span>
+    <div style={{
+      display: "flex", alignItems: "center", gap: 0,
+      background: "#0a5c2f",
+      padding: "6px 8px",
+      borderTop: isFirst ? "2px solid #0d7a3e" : "1px solid #0d7a3e",
+      borderBottom: isLast ? "2px solid #0d7a3e" : "none",
+      borderLeft: "2px solid #0d7a3e",
+      borderRight: "2px solid #0d7a3e",
+      position: "relative",
+      backgroundImage: `
+        linear-gradient(rgba(74,222,128,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(74,222,128,0.05) 1px, transparent 1px)
+      `,
+      backgroundSize: "10px 10px",
+    }}>
+      {/* Node ID sidebar */}
+      <div style={{
+        width: 50, flexShrink: 0,
+        display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2,
+        marginRight: 8,
+      }}>
+        <span style={{
+          fontFamily: "monospace", fontWeight: 700, fontSize: 11,
+          color: "#4ade80", letterSpacing: "0.05em",
+        }}>{nodeId}</span>
+        <StateBadge state={node.state} />
       </div>
-      <div className="flex items-center gap-1.5">
-        <div className="w-[14px] h-[14px] rounded-[2px] bg-muted flex items-center justify-center">
-          <div className="w-[6px] h-[6px] rounded-full bg-primary/60" />
-        </div>
-        <span>= 1 GB RAM</span>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <div className="w-[14px] h-[14px] rounded-[2px] bg-muted border border-border/40" />
-        <span>free</span>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <div className="w-[14px] h-[14px] rounded-[2px] bg-border/20 flex items-center justify-center">
-          <div className="w-[6px] h-[6px] rounded-full bg-border/40" />
-        </div>
-        <span>reserved</span>
+
+      {/* Divider */}
+      <div style={{ width: 1, alignSelf: "stretch", background: "#4ade8020", marginRight: 8 }} />
+
+      {/* CPU label (vertical) */}
+      <div style={{
+        fontSize: 6, color: "#4ade80", fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: "0.1em",
+        fontFamily: "monospace", opacity: 0.6,
+        writingMode: "vertical-rl", transform: "rotate(180deg)",
+        marginRight: 3,
+      }}>CPU</div>
+
+      {/* CPU 8×8 */}
+      <CpuGrid node={node} userColorMap={userColorMap} />
+
+      {/* Trace divider */}
+      <div style={{
+        width: 0, alignSelf: "stretch",
+        borderLeft: "1px dashed #4ade8020",
+        margin: "0 6px",
+      }} />
+
+      {/* RAM label (vertical) */}
+      <div style={{
+        fontSize: 6, color: "#4ade80", fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: "0.1em",
+        fontFamily: "monospace", opacity: 0.6,
+        writingMode: "vertical-rl", transform: "rotate(180deg)",
+        marginRight: 3,
+      }}>RAM</div>
+
+      {/* RAM 32×8 */}
+      <RamGrid node={node} userColorMap={userColorMap} />
+
+      {/* Rack screw holes */}
+      <div style={{ marginLeft: 6, display: "flex", flexDirection: "column", justifyContent: "space-between", alignSelf: "stretch" }}>
+        <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#065f28", border: "1px solid #4ade8025" }} />
+        <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#065f28", border: "1px solid #4ade8025" }} />
       </div>
     </div>
   );
 }
 
-// ─── Consolidated User Table ──────────────────────────────────
+// ─── Rack Frame ───────────────────────────────────────────────
 
-function ConsolidatedUserTable({ partitions, userColorMap }: {
-  partitions: { name: string; data: PartitionData }[];
+function RackFrame({ nodes, userColorMap }: {
+  nodes: PartitionNode[];
   userColorMap: Map<string, string>;
 }) {
-  // Aggregate per-user resources across nodes for each partition
-  const userPartitionData = useMemo(() => {
-    const allUsers = new Set<string>();
-    const partitionUsers: Map<string, Map<string, { cpus: number; mem: number }>> = new Map();
+  return (
+    <div style={{
+      display: "inline-flex", flexDirection: "column",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+      borderRadius: 6,
+      overflow: "hidden",
+    }}>
+      {/* Top bar */}
+      <div style={{
+        background: "#1a1a2e", padding: "3px 10px",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        borderBottom: "1px solid #333",
+      }}>
+        <span style={{ fontSize: 8, color: "#6b7280", fontFamily: "monospace", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+          CIL Rack · {nodes.length}U
+        </span>
+        <div style={{ display: "flex", gap: 4 }}>
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#22c55e" }} />
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#22c55e40" }} />
+        </div>
+      </div>
 
-    for (const { name, data } of partitions) {
-      const userMap = new Map<string, { cpus: number; mem: number }>();
+      {/* Node slots */}
+      {nodes.map((node) => (
+        <NodeSlot
+          key={node.name}
+          node={node}
+          userColorMap={userColorMap}
+          isFirst={false}
+          isLast={false}
+        />
+      ))}
+
+      {/* Bottom bar */}
+      <div style={{
+        background: "#1a1a2e", padding: "3px 10px",
+        borderTop: "1px solid #333",
+      }}>
+        <span style={{ fontSize: 7, color: "#4b5563", fontFamily: "monospace" }}>
+          PWR OK · {nodes.length}×{nodes[0]?.cpus_total || 0}C · {nodes.length}×{Math.round(nodes[0]?.mem_total_gb || 0)}G
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Grid Key (PCB styled, for section header) ────────────────
+
+function GridKey() {
+  return (
+    <div style={{
+      display: "inline-flex", gap: 10, alignItems: "center", fontSize: 8,
+      background: "#0a5c2f", borderRadius: 3, padding: "2px 8px",
+      border: "1px solid #0d7a3e",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+        <div style={{ width: 8, height: 8, borderRadius: 1, background: "#3b82f6" }} />
+        <span style={{ color: "#6ee7a0" }}>CPU core</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+        <div style={{
+          width: 8, height: 8, borderRadius: 1,
+          background: "#3b82f625", border: "1px solid #3b82f640",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{ width: 3, height: 3, borderRadius: "50%", background: "#3b82f6" }} />
+        </div>
+        <span style={{ color: "#6ee7a0" }}>1 GB RAM</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+        <div style={{ width: 8, height: 8, borderRadius: 1, background: "#d4d4d8", border: "1px solid #a1a1aa40" }} />
+        <span style={{ color: "#6ee7a0" }}>Free</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Consolidated User Table (per-node + total columns) ───────
+
+function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers }: {
+  partitions: { name: string; data: PartitionData }[];
+  userColorMap: Map<string, string>;
+  allAccountUsers: string[];
+}) {
+  const nodes = useMemo(() => {
+    const result: { id: string; node: PartitionNode }[] = [];
+    for (const { data } of partitions) {
       for (const node of data.nodes) {
-        for (const u of node.users) {
-          allUsers.add(u.user);
-          const existing = userMap.get(u.user) || { cpus: 0, mem: 0 };
-          existing.cpus += u.cpus;
-          existing.mem += u.mem_alloc_gb;
-          userMap.set(u.user, existing);
-        }
+        result.push({ id: node.name.replace(/^midway\d+-/, ""), node });
       }
-      partitionUsers.set(name, userMap);
     }
-
-    return { allUsers: Array.from(allUsers).sort(), partitionUsers };
+    return result;
   }, [partitions]);
 
-  if (userPartitionData.allUsers.length === 0) return null;
+  const allUsers = useMemo(() => {
+    // Merge account-wide users with any active partition users
+    const set = new Set<string>(allAccountUsers);
+    for (const { node } of nodes) {
+      for (const u of node.users) set.add(u.user);
+    }
+    return Array.from(set).sort();
+  }, [nodes, allAccountUsers]);
+
+  const totalCpus = nodes.reduce((s, { node }) => s + node.cpus_total, 0);
+  const totalMem = nodes.reduce((s, { node }) => s + Math.round(node.mem_total_gb), 0);
+
+  if (allUsers.length === 0) return null;
+
+  const thStyle: React.CSSProperties = {
+    padding: "5px 8px", fontSize: 9, fontWeight: 600,
+    textTransform: "uppercase", color: "#6b7280",
+    borderBottom: "1px solid #e5e7eb", background: "#f9fafb",
+    textAlign: "center", letterSpacing: "0.04em",
+  };
+  const tdStyle: React.CSSProperties = {
+    padding: "6px 8px", fontSize: 11,
+    fontFamily: "'Courier New', monospace",
+    textAlign: "right", borderBottom: "1px solid #f3f4f6",
+  };
+  const dash = <span style={{ color: "#d1d5db" }}>&mdash;</span>;
+
+  function trafficColor(pct: number): string {
+    if (pct >= 70) return "#dc2626";
+    if (pct >= 40) return "#d97706";
+    return "#059669";
+  }
+  function trafficBg(pct: number): string {
+    if (pct >= 70) return "#fef2f2";
+    if (pct >= 40) return "#fefce8";
+    return "transparent";
+  }
 
   return (
-    <div className="overflow-x-auto mt-4 pt-4 border-t border-border">
-      <table className="w-full text-xs">
+    <div>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
-          {/* Level 1: Partition names */}
-          <tr className="text-muted-foreground text-left">
-            <th className="pb-1 pr-3 font-medium" rowSpan={2}>User</th>
-            {partitions.map(({ name, data }) => (
-              <th key={name} className="pb-1 px-2 font-medium text-center border-l border-border/50" colSpan={4}>
-                {name}
-                <span className="ml-1.5 font-normal text-[10px]">
-                  ({data.totals.cpus_total} CPU, {Math.round(data.totals.mem_total_gb)} GB)
-                </span>
+          <tr>
+            <th rowSpan={2} style={{ ...thStyle, textAlign: "left", minWidth: 130 }}>User</th>
+            {nodes.map(({ id, node }) => (
+              <th key={id} colSpan={4} style={{ ...thStyle, borderLeft: "2px solid #e5e7eb" }}>
+                <span style={{ fontFamily: "monospace" }}>{id}</span>
+                <span style={{ fontWeight: 400, marginLeft: 4, fontSize: 8 }}>({node.cpus_total}C/{Math.round(node.mem_total_gb)}G)</span>
               </th>
             ))}
+            <th colSpan={4} style={{ ...thStyle, borderLeft: "2px solid #d1d5db", background: "#f3f4f6" }}>
+              Total
+              <span style={{ fontWeight: 400, marginLeft: 4, fontSize: 8 }}>({totalCpus}C/{totalMem}G)</span>
+            </th>
           </tr>
-          {/* Level 2: CPU / RAM sub-headers */}
-          <tr className="text-[10px] text-muted-foreground text-right">
-            {partitions.map(({ name }) => (
-              <React.Fragment key={name}>
-                <th className="pb-1.5 px-2 font-medium border-l border-border/50">CPU</th>
-                <th className="pb-1.5 px-2 font-medium">%</th>
-                <th className="pb-1.5 px-2 font-medium">RAM</th>
-                <th className="pb-1.5 px-2 font-medium">%</th>
-              </React.Fragment>
-            ))}
+          <tr>
+            {[...nodes.map(n => n.id), "__total__"].map((id, gi) => {
+              const isTotal = gi === nodes.length;
+              return (
+                <React.Fragment key={id}>
+                  <th style={{ ...thStyle, fontSize: 8, borderLeft: isTotal ? "2px solid #d1d5db" : "2px solid #e5e7eb", background: isTotal ? "#f3f4f6" : "#f9fafb" }}>CPU</th>
+                  <th style={{ ...thStyle, fontSize: 8, background: isTotal ? "#f3f4f6" : "#f9fafb" }}>%</th>
+                  <th style={{ ...thStyle, fontSize: 8, background: isTotal ? "#f3f4f6" : "#f9fafb" }}>RAM</th>
+                  <th style={{ ...thStyle, fontSize: 8, background: isTotal ? "#f3f4f6" : "#f9fafb" }}>%</th>
+                </React.Fragment>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
-          {userPartitionData.allUsers.map((user) => (
-            <tr key={user} className="border-t border-border/50 hover:bg-muted/30 transition-colors">
-              <td className="py-1.5 pr-3">
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className="w-2.5 h-2.5 rounded-[2px] shrink-0"
-                    style={{ backgroundColor: userColorMap.get(user) }}
-                  />
-                  <span className="font-mono text-xs">{user}</span>
-                </div>
-              </td>
-              {partitions.map(({ name, data }) => {
-                const usage = userPartitionData.partitionUsers.get(name)?.get(user);
-                const cpuPct = usage ? (usage.cpus / data.totals.cpus_total) * 100 : 0;
-                const memPct = usage ? (usage.mem / data.totals.mem_total_gb) * 100 : 0;
-
-                return (
-                  <React.Fragment key={name}>
-                    <td className="py-1.5 px-2 text-right font-mono border-l border-border/50">
-                      {usage ? usage.cpus : <span className="text-muted-foreground/40">--</span>}
-                    </td>
-                    <td className={cn("py-1.5 px-2 text-right font-mono", usage ? partitionPctColor(cpuPct) : "text-muted-foreground/40", usage && partitionPctBg(cpuPct))}>
-                      {usage ? formatPct(cpuPct) : "--"}
-                    </td>
-                    <td className="py-1.5 px-2 text-right font-mono">
-                      {usage ? `${Math.round(usage.mem)} GB` : <span className="text-muted-foreground/40">--</span>}
-                    </td>
-                    <td className={cn("py-1.5 px-2 text-right font-mono", usage ? partitionPctColor(memPct) : "text-muted-foreground/40", usage && partitionPctBg(memPct))}>
-                      {usage ? formatPct(memPct) : "--"}
-                    </td>
+          {/* Totals row */}
+          {(() => {
+            const totRowStyle: React.CSSProperties = { ...tdStyle, background: "#f0f0f0", fontWeight: 700, color: "#111", borderBottom: "2px solid #e5e7eb" };
+            // Per-node totals
+            const nodeTotals = nodes.map(({ node }) => {
+              let cpu = 0, mem = 0;
+              for (const u of node.users) { cpu += u.cpus; mem += u.mem_alloc_gb; }
+              return { cpu, mem, cpuPct: (cpu / node.cpus_total) * 100, memPct: (mem / node.mem_total_gb) * 100 };
+            });
+            const grandCpu = nodeTotals.reduce((s, n) => s + n.cpu, 0);
+            const grandMem = nodeTotals.reduce((s, n) => s + n.mem, 0);
+            const grandCpuPct = totalCpus > 0 ? (grandCpu / totalCpus * 100) : 0;
+            const grandMemPct = totalMem > 0 ? (grandMem / totalMem * 100) : 0;
+            return (
+              <tr>
+                <td style={{ ...totRowStyle, textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 2, background: "#9ca3af", flexShrink: 0 }} />
+                    <span style={{ fontWeight: 700, fontSize: 11 }}>Total</span>
+                  </div>
+                </td>
+                {nodeTotals.map((nt, i) => (
+                  <React.Fragment key={nodes[i].id}>
+                    <td style={{ ...totRowStyle, borderLeft: "2px solid #e5e7eb" }}>{nt.cpu}</td>
+                    <td style={{ ...totRowStyle, color: trafficColor(nt.cpuPct) }}>{nt.cpuPct.toFixed(1)}%</td>
+                    <td style={totRowStyle}>{Math.round(nt.mem)}G</td>
+                    <td style={{ ...totRowStyle, color: trafficColor(nt.memPct) }}>{nt.memPct.toFixed(1)}%</td>
                   </React.Fragment>
-                );
-              })}
-            </tr>
-          ))}
+                ))}
+                <td style={{ ...totRowStyle, borderLeft: "2px solid #d1d5db", background: "#eaeaea" }}>{grandCpu}</td>
+                <td style={{ ...totRowStyle, background: "#eaeaea", color: trafficColor(grandCpuPct) }}>{grandCpuPct.toFixed(1)}%</td>
+                <td style={{ ...totRowStyle, background: "#eaeaea" }}>{Math.round(grandMem)}G</td>
+                <td style={{ ...totRowStyle, background: "#eaeaea", color: trafficColor(grandMemPct) }}>{grandMemPct.toFixed(1)}%</td>
+              </tr>
+            );
+          })()}
+          {allUsers.map((user) => {
+            const hasAny = nodes.some(({ node }) => node.users.some(u => u.user === user));
+
+            let sumCpu = 0, sumMem = 0;
+            nodes.forEach(({ node }) => {
+              const ui = node.users.find(u => u.user === user);
+              if (ui) { sumCpu += ui.cpus; sumMem += ui.mem_alloc_gb; }
+            });
+            const totalCpuPct = sumCpu > 0 ? (sumCpu / totalCpus * 100) : 0;
+            const totalMemPct = sumMem > 0 ? (sumMem / totalMem * 100) : 0;
+
+            return (
+              <tr key={user} style={{ opacity: hasAny ? 1 : 0.35 }}>
+                <td style={{ ...tdStyle, textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 2, background: userColorMap.get(user), flexShrink: 0 }} />
+                    <span style={{ fontWeight: 600, fontSize: 11 }}>{user}</span>
+                  </div>
+                </td>
+                {nodes.map(({ id, node }) => {
+                  const ui = node.users.find(u => u.user === user);
+                  const cpuPct = ui ? (ui.cpus / node.cpus_total * 100) : 0;
+                  const memPct = ui ? (ui.mem_alloc_gb / node.mem_total_gb * 100) : 0;
+                  return (
+                    <React.Fragment key={id}>
+                      <td style={{ ...tdStyle, borderLeft: "2px solid #f3f4f6" }}>{ui ? ui.cpus : dash}</td>
+                      <td style={{ ...tdStyle, color: ui ? trafficColor(cpuPct) : "#d1d5db", background: ui ? trafficBg(cpuPct) : "transparent", fontWeight: ui ? 600 : 400 }}>
+                        {ui ? `${cpuPct.toFixed(1)}%` : "\u2014"}
+                      </td>
+                      <td style={tdStyle}>{ui ? `${Math.round(ui.mem_alloc_gb)}G` : dash}</td>
+                      <td style={{ ...tdStyle, color: ui ? trafficColor(memPct) : "#d1d5db", background: ui ? trafficBg(memPct) : "transparent", fontWeight: ui ? 600 : 400 }}>
+                        {ui ? `${memPct.toFixed(1)}%` : "\u2014"}
+                      </td>
+                    </React.Fragment>
+                  );
+                })}
+                {/* Total column */}
+                <td style={{ ...tdStyle, borderLeft: "2px solid #d1d5db", background: "#fafafa", fontWeight: 600 }}>
+                  {sumCpu > 0 ? sumCpu : dash}
+                </td>
+                <td style={{ ...tdStyle, background: "#fafafa", color: sumCpu > 0 ? trafficColor(totalCpuPct) : "#d1d5db", fontWeight: sumCpu > 0 ? 700 : 400 }}>
+                  {sumCpu > 0 ? `${totalCpuPct.toFixed(1)}%` : "\u2014"}
+                </td>
+                <td style={{ ...tdStyle, background: "#fafafa", fontWeight: 600 }}>
+                  {sumMem > 0 ? `${Math.round(sumMem)}G` : dash}
+                </td>
+                <td style={{ ...tdStyle, background: "#fafafa", color: sumMem > 0 ? trafficColor(totalMemPct) : "#d1d5db", fontWeight: sumMem > 0 ? 700 : 400 }}>
+                  {sumMem > 0 ? `${totalMemPct.toFixed(1)}%` : "\u2014"}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -544,73 +754,72 @@ function ConsolidatedUserTable({ partitions, userColorMap }: {
 
 // ─── Partitions Section ───────────────────────────────────────
 
-function PartitionsSection({ partitions }: {
+function PartitionsSection({ partitions, report }: {
   partitions: { name: string; data: PartitionData }[];
+  report: ComputingReport;
 }) {
-  const userColorMap = useMemo(() => buildGlobalUserColorMap(partitions), [partitions]);
+  // All CIL group members + any SU users not in the hardcoded list
+  const allAccountUsers = useMemo(() => {
+    const set = new Set<string>(CIL_GROUP_MEMBERS);
+    for (const cluster of Object.values(report.clusters)) {
+      if (!cluster) continue;
+      for (const u of cluster.service_units.by_user) {
+        if (u.user) set.add(u.user);
+      }
+    }
+    return Array.from(set).sort();
+  }, [report]);
+
+  const userColorMap = useMemo(() => {
+    // Build color map from all account users so inactive users also get colors
+    const map = new Map<string, string>();
+    for (const user of allAccountUsers) {
+      map.set(user, USER_COLORS[map.size % USER_COLORS.length]);
+    }
+    // Also pick up any partition-only users not in SU data
+    for (const { data } of partitions) {
+      for (const node of data.nodes) {
+        for (const u of node.users) {
+          if (!map.has(u.user)) {
+            map.set(u.user, USER_COLORS[map.size % USER_COLORS.length]);
+          }
+        }
+      }
+    }
+    return map;
+  }, [partitions, allAccountUsers]);
 
   if (partitions.length === 0) return null;
 
   return (
-    <Section title="Private Partitions" icon={Server}>
-      {/* Partitions side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {partitions.map(({ name, data }) => {
-          const t = data.totals;
-          return (
-            <div key={name}>
-              {/* Partition header */}
-              <div className="mb-2">
-                <div className="text-xs font-medium">{name}</div>
-                <div className="text-[10px] text-muted-foreground">
-                  {t.nodes_total} nodes -- {t.nodes_idle} idle, {t.nodes_mixed} mixed, {t.nodes_allocated} allocated
-                  {t.nodes_down > 0 && `, ${t.nodes_down} down`}
-                </div>
-              </div>
+    <Section title="Partition CIL · Nodes" icon={Server}>
+      {partitions.map(({ name, data }) => {
+        const t = data.totals;
+        return (
+          <div key={name}>
+            <div className="text-[10px] text-muted-foreground mb-3">
+              <span className="font-medium text-foreground text-xs">{name}</span>
+              <span className="ml-2">
+                {t.nodes_total} nodes &mdash; {t.nodes_idle} idle, {t.nodes_mixed} mixed, {t.nodes_allocated} allocated
+                {t.nodes_down > 0 && `, ${t.nodes_down} down`}
+              </span>
+            </div>
 
-              {/* Nodes — horizontal layout */}
-              <div className="flex flex-wrap gap-6">
-                {data.nodes.map((node: PartitionNode) => (
-                  <div key={node.name}>
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="text-[11px] font-mono font-medium">
-                        {node.name.replace(/^midway\d+-/, "")}
-                      </span>
-                      <span className={cn("text-[10px]", stateColor(node.state))}>
-                        {node.state}
-                      </span>
-                    </div>
-
-                    {/* CPU + RAM stacked to keep node compact */}
-                    <div className="space-y-2">
-                      <div>
-                        <div className="text-[10px] text-muted-foreground mb-1">
-                          CPU -- {node.cpus_allocated}/{node.cpus_total} cores
-                        </div>
-                        <CpuGrid node={node} userColorMap={userColorMap} />
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-muted-foreground mb-1">
-                          RAM -- {Math.round(node.mem_used_gb)}/{Math.round(node.mem_total_gb)} GB
-                        </div>
-                        <RamGrid node={node} userColorMap={userColorMap} />
-                      </div>
-                    </div>
-                  </div>
-                ))}
+            {/* Rack + Table side by side */}
+            <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+              <RackFrame nodes={data.nodes} userColorMap={userColorMap} />
+              <div style={{ flex: 1, overflowX: "auto", minWidth: 0 }}>
+                <ConsolidatedUserTable partitions={[{ name, data }]} userColorMap={userColorMap} allAccountUsers={allAccountUsers} />
               </div>
             </div>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })}
 
-      {/* Grid key */}
-      <div className="mt-4 pt-3 border-t border-border">
+      {/* Legend below everything */}
+      <div style={{ marginTop: 12 }}>
         <GridKey />
       </div>
-
-      {/* Consolidated user table */}
-      <ConsolidatedUserTable partitions={partitions} userColorMap={userColorMap} />
     </Section>
   );
 }
@@ -766,7 +975,7 @@ export function ComputingDashboard() {
       <ActiveJobs report={report} />
 
       {/* Private Partitions */}
-      <PartitionsSection partitions={privatePartitions} />
+      <PartitionsSection partitions={privatePartitions} report={report} />
     </div>
   );
 }
