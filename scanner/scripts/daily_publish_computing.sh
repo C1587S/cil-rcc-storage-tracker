@@ -39,6 +39,10 @@ if [[ ! -f "$PUBLISH_SCRIPT" ]]; then
     exit 1
 fi
 
+# Wait 2 minutes for Midway3 scan to land on shared scratch
+echo "Waiting 2 minutes for Midway3 scan..."
+sleep 120
+
 # Run publish (scan + merge + publish + prune)
 # Keep 100 reports (~25 hours at 15 min intervals)
 echo "Running publish..."
