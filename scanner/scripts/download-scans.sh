@@ -74,7 +74,10 @@ for SOURCE in $UNIQUE_SOURCES; do
 done
 echo ""
 
+MAX_RETRIES=3
+RETRY_DELAY=10
 COUNT=0
+FAILED=()
 SOURCES=()
 
 for FILE in $FILES; do
@@ -91,25 +94,46 @@ for FILE in $FILES; do
     continue
   fi
 
-  HTTP=$(curl -sk -o "${DEST_FILE}" -w "%{http_code}" "${BASE_URL}/${FILE}")
+  # Download with retries
+  SUCCESS=false
+  for attempt in $(seq 1 $MAX_RETRIES); do
+    HTTP=$(curl -sk --connect-timeout 30 --max-time 300 -o "${DEST_FILE}" -w "%{http_code}" "${BASE_URL}/${FILE}" 2>/dev/null) || HTTP="000"
 
-  if [ "$HTTP" = "200" ]; then
-    SIZE=$(du -sh "${DEST_FILE}" 2>/dev/null | cut -f1)
-    echo "  [ok]   ${FILE} (${SIZE})"
-    COUNT=$((COUNT + 1))
-    # Track unique sources
-    if [[ ! " ${SOURCES[*]} " =~ " ${SOURCE} " ]]; then
-      SOURCES+=("$SOURCE")
+    if [ "$HTTP" = "200" ] && [ -s "${DEST_FILE}" ]; then
+      SIZE=$(du -sh "${DEST_FILE}" 2>/dev/null | cut -f1)
+      echo "  [ok]   ${FILE} (${SIZE})"
+      COUNT=$((COUNT + 1))
+      SUCCESS=true
+      # Track unique sources
+      if [[ ! " ${SOURCES[*]} " =~ " ${SOURCE} " ]]; then
+        SOURCES+=("$SOURCE")
+      fi
+      break
+    else
+      rm -f "${DEST_FILE}"
+      if [ $attempt -lt $MAX_RETRIES ]; then
+        echo "  [retry] ${FILE} (HTTP ${HTTP}, attempt ${attempt}/${MAX_RETRIES}, waiting ${RETRY_DELAY}s)"
+        sleep $RETRY_DELAY
+      fi
     fi
-  else
-    echo "  [fail] ${FILE} (HTTP ${HTTP})"
-    rm -f "${DEST_FILE}"
+  done
+
+  if [ "$SUCCESS" = false ]; then
+    echo "  [FAIL] ${FILE} (HTTP ${HTTP}, gave up after ${MAX_RETRIES} attempts)"
+    FAILED+=("$FILE")
   fi
 done
 
 echo ""
 echo "=========================================="
 echo "Download complete: ${COUNT}/${TOTAL} files"
+if [ ${#FAILED[@]} -gt 0 ]; then
+  echo ""
+  echo "FAILED files (${#FAILED[@]}):"
+  for f in "${FAILED[@]}"; do
+    echo "  - ${f}"
+  done
+fi
 echo ""
 echo "Sources downloaded:"
 for s in "${SOURCES[@]}"; do
@@ -169,6 +193,11 @@ else
 fi
 
 echo ""
+if [ ${#FAILED[@]} -gt 0 ]; then
+  echo "ERROR: ${#FAILED[@]} file(s) could not be downloaded after ${MAX_RETRIES} retries."
+  echo "=========================================="
+  exit 1
+fi
 echo "To import into ClickHouse and update the dashboard:"
 echo "  cd ${PROJECT_ROOT} && ./scripts/docker-import.sh"
 echo "=========================================="

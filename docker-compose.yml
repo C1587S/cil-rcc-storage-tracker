@@ -229,8 +229,8 @@ services:
   # Frontend Web Application
   web:
     build:
-      context: ./apps/web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_BASE_PATH: /cil-rcc-tracker
     container_name: tracker-web

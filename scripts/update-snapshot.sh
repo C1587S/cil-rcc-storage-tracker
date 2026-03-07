@@ -98,10 +98,27 @@ if [ "$FORCE" = true ] && [ -n "$CURRENT_DATE" ] && [ "$NEW_DATE" = "$CURRENT_DA
   done
 fi
 
-# Step 4 (was 3): Download new files
+# Step 4 (was 3): Download new files (with retries at pipeline level)
 echo ""
 echo "--- Step 1/3: Download ---"
-"${PROJECT_ROOT}/scanner/scripts/download-scans.sh" "${RCC_URL}" "${NEW_DATE}"
+DOWNLOAD_OK=false
+for dl_attempt in 1 2 3; do
+  if "${PROJECT_ROOT}/scanner/scripts/download-scans.sh" "${RCC_URL}" "${NEW_DATE}"; then
+    DOWNLOAD_OK=true
+    break
+  else
+    if [ $dl_attempt -lt 3 ]; then
+      echo ""
+      echo "Download attempt ${dl_attempt}/3 failed. Retrying in 60 seconds..."
+      sleep 60
+    fi
+  fi
+done
+
+if [ "$DOWNLOAD_OK" = false ]; then
+  echo "ERROR: Download failed after 3 attempts. Import skipped."
+  exit 1
+fi
 
 # Step: Import new snapshot into ClickHouse
 echo ""
