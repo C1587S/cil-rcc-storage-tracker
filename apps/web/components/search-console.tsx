@@ -406,7 +406,7 @@ function GuidedSQLMode({
       return executeQuery({
         snapshot_date: selectedSnapshot,
         sql: sanitizedSQL,
-        limit: 5000,
+        limit: 8000,
       });
     },
     enabled: hasExecuted && !!selectedSnapshot && !!generatedSQL,
@@ -436,16 +436,17 @@ function GuidedSQLMode({
       <div className="border border-border/50 rounded-sm bg-muted/5">
         <div className="bg-muted/10 border-b border-border/50 px-3 py-2">
           <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
-            Query Templates
+            Query Templates {selectedTemplate && <span className="font-normal normal-case text-primary/70">— {selectedTemplate.name}</span>}
           </div>
         </div>
-        <div className="p-3 space-y-3">
+        <div className="max-h-[240px] overflow-y-auto p-3 space-y-1">
           {Object.entries(templatesByCategory).map(([category, templates]) => (
-            <div key={category}>
-              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+            <details key={category} className="group">
+              <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide cursor-pointer select-none list-none flex items-center gap-1 py-1 hover:text-foreground transition-colors">
+                <ChevronDown className="h-3 w-3 -rotate-90 group-open:rotate-0 transition-transform" />
                 {category}
-              </div>
-              <div className="grid grid-cols-1 gap-2">
+              </summary>
+              <div className="grid grid-cols-1 gap-1 mt-1 mb-2 ml-4">
                 {templates.map(template => (
                   <button
                     key={template.id}
@@ -453,18 +454,18 @@ function GuidedSQLMode({
                       setSelectedTemplate(template);
                       setHasExecuted(false);
                     }}
-                    className={`text-left p-2.5 border rounded-sm transition-colors ${
+                    className={`text-left px-2.5 py-1.5 border rounded-sm transition-colors ${
                       selectedTemplate?.id === template.id
                         ? "bg-primary/10 border-primary/30"
                         : "border-border/20 hover:bg-muted/10"
                     }`}
                   >
                     <div className="text-xs font-medium text-foreground">{template.name}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">{template.description}</div>
+                    <div className="text-[10px] text-muted-foreground">{template.description}</div>
                   </button>
                 ))}
               </div>
-            </div>
+            </details>
           ))}
         </div>
       </div>
@@ -501,7 +502,7 @@ function GuidedSQLMode({
         <div className="border border-border/30 rounded-sm bg-muted/5">
           <div className="bg-muted/10 border-b border-border/30 px-3 py-2 flex items-center justify-between">
             <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
-              Generated SQL
+              Generated SQL <span className="font-normal normal-case text-muted-foreground/40">— editable</span>
             </div>
             <Button
               variant="ghost"
@@ -512,9 +513,13 @@ function GuidedSQLMode({
               {copiedSQL ? "Copied!" : "Copy SQL"}
             </Button>
           </div>
-          <pre className="p-3 text-[11px] font-mono text-foreground overflow-x-auto max-h-[300px] overflow-y-auto">
-            {generatedSQL}
-          </pre>
+          <textarea
+            ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
+            value={generatedSQL}
+            onChange={(e) => { setGeneratedSQL(e.target.value); setHasExecuted(false); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+            className="w-full p-3 text-[11px] font-mono text-foreground bg-transparent resize-none overflow-hidden focus:outline-none focus:ring-1 focus:ring-primary/30 rounded-sm"
+            spellCheck={false}
+          />
         </div>
       )}
 
@@ -677,7 +682,7 @@ function RawSQLMode({
         <AlertCircle className="h-3.5 w-3.5 text-yellow-400 mt-0.5 flex-shrink-0" />
         <div className="text-[10px] text-yellow-400 leading-relaxed">
           <strong>Advanced mode:</strong> Write raw SQL queries with strict backend guardrails.
-          Only SELECT statements allowed. snapshot_date filter required. Max 5000 rows.
+          Only SELECT statements allowed. snapshot_date filter required. Max 8000 rows.
         </div>
       </div>
 
@@ -750,7 +755,7 @@ LIMIT 100`}
               <option value={100}>100</option>
               <option value={500}>500</option>
               <option value={1000}>1000</option>
-              <option value={5000}>5000</option>
+              <option value={8000}>8000</option>
             </select>
           </div>
         </div>
@@ -872,7 +877,7 @@ function AIQueryMode({
       return executeQuery({
         snapshot_date: selectedSnapshot,
         sql: generatedSQL.trim(),
-        limit: 5000,
+        limit: 8000,
       });
     },
     enabled: hasExecuted && !!selectedSnapshot && !!generatedSQL.trim(),
@@ -946,7 +951,7 @@ function AIQueryMode({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <label className="text-xs font-medium text-muted-foreground">
-              Generated SQL
+              Generated SQL <span className="font-normal text-muted-foreground/40">— editable</span>
             </label>
             <button
               onClick={handleCopySQL}
@@ -960,9 +965,13 @@ function AIQueryMode({
               {copiedSQL ? "Copied!" : "Copy"}
             </button>
           </div>
-          <pre className="w-full px-3 py-2 text-xs bg-muted/10 border border-border/50 rounded-sm font-mono overflow-x-auto whitespace-pre-wrap">
-            {generatedSQL}
-          </pre>
+          <textarea
+            ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
+            value={generatedSQL}
+            onChange={(e) => { setGeneratedSQL(e.target.value); setHasExecuted(false); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+            className="w-full px-3 py-2 text-xs bg-muted/10 border border-border/50 rounded-sm font-mono resize-none overflow-hidden focus:outline-none focus:ring-1 focus:ring-primary/30"
+            spellCheck={false}
+          />
           <div className="flex items-center justify-end gap-2">
             <Button
               size="sm"
@@ -1725,7 +1734,7 @@ export function SearchConsole() {
   // Execute complex query via SQL (multi-pattern or size filters)
   const { data: complexResults, isLoading: isComplexSearching, error: complexError } = useQuery({
     queryKey: ["search-complex", selectedSnapshot, complexSQL, hasSearched],
-    queryFn: () => executeQuery({ snapshot_date: selectedSnapshot!, sql: complexSQL, limit: 5000 }),
+    queryFn: () => executeQuery({ snapshot_date: selectedSnapshot!, sql: complexSQL, limit: 8000 }),
     enabled: hasSearched && isComplexQuery && !!selectedSnapshot && !!complexSQL,
     retry: false,
   });
@@ -1947,7 +1956,7 @@ export function SearchConsole() {
                         <option value={100}>100 results</option>
                         <option value={500}>500 results</option>
                         <option value={1000}>1000 results</option>
-                        <option value={5000}>5000 results</option>
+                        <option value={8000}>8000 results</option>
                         <option value={8000}>8000 results (max)</option>
                       </select>
                     </div>
@@ -2064,7 +2073,7 @@ export function SearchConsole() {
                 <AlertCircle className="h-3.5 w-3.5 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
                 <div className="text-[10px] text-muted-foreground/70 leading-relaxed">
                   <strong className="text-foreground/80">Backend constraints:</strong> Search text is required (min 1 character).
-                  Results capped at 5000 rows. Searches match on filename only (not full path).
+                  Results capped at 8000 rows. Searches match on filename only (not full path).
                   Scoped searches (custom path) are faster. See <span className="font-mono">clickhouse/docs/filesystem_queries.md</span> for query examples.
                 </div>
               </div>
