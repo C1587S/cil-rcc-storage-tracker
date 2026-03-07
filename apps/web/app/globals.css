@@ -25,6 +25,10 @@
     --input: 0 0% 22%;
     --ring: 213 76% 55%;
     --radius: 0.5rem;
+    --pcb-free-cpu: #3f3f46;
+    --pcb-free-ram: #3f3f46;
+    --pcb-free-border: rgba(161,161,170,0.15);
+    --pcb-free-ram-dot: #71717a;
   }
 
   .light {
@@ -48,6 +52,10 @@
     --border: 30 4% 86%;             /* #deddda */
     --input: 30 4% 93%;
     --ring: 213 76% 55%;
+    --pcb-free-cpu: #d4d4d8;
+    --pcb-free-ram: #e4e4e7;
+    --pcb-free-border: rgba(161,161,170,0.25);
+    --pcb-free-ram-dot: #a1a1aa;
   }
 }
 

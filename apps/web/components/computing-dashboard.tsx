@@ -18,6 +18,7 @@ import {
   Clock,
   Server,
   AlertTriangle,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -39,18 +40,58 @@ function formatPct(n: number | null | undefined): string {
   return `${n.toFixed(1)}%`;
 }
 
-function pctColor(pct: number | null | undefined): string {
-  if (pct == null) return "text-muted-foreground";
-  if (pct >= 90) return "text-red-500";
-  if (pct >= 70) return "text-amber-500";
-  return "text-emerald-500";
+// ─── Smooth color gradient (emerald → gold → orange → red) ───
+// 0-45% greens/limes, 45-65% yellows/golds, 65-85% oranges, 85-92% dark orange, 92-100% reds
+
+const GRADIENT_STOPS: [number, number, number, number][] = [
+  [0,     5, 150, 105],  // #059669 emerald
+  [25,   75, 179,  61],  // #4bb33d lime-green
+  [45,  163, 190,  30],  // #a3be1e yellow-green
+  [55,  219, 178,  18],  // #dbb212 gold
+  [65,  232, 152,  12],  // #e8980c amber
+  [75,  239, 120,   8],  // #ef7808 orange
+  [85,  234,  88,  12],  // #ea580c dark orange
+  [92,  220,  50,   5],  // #dc3205 red-orange
+  [100, 185,  10,   0],  // #b90a00 deep red
+];
+
+function interpolateGradient(pct: number): [number, number, number] {
+  const clamped = Math.max(0, Math.min(100, pct));
+  // Find the two stops surrounding the clamped value
+  let lo = 0;
+  for (let i = 1; i < GRADIENT_STOPS.length; i++) {
+    if (GRADIENT_STOPS[i][0] >= clamped) { lo = i - 1; break; }
+    lo = i;
+  }
+  const hi = Math.min(lo + 1, GRADIENT_STOPS.length - 1);
+  const range = GRADIENT_STOPS[hi][0] - GRADIENT_STOPS[lo][0];
+  const t = range > 0 ? (clamped - GRADIENT_STOPS[lo][0]) / range : 0;
+  return [
+    Math.round(GRADIENT_STOPS[lo][1] + (GRADIENT_STOPS[hi][1] - GRADIENT_STOPS[lo][1]) * t),
+    Math.round(GRADIENT_STOPS[lo][2] + (GRADIENT_STOPS[hi][2] - GRADIENT_STOPS[lo][2]) * t),
+    Math.round(GRADIENT_STOPS[lo][3] + (GRADIENT_STOPS[hi][3] - GRADIENT_STOPS[lo][3]) * t),
+  ];
 }
 
-function pctBarColor(pct: number | null | undefined): string {
-  if (pct == null) return "bg-muted";
-  if (pct >= 90) return "bg-red-500";
-  if (pct >= 70) return "bg-amber-500";
-  return "bg-primary";
+/** Returns hex color string for a percentage value */
+function getPctColor(pct: number | null | undefined): string {
+  if (pct == null) return "#9ca3af"; // muted gray
+  const [r, g, b] = interpolateGradient(pct);
+  return `rgb(${r},${g},${b})`;
+}
+
+/** Returns a subtle tinted background for a percentage value */
+function getPctBg(pct: number | null | undefined): string {
+  if (pct == null) return "transparent";
+  const [r, g, b] = interpolateGradient(pct);
+  return `rgba(${r},${g},${b},0.08)`;
+}
+
+/** Returns the bar fill color for ProgressBar */
+function getPctBarBg(pct: number | null | undefined): string {
+  if (pct == null) return "#e5e7eb"; // muted
+  const [r, g, b] = interpolateGradient(pct);
+  return `rgb(${r},${g},${b})`;
 }
 
 function stateColor(state: string): string {
@@ -112,18 +153,6 @@ const USER_COLORS = [
   "#84cc16", // lime
 ];
 
-function buildUserColorMap(nodes: PartitionNode[]): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const node of nodes) {
-    for (const u of node.users) {
-      if (!map.has(u.user)) {
-        map.set(u.user, USER_COLORS[map.size % USER_COLORS.length]);
-      }
-    }
-  }
-  return map;
-}
-
 // ─── Progress Bar ─────────────────────────────────────────────
 
 function ProgressBar({ value, className }: { value: number; className?: string }) {
@@ -131,8 +160,8 @@ function ProgressBar({ value, className }: { value: number; className?: string }
   return (
     <div className={cn("h-2 rounded-full bg-secondary overflow-hidden", className)}>
       <div
-        className={cn("h-full rounded-full transition-all", pctBarColor(value))}
-        style={{ width: `${clamped}%` }}
+        className="h-full rounded-full transition-all"
+        style={{ width: `${clamped}%`, backgroundColor: getPctBarBg(value) }}
       />
     </div>
   );
@@ -184,7 +213,7 @@ function SUOverview({ report }: { report: ComputingReport }) {
         </div>
         <div>
           <div className="text-[11px] text-muted-foreground mb-1">Days Left</div>
-          <div className={cn("text-lg font-semibold", su.days_left != null && su.days_left < 30 ? "text-red-500" : "")}>
+          <div className="text-lg font-semibold" style={su.days_left != null ? { color: getPctColor(Math.max(0, 100 - (su.days_left / 365) * 100)) } : undefined}>
             {su.days_left ?? "--"}
             {su.period_end && <span className="text-[10px] text-muted-foreground ml-1.5 font-normal">({su.period_end})</span>}
           </div>
@@ -195,7 +224,7 @@ function SUOverview({ report }: { report: ComputingReport }) {
         <div className="mt-4">
           <div className="flex justify-between text-[11px] text-muted-foreground mb-1">
             <span>Usage</span>
-            <span className={pctColor(usedPct)}>{formatPct(usedPct)}</span>
+            <span style={{ color: getPctColor(usedPct) }}>{formatPct(usedPct)}</span>
           </div>
           <ProgressBar value={usedPct} />
         </div>
@@ -206,21 +235,42 @@ function SUOverview({ report }: { report: ComputingReport }) {
 
 // ─── SU by User ───────────────────────────────────────────────
 
-function SUByUserTable({ report }: { report: ComputingReport }) {
+function SUByUserTable({ report, userColorMap, selectedUsers, onToggleUser }: {
+  report: ComputingReport;
+  userColorMap: Map<string, string>;
+  selectedUsers: Set<string>;
+  onToggleUser: (user: string) => void;
+}) {
   const m3 = report.clusters.midway3;
   const users = m3?.service_units.by_user || [];
   const total = m3?.service_units.consumed || 1;
 
   if (users.length === 0) return null;
 
+  const hasSelection = selectedUsers.size > 0;
+
   return (
     <Section title="SU Usage by User" icon={Users}>
       <div className="space-y-2">
         {users.map((u) => {
           const pct = total > 0 ? (u.consumed / total) * 100 : 0;
+          const isSelected = selectedUsers.has(u.user);
+          const userColor = userColorMap.get(u.user) || "#888";
           return (
-            <div key={u.user} className="flex items-center gap-3">
-              <span className="text-xs font-mono w-32 truncate">{u.user}</span>
+            <div
+              key={u.user}
+              onClick={() => onToggleUser(u.user)}
+              className="flex items-center gap-3 cursor-pointer rounded px-1 -mx-1 transition-opacity"
+              style={{
+                opacity: hasSelection && !isSelected ? 0.4 : 1,
+                borderLeft: isSelected ? `3px solid ${userColor}` : "3px solid transparent",
+                background: isSelected ? `${userColor}15` : undefined,
+              }}
+            >
+              <div className="flex items-center gap-1.5 w-32 min-w-0">
+                <div style={{ width: 8, height: 8, borderRadius: 2, background: userColor, flexShrink: 0 }} />
+                <span className="text-xs font-mono truncate">{u.user}</span>
+              </div>
               <div className="flex-1">
                 <ProgressBar value={pct} />
               </div>
@@ -236,7 +286,12 @@ function SUByUserTable({ report }: { report: ComputingReport }) {
 
 // ─── Active Jobs ──────────────────────────────────────────────
 
-function ActiveJobs({ report }: { report: ComputingReport }) {
+function ActiveJobs({ report, userColorMap, selectedUsers, onToggleUser }: {
+  report: ComputingReport;
+  userColorMap: Map<string, string>;
+  selectedUsers: Set<string>;
+  onToggleUser: (user: string) => void;
+}) {
   const allJobs: (JobEntry & { cluster: string })[] = [];
   for (const [name, cluster] of Object.entries(report.clusters)) {
     if (!cluster) continue;
@@ -249,6 +304,7 @@ function ActiveJobs({ report }: { report: ComputingReport }) {
 
   const running = allJobs.filter(j => j.state === "RUNNING").length;
   const pending = allJobs.filter(j => j.state === "PENDING").length;
+  const hasSelection = selectedUsers.size > 0;
 
   return (
     <Section title="Active Jobs" icon={Cpu}>
@@ -277,9 +333,27 @@ function ActiveJobs({ report }: { report: ComputingReport }) {
               </tr>
             </thead>
             <tbody>
-              {allJobs.map((j) => (
-                <tr key={`${j.cluster}-${j.job_id}`} className="border-t border-border/50">
-                  <td className="py-1.5 pr-3 font-mono">{j.user}</td>
+              {allJobs.map((j) => {
+                const isSelected = selectedUsers.has(j.user);
+                const userColor = userColorMap.get(j.user) || "#888";
+                return (
+                <tr
+                  key={`${j.cluster}-${j.job_id}`}
+                  className="border-t border-border/50 cursor-pointer"
+                  onClick={() => onToggleUser(j.user)}
+                  style={{
+                    opacity: hasSelection && !isSelected ? 0.4 : 1,
+                    borderLeft: isSelected ? `3px solid ${userColor}` : "3px solid transparent",
+                    background: isSelected ? `${userColor}15` : undefined,
+                    transition: "opacity 0.15s",
+                  }}
+                >
+                  <td className="py-1.5 pr-3 font-mono">
+                    <div className="flex items-center gap-1.5">
+                      <div style={{ width: 8, height: 8, borderRadius: 2, background: userColor, flexShrink: 0 }} />
+                      {j.user}
+                    </div>
+                  </td>
                   <td className={cn("py-1.5 pr-3 font-medium", stateColor(j.state))}>{j.state}</td>
                   <td className="py-1.5 pr-3">{j.cluster}</td>
                   <td className="py-1.5 pr-3">{j.partition}</td>
@@ -291,7 +365,8 @@ function ActiveJobs({ report }: { report: ComputingReport }) {
                   <td className="py-1.5 pr-3 font-mono">{j.time_limit}</td>
                   <td className="py-1.5 font-mono">{j.time_left}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -307,10 +382,81 @@ function ActiveJobs({ report }: { report: ComputingReport }) {
 
 // ─── PCB Grid Constants ───────────────────────────────────────
 
-const CELL = 8;
-const GAP = 1;
+const CELL = 10;
+const GAP = 1.5;
 const CPU_COLS = 8;
 const RAM_COLS = 32;
+
+// ─── Cluster / Partition PCB Themes ──────────────────────────
+
+type ClusterTheme = {
+  board: string;
+  border: string;
+  trace: string;
+  label: string;
+  hole: string;
+  led: string;
+};
+
+const MIDWAY3_VARIANTS: Record<string, ClusterTheme> = {
+  cil: {
+    board: "#0a5c2f", border: "#0d7a3e",
+    trace: "rgba(74,222,128,0.05)", label: "#4ade80",
+    hole: "#065f28", led: "#22c55e",
+  },
+  _teal: {
+    board: "#0a4c3f", border: "#0d6a4e",
+    trace: "rgba(74,222,180,0.05)", label: "#4adead",
+    hole: "#064f38", led: "#22c5a0",
+  },
+  _lime: {
+    board: "#1a5c1f", border: "#1d7a2e",
+    trace: "rgba(120,222,74,0.05)", label: "#80de4a",
+    hole: "#165f18", led: "#4cc522",
+  },
+};
+
+const MIDWAY2_VARIANTS: Record<string, ClusterTheme> = {
+  _base: {
+    board: "#0f2847", border: "#1a3d6b",
+    trace: "rgba(96,165,250,0.05)", label: "#60a5fa",
+    hole: "#0c2240", led: "#3b82f6",
+  },
+  _indigo: {
+    board: "#1a1f47", border: "#2a2d6b",
+    trace: "rgba(129,140,248,0.05)", label: "#818cf8",
+    hole: "#141840", led: "#6366f1",
+  },
+  _cyan: {
+    board: "#0f3847", border: "#1a4d6b",
+    trace: "rgba(96,210,250,0.05)", label: "#60d5fa",
+    hole: "#0c3040", led: "#22b8cf",
+  },
+};
+
+function getPartitionTheme(cluster: string, partitionName: string): ClusterTheme {
+  if (cluster === "midway3") {
+    if (MIDWAY3_VARIANTS[partitionName]) return MIDWAY3_VARIANTS[partitionName];
+    // Auto-assign from remaining variants
+    const keys = Object.keys(MIDWAY3_VARIANTS).filter(k => k.startsWith("_"));
+    const idx = Math.abs(hashCode(partitionName)) % keys.length;
+    return MIDWAY3_VARIANTS[keys[idx]];
+  }
+  if (cluster === "midway2") {
+    if (MIDWAY2_VARIANTS[partitionName]) return MIDWAY2_VARIANTS[partitionName];
+    const keys = Object.keys(MIDWAY2_VARIANTS);
+    const idx = Math.abs(hashCode(partitionName)) % keys.length;
+    return MIDWAY2_VARIANTS[keys[idx]];
+  }
+  // Fallback: midway3 base green
+  return MIDWAY3_VARIANTS.cil;
+}
+
+function hashCode(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return h;
+}
 
 // ─── State Badge ──────────────────────────────────────────────
 
@@ -335,16 +481,22 @@ function StateBadge({ state }: { state: string }) {
 
 // ─── CPU Grid (8×8 solid squares) ─────────────────────────────
 
-function CpuGrid({ node, userColorMap }: {
+type CellData = { color: string | null; user: string | null };
+
+function CpuGrid({ node, userColorMap, selectedUsers, onToggleUser }: {
   node: PartitionNode;
   userColorMap: Map<string, string>;
+  selectedUsers: Set<string>;
+  onToggleUser: (user: string) => void;
 }) {
-  const cells: (string | null)[] = [];
+  const cells: CellData[] = [];
   for (const u of node.users) {
     const color = userColorMap.get(u.user) || "#888";
-    for (let i = 0; i < u.cpus; i++) cells.push(color);
+    for (let i = 0; i < u.cpus; i++) cells.push({ color, user: u.user });
   }
-  while (cells.length < node.cpus_total) cells.push(null);
+  while (cells.length < node.cpus_total) cells.push({ color: null, user: null });
+
+  const hasSelection = selectedUsers.size > 0;
 
   return (
     <div style={{
@@ -353,32 +505,46 @@ function CpuGrid({ node, userColorMap }: {
       gap: GAP,
       flexShrink: 0,
     }}>
-      {cells.map((color, i) => (
-        <div key={i} style={{
-          width: CELL, height: CELL, borderRadius: 1,
-          background: color || "#d4d4d8",
-          border: color ? `1px solid ${color}` : "1px solid rgba(161,161,170,0.25)",
-          boxShadow: color ? `0 0 2px ${color}40` : "none",
-        }} />
-      ))}
+      {cells.map((cell, i) => {
+        const isSelected = cell.user != null && selectedUsers.has(cell.user);
+        const dimmed = hasSelection && cell.color != null && !isSelected;
+        const isFree = cell.color == null;
+        return (
+          <div key={i} onClick={cell.user ? () => onToggleUser(cell.user!) : undefined} style={{
+            width: CELL, height: CELL, borderRadius: 1,
+            background: cell.color || "var(--pcb-free-cpu)",
+            border: isSelected ? "2px solid #facc15" : cell.color ? `1px solid ${cell.color}` : "1px solid var(--pcb-free-border)",
+            boxShadow: isSelected ? "0 0 4px #facc15, 0 0 8px rgba(250,204,21,0.4)" : cell.color ? `0 0 2px ${cell.color}40` : "none",
+            opacity: hasSelection ? (isSelected ? 1 : dimmed ? 0.25 : isFree ? 0.15 : 1) : 1,
+            transition: "opacity 0.15s, box-shadow 0.15s",
+            position: isSelected ? "relative" as const : undefined,
+            zIndex: isSelected ? 1 : undefined,
+            cursor: cell.user ? "pointer" : undefined,
+          }} />
+        );
+      })}
     </div>
   );
 }
 
 // ─── RAM Grid (32×8 with centered dots) ────────────────────────
 
-function RamGrid({ node, userColorMap }: {
+function RamGrid({ node, userColorMap, selectedUsers, onToggleUser }: {
   node: PartitionNode;
   userColorMap: Map<string, string>;
+  selectedUsers: Set<string>;
+  onToggleUser: (user: string) => void;
 }) {
   const totalCells = Math.round(node.mem_total_gb);
-  const cells: (string | null)[] = [];
+  const cells: CellData[] = [];
 
   for (const u of node.users) {
     const color = userColorMap.get(u.user) || "#888";
-    for (let i = 0; i < Math.round(u.mem_alloc_gb); i++) cells.push(color);
+    for (let i = 0; i < Math.round(u.mem_alloc_gb); i++) cells.push({ color, user: u.user });
   }
-  while (cells.length < totalCells) cells.push(null);
+  while (cells.length < totalCells) cells.push({ color: null, user: null });
+
+  const hasSelection = selectedUsers.size > 0;
 
   return (
     <div style={{
@@ -387,48 +553,58 @@ function RamGrid({ node, userColorMap }: {
       gap: GAP,
       flexShrink: 0,
     }}>
-      {cells.map((color, i) => (
-        <div key={i} style={{
-          width: CELL, height: CELL, borderRadius: 1,
-          background: color ? `${color}25` : "#e4e4e7",
-          border: color ? `1px solid ${color}35` : "1px solid rgba(161,161,170,0.25)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <div style={{
-            width: 3, height: 3, borderRadius: "50%",
-            background: color || "#a1a1aa",
-            opacity: color ? 1 : 0.3,
-            boxShadow: color ? `0 0 2px ${color}50` : "none",
-          }} />
-        </div>
-      ))}
+      {cells.map((cell, i) => {
+        const isSelected = cell.user != null && selectedUsers.has(cell.user);
+        const dimmed = hasSelection && cell.color != null && !isSelected;
+        const isFree = cell.color == null;
+        return (
+          <div key={i} onClick={cell.user ? () => onToggleUser(cell.user!) : undefined} style={{
+            width: CELL, height: CELL, borderRadius: 1,
+            background: cell.color ? `${cell.color}25` : "var(--pcb-free-ram)",
+            border: isSelected ? "2px solid #facc15" : cell.color ? `1px solid ${cell.color}35` : "1px solid var(--pcb-free-border)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            opacity: hasSelection ? (isSelected ? 1 : dimmed ? 0.25 : isFree ? 0.15 : 1) : 1,
+            transition: "opacity 0.15s, box-shadow 0.15s",
+            position: isSelected ? "relative" as const : undefined,
+            zIndex: isSelected ? 1 : undefined,
+            cursor: cell.user ? "pointer" : undefined,
+          }}>
+            <div style={{
+              width: 3, height: 3, borderRadius: "50%",
+              background: cell.color || "var(--pcb-free-ram-dot)",
+              opacity: cell.color ? 1 : 0.3,
+              boxShadow: isSelected ? "0 0 3px #facc15, 0 0 6px rgba(250,204,21,0.4)" : cell.color ? `0 0 2px ${cell.color}50` : "none",
+            }} />
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 // ─── Node Slot (horizontal rack unit) ─────────────────────────
 
-function NodeSlot({ node, userColorMap, isFirst, isLast }: {
+function NodeSlot({ node, userColorMap, selectedUsers, theme, onToggleUser }: {
   node: PartitionNode;
   userColorMap: Map<string, string>;
-  isFirst: boolean;
-  isLast: boolean;
+  selectedUsers: Set<string>;
+  theme: ClusterTheme;
+  onToggleUser: (user: string) => void;
 }) {
   const nodeId = node.name.replace(/^midway\d+-/, "");
 
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 0,
-      background: "#0a5c2f",
+      background: theme.board,
       padding: "6px 8px",
-      borderTop: isFirst ? "2px solid #0d7a3e" : "1px solid #0d7a3e",
-      borderBottom: isLast ? "2px solid #0d7a3e" : "none",
-      borderLeft: "2px solid #0d7a3e",
-      borderRight: "2px solid #0d7a3e",
+      borderTop: `1px solid ${theme.border}`,
+      borderLeft: `2px solid ${theme.border}`,
+      borderRight: `2px solid ${theme.border}`,
       position: "relative",
       backgroundImage: `
-        linear-gradient(rgba(74,222,128,0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(74,222,128,0.05) 1px, transparent 1px)
+        linear-gradient(${theme.trace} 1px, transparent 1px),
+        linear-gradient(90deg, ${theme.trace} 1px, transparent 1px)
       `,
       backgroundSize: "10px 10px",
     }}>
@@ -440,17 +616,17 @@ function NodeSlot({ node, userColorMap, isFirst, isLast }: {
       }}>
         <span style={{
           fontFamily: "monospace", fontWeight: 700, fontSize: 11,
-          color: "#4ade80", letterSpacing: "0.05em",
+          color: theme.label, letterSpacing: "0.05em",
         }}>{nodeId}</span>
         <StateBadge state={node.state} />
       </div>
 
       {/* Divider */}
-      <div style={{ width: 1, alignSelf: "stretch", background: "#4ade8020", marginRight: 8 }} />
+      <div style={{ width: 1, alignSelf: "stretch", background: `${theme.label}20`, marginRight: 8 }} />
 
       {/* CPU label (vertical) */}
       <div style={{
-        fontSize: 6, color: "#4ade80", fontWeight: 700,
+        fontSize: 6, color: theme.label, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: "0.1em",
         fontFamily: "monospace", opacity: 0.6,
         writingMode: "vertical-rl", transform: "rotate(180deg)",
@@ -458,18 +634,18 @@ function NodeSlot({ node, userColorMap, isFirst, isLast }: {
       }}>CPU</div>
 
       {/* CPU 8×8 */}
-      <CpuGrid node={node} userColorMap={userColorMap} />
+      <CpuGrid node={node} userColorMap={userColorMap} selectedUsers={selectedUsers} onToggleUser={onToggleUser} />
 
       {/* Trace divider */}
       <div style={{
         width: 0, alignSelf: "stretch",
-        borderLeft: "1px dashed #4ade8020",
+        borderLeft: `1px dashed ${theme.label}20`,
         margin: "0 6px",
       }} />
 
       {/* RAM label (vertical) */}
       <div style={{
-        fontSize: 6, color: "#4ade80", fontWeight: 700,
+        fontSize: 6, color: theme.label, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: "0.1em",
         fontFamily: "monospace", opacity: 0.6,
         writingMode: "vertical-rl", transform: "rotate(180deg)",
@@ -477,12 +653,12 @@ function NodeSlot({ node, userColorMap, isFirst, isLast }: {
       }}>RAM</div>
 
       {/* RAM 32×8 */}
-      <RamGrid node={node} userColorMap={userColorMap} />
+      <RamGrid node={node} userColorMap={userColorMap} selectedUsers={selectedUsers} onToggleUser={onToggleUser} />
 
       {/* Rack screw holes */}
       <div style={{ marginLeft: 6, display: "flex", flexDirection: "column", justifyContent: "space-between", alignSelf: "stretch" }}>
-        <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#065f28", border: "1px solid #4ade8025" }} />
-        <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#065f28", border: "1px solid #4ade8025" }} />
+        <div style={{ width: 4, height: 4, borderRadius: "50%", background: theme.hole, border: `1px solid ${theme.label}25` }} />
+        <div style={{ width: 4, height: 4, borderRadius: "50%", background: theme.hole, border: `1px solid ${theme.label}25` }} />
       </div>
     </div>
   );
@@ -490,9 +666,13 @@ function NodeSlot({ node, userColorMap, isFirst, isLast }: {
 
 // ─── Rack Frame ───────────────────────────────────────────────
 
-function RackFrame({ nodes, userColorMap }: {
+function RackFrame({ nodes, userColorMap, selectedUsers, theme, partitionName, onToggleUser }: {
   nodes: PartitionNode[];
   userColorMap: Map<string, string>;
+  selectedUsers: Set<string>;
+  theme: ClusterTheme;
+  partitionName: string;
+  onToggleUser: (user: string) => void;
 }) {
   return (
     <div style={{
@@ -508,11 +688,11 @@ function RackFrame({ nodes, userColorMap }: {
         borderBottom: "1px solid #333",
       }}>
         <span style={{ fontSize: 8, color: "#6b7280", fontFamily: "monospace", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-          CIL Rack · {nodes.length}U
+          {partitionName} · {nodes.length}U
         </span>
         <div style={{ display: "flex", gap: 4 }}>
-          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#22c55e" }} />
-          <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#22c55e40" }} />
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: theme.led }} />
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: `${theme.led}40` }} />
         </div>
       </div>
 
@@ -522,8 +702,9 @@ function RackFrame({ nodes, userColorMap }: {
           key={node.name}
           node={node}
           userColorMap={userColorMap}
-          isFirst={false}
-          isLast={false}
+          selectedUsers={selectedUsers}
+          theme={theme}
+          onToggleUser={onToggleUser}
         />
       ))}
 
@@ -540,18 +721,18 @@ function RackFrame({ nodes, userColorMap }: {
   );
 }
 
-// ─── Grid Key (PCB styled, for section header) ────────────────
+// ─── Grid Key (PCB styled) ───────────────────────────────────
 
-function GridKey() {
+function GridKey({ theme }: { theme: ClusterTheme }) {
   return (
     <div style={{
       display: "inline-flex", gap: 10, alignItems: "center", fontSize: 8,
-      background: "#0a5c2f", borderRadius: 3, padding: "2px 8px",
-      border: "1px solid #0d7a3e",
+      background: theme.board, borderRadius: 3, padding: "2px 8px",
+      border: `1px solid ${theme.border}`,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
         <div style={{ width: 8, height: 8, borderRadius: 1, background: "#3b82f6" }} />
-        <span style={{ color: "#6ee7a0" }}>CPU core</span>
+        <span style={{ color: theme.label }}>CPU core</span>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
         <div style={{
@@ -561,23 +742,28 @@ function GridKey() {
         }}>
           <div style={{ width: 3, height: 3, borderRadius: "50%", background: "#3b82f6" }} />
         </div>
-        <span style={{ color: "#6ee7a0" }}>1 GB RAM</span>
+        <span style={{ color: theme.label }}>1 GB RAM</span>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-        <div style={{ width: 8, height: 8, borderRadius: 1, background: "#d4d4d8", border: "1px solid #a1a1aa40" }} />
-        <span style={{ color: "#6ee7a0" }}>Free</span>
+        <div style={{ width: 8, height: 8, borderRadius: 1, background: "var(--pcb-free-cpu)", border: "1px solid var(--pcb-free-border)" }} />
+        <span style={{ color: theme.label }}>Free</span>
       </div>
     </div>
   );
 }
 
-// ─── Consolidated User Table (per-node + total columns) ───────
 
-function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers }: {
-  partitions: { name: string; data: PartitionData }[];
+// ─── Consolidated User Table (per-node + total, active/inactive sections) ───
+
+function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers, selectedUsers, onToggleUser }: {
+  partitions: { name: string; cluster: string; data: PartitionData }[];
   userColorMap: Map<string, string>;
   allAccountUsers: string[];
+  selectedUsers: Set<string>;
+  onToggleUser: (user: string) => void;
 }) {
+  const [showInactive, setShowInactive] = useState(false);
+
   const nodes = useMemo(() => {
     const result: { id: string; node: PartitionNode }[] = [];
     for (const { data } of partitions) {
@@ -588,42 +774,101 @@ function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers }: {
     return result;
   }, [partitions]);
 
-  const allUsers = useMemo(() => {
-    // Merge account-wide users with any active partition users
-    const set = new Set<string>(allAccountUsers);
+  const { activeUsers, inactiveUsers } = useMemo(() => {
+    const allSet = new Set<string>(allAccountUsers);
     for (const { node } of nodes) {
-      for (const u of node.users) set.add(u.user);
+      for (const u of node.users) allSet.add(u.user);
     }
-    return Array.from(set).sort();
+    const sorted = Array.from(allSet).sort();
+    const active: string[] = [];
+    const inactive: string[] = [];
+    for (const user of sorted) {
+      const hasAny = nodes.some(({ node }) => node.users.some(u => u.user === user));
+      if (hasAny) active.push(user);
+      else inactive.push(user);
+    }
+    return { activeUsers: active, inactiveUsers: inactive };
   }, [nodes, allAccountUsers]);
 
   const totalCpus = nodes.reduce((s, { node }) => s + node.cpus_total, 0);
   const totalMem = nodes.reduce((s, { node }) => s + Math.round(node.mem_total_gb), 0);
+  const totalColCount = 1 + nodes.length * 4 + 4;
 
-  if (allUsers.length === 0) return null;
+  if (activeUsers.length === 0 && inactiveUsers.length === 0) return null;
 
   const thStyle: React.CSSProperties = {
     padding: "5px 8px", fontSize: 9, fontWeight: 600,
-    textTransform: "uppercase", color: "#6b7280",
-    borderBottom: "1px solid #e5e7eb", background: "#f9fafb",
+    textTransform: "uppercase", color: "hsl(var(--muted-foreground))",
+    borderBottom: "1px solid hsl(var(--border))", background: "hsl(var(--muted))",
     textAlign: "center", letterSpacing: "0.04em",
   };
   const tdStyle: React.CSSProperties = {
     padding: "6px 8px", fontSize: 11,
     fontFamily: "'Courier New', monospace",
-    textAlign: "right", borderBottom: "1px solid #f3f4f6",
+    textAlign: "right", borderBottom: "1px solid hsl(var(--border) / 0.5)",
   };
-  const dash = <span style={{ color: "#d1d5db" }}>&mdash;</span>;
+  const dash = <span style={{ color: "hsl(var(--muted-foreground) / 0.4)" }}>&mdash;</span>;
 
-  function trafficColor(pct: number): string {
-    if (pct >= 70) return "#dc2626";
-    if (pct >= 40) return "#d97706";
-    return "#059669";
-  }
-  function trafficBg(pct: number): string {
-    if (pct >= 70) return "#fef2f2";
-    if (pct >= 40) return "#fefce8";
-    return "transparent";
+  function renderUserRow(user: string, isActive: boolean) {
+    const isSelected = selectedUsers.has(user);
+    const userColor = userColorMap.get(user);
+
+    let sumCpu = 0, sumMem = 0;
+    nodes.forEach(({ node }) => {
+      const ui = node.users.find(u => u.user === user);
+      if (ui) { sumCpu += ui.cpus; sumMem += ui.mem_alloc_gb; }
+    });
+    const totalCpuPct = sumCpu > 0 ? (sumCpu / totalCpus * 100) : 0;
+    const totalMemPct = sumMem > 0 ? (sumMem / totalMem * 100) : 0;
+
+    return (
+      <tr
+        key={user}
+        onClick={() => onToggleUser(user)}
+        style={{
+          opacity: isActive ? 1 : 0.35,
+          cursor: "pointer",
+          borderLeft: isSelected ? `3px solid ${userColor}` : "3px solid transparent",
+          background: isSelected ? `${userColor}08` : undefined,
+        }}
+      >
+        <td style={{ ...tdStyle, textAlign: "left" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: userColor, flexShrink: 0 }} />
+            <span style={{ fontWeight: 600, fontSize: 11 }}>{user}</span>
+          </div>
+        </td>
+        {nodes.map(({ id, node }) => {
+          const ui = node.users.find(u => u.user === user);
+          const cpuPct = ui ? (ui.cpus / node.cpus_total * 100) : 0;
+          const memPct = ui ? (ui.mem_alloc_gb / node.mem_total_gb * 100) : 0;
+          return (
+            <React.Fragment key={id}>
+              <td style={{ ...tdStyle, borderLeft: "2px solid hsl(var(--border) / 0.5)" }}>{ui ? ui.cpus : dash}</td>
+              <td style={{ ...tdStyle, color: ui ? getPctColor(cpuPct) : "hsl(var(--muted-foreground) / 0.4)", background: ui ? getPctBg(cpuPct) : "transparent", fontWeight: ui ? 600 : 400 }}>
+                {ui ? `${cpuPct.toFixed(1)}%` : "\u2014"}
+              </td>
+              <td style={tdStyle}>{ui ? `${Math.round(ui.mem_alloc_gb)}G` : dash}</td>
+              <td style={{ ...tdStyle, color: ui ? getPctColor(memPct) : "hsl(var(--muted-foreground) / 0.4)", background: ui ? getPctBg(memPct) : "transparent", fontWeight: ui ? 600 : 400 }}>
+                {ui ? `${memPct.toFixed(1)}%` : "\u2014"}
+              </td>
+            </React.Fragment>
+          );
+        })}
+        <td style={{ ...tdStyle, borderLeft: "2px solid hsl(var(--border))", background: "hsl(var(--muted) / 0.5)", fontWeight: 600 }}>
+          {sumCpu > 0 ? sumCpu : dash}
+        </td>
+        <td style={{ ...tdStyle, background: "hsl(var(--muted) / 0.5)", color: sumCpu > 0 ? getPctColor(totalCpuPct) : "hsl(var(--muted-foreground) / 0.4)", fontWeight: sumCpu > 0 ? 700 : 400 }}>
+          {sumCpu > 0 ? `${totalCpuPct.toFixed(1)}%` : "\u2014"}
+        </td>
+        <td style={{ ...tdStyle, background: "hsl(var(--muted) / 0.5)", fontWeight: 600 }}>
+          {sumMem > 0 ? `${Math.round(sumMem)}G` : dash}
+        </td>
+        <td style={{ ...tdStyle, background: "hsl(var(--muted) / 0.5)", color: sumMem > 0 ? getPctColor(totalMemPct) : "hsl(var(--muted-foreground) / 0.4)", fontWeight: sumMem > 0 ? 700 : 400 }}>
+          {sumMem > 0 ? `${totalMemPct.toFixed(1)}%` : "\u2014"}
+        </td>
+      </tr>
+    );
   }
 
   return (
@@ -633,12 +878,12 @@ function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers }: {
           <tr>
             <th rowSpan={2} style={{ ...thStyle, textAlign: "left", minWidth: 130 }}>User</th>
             {nodes.map(({ id, node }) => (
-              <th key={id} colSpan={4} style={{ ...thStyle, borderLeft: "2px solid #e5e7eb" }}>
+              <th key={id} colSpan={4} style={{ ...thStyle, borderLeft: "2px solid hsl(var(--border))" }}>
                 <span style={{ fontFamily: "monospace" }}>{id}</span>
                 <span style={{ fontWeight: 400, marginLeft: 4, fontSize: 8 }}>({node.cpus_total}C/{Math.round(node.mem_total_gb)}G)</span>
               </th>
             ))}
-            <th colSpan={4} style={{ ...thStyle, borderLeft: "2px solid #d1d5db", background: "#f3f4f6" }}>
+            <th colSpan={4} style={{ ...thStyle, borderLeft: "2px solid hsl(var(--border))", background: "hsl(var(--muted) / 0.7)" }}>
               Total
               <span style={{ fontWeight: 400, marginLeft: 4, fontSize: 8 }}>({totalCpus}C/{totalMem}G)</span>
             </th>
@@ -648,10 +893,10 @@ function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers }: {
               const isTotal = gi === nodes.length;
               return (
                 <React.Fragment key={id}>
-                  <th style={{ ...thStyle, fontSize: 8, borderLeft: isTotal ? "2px solid #d1d5db" : "2px solid #e5e7eb", background: isTotal ? "#f3f4f6" : "#f9fafb" }}>CPU</th>
-                  <th style={{ ...thStyle, fontSize: 8, background: isTotal ? "#f3f4f6" : "#f9fafb" }}>%</th>
-                  <th style={{ ...thStyle, fontSize: 8, background: isTotal ? "#f3f4f6" : "#f9fafb" }}>RAM</th>
-                  <th style={{ ...thStyle, fontSize: 8, background: isTotal ? "#f3f4f6" : "#f9fafb" }}>%</th>
+                  <th style={{ ...thStyle, fontSize: 8, borderLeft: `2px solid hsl(var(--border))`, background: isTotal ? "hsl(var(--muted) / 0.7)" : "hsl(var(--muted))" }}>CPU</th>
+                  <th style={{ ...thStyle, fontSize: 8, background: isTotal ? "hsl(var(--muted) / 0.7)" : "hsl(var(--muted))" }}>%</th>
+                  <th style={{ ...thStyle, fontSize: 8, background: isTotal ? "hsl(var(--muted) / 0.7)" : "hsl(var(--muted))" }}>RAM</th>
+                  <th style={{ ...thStyle, fontSize: 8, background: isTotal ? "hsl(var(--muted) / 0.7)" : "hsl(var(--muted))" }}>%</th>
                 </React.Fragment>
               );
             })}
@@ -660,8 +905,7 @@ function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers }: {
         <tbody>
           {/* Totals row */}
           {(() => {
-            const totRowStyle: React.CSSProperties = { ...tdStyle, background: "#f0f0f0", fontWeight: 700, color: "#111", borderBottom: "2px solid #e5e7eb" };
-            // Per-node totals
+            const totRowStyle: React.CSSProperties = { ...tdStyle, background: "hsl(var(--muted))", fontWeight: 700, color: "hsl(var(--foreground))", borderBottom: "2px solid hsl(var(--border))" };
             const nodeTotals = nodes.map(({ node }) => {
               let cpu = 0, mem = 0;
               for (const u of node.users) { cpu += u.cpus; mem += u.mem_alloc_gb; }
@@ -681,71 +925,46 @@ function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers }: {
                 </td>
                 {nodeTotals.map((nt, i) => (
                   <React.Fragment key={nodes[i].id}>
-                    <td style={{ ...totRowStyle, borderLeft: "2px solid #e5e7eb" }}>{nt.cpu}</td>
-                    <td style={{ ...totRowStyle, color: trafficColor(nt.cpuPct) }}>{nt.cpuPct.toFixed(1)}%</td>
+                    <td style={{ ...totRowStyle, borderLeft: "2px solid hsl(var(--border))" }}>{nt.cpu}</td>
+                    <td style={{ ...totRowStyle, color: getPctColor(nt.cpuPct) }}>{nt.cpuPct.toFixed(1)}%</td>
                     <td style={totRowStyle}>{Math.round(nt.mem)}G</td>
-                    <td style={{ ...totRowStyle, color: trafficColor(nt.memPct) }}>{nt.memPct.toFixed(1)}%</td>
+                    <td style={{ ...totRowStyle, color: getPctColor(nt.memPct) }}>{nt.memPct.toFixed(1)}%</td>
                   </React.Fragment>
                 ))}
-                <td style={{ ...totRowStyle, borderLeft: "2px solid #d1d5db", background: "#eaeaea" }}>{grandCpu}</td>
-                <td style={{ ...totRowStyle, background: "#eaeaea", color: trafficColor(grandCpuPct) }}>{grandCpuPct.toFixed(1)}%</td>
-                <td style={{ ...totRowStyle, background: "#eaeaea" }}>{Math.round(grandMem)}G</td>
-                <td style={{ ...totRowStyle, background: "#eaeaea", color: trafficColor(grandMemPct) }}>{grandMemPct.toFixed(1)}%</td>
+                <td style={{ ...totRowStyle, borderLeft: "2px solid hsl(var(--border))", background: "hsl(var(--muted) / 0.7)" }}>{grandCpu}</td>
+                <td style={{ ...totRowStyle, background: "hsl(var(--muted) / 0.7)", color: getPctColor(grandCpuPct) }}>{grandCpuPct.toFixed(1)}%</td>
+                <td style={{ ...totRowStyle, background: "hsl(var(--muted) / 0.7)" }}>{Math.round(grandMem)}G</td>
+                <td style={{ ...totRowStyle, background: "hsl(var(--muted) / 0.7)", color: getPctColor(grandMemPct) }}>{grandMemPct.toFixed(1)}%</td>
               </tr>
             );
           })()}
-          {allUsers.map((user) => {
-            const hasAny = nodes.some(({ node }) => node.users.some(u => u.user === user));
 
-            let sumCpu = 0, sumMem = 0;
-            nodes.forEach(({ node }) => {
-              const ui = node.users.find(u => u.user === user);
-              if (ui) { sumCpu += ui.cpus; sumMem += ui.mem_alloc_gb; }
-            });
-            const totalCpuPct = sumCpu > 0 ? (sumCpu / totalCpus * 100) : 0;
-            const totalMemPct = sumMem > 0 ? (sumMem / totalMem * 100) : 0;
+          {/* Active users section */}
+          {activeUsers.map(user => renderUserRow(user, true))}
 
-            return (
-              <tr key={user} style={{ opacity: hasAny ? 1 : 0.35 }}>
-                <td style={{ ...tdStyle, textAlign: "left" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 2, background: userColorMap.get(user), flexShrink: 0 }} />
-                    <span style={{ fontWeight: 600, fontSize: 11 }}>{user}</span>
-                  </div>
-                </td>
-                {nodes.map(({ id, node }) => {
-                  const ui = node.users.find(u => u.user === user);
-                  const cpuPct = ui ? (ui.cpus / node.cpus_total * 100) : 0;
-                  const memPct = ui ? (ui.mem_alloc_gb / node.mem_total_gb * 100) : 0;
-                  return (
-                    <React.Fragment key={id}>
-                      <td style={{ ...tdStyle, borderLeft: "2px solid #f3f4f6" }}>{ui ? ui.cpus : dash}</td>
-                      <td style={{ ...tdStyle, color: ui ? trafficColor(cpuPct) : "#d1d5db", background: ui ? trafficBg(cpuPct) : "transparent", fontWeight: ui ? 600 : 400 }}>
-                        {ui ? `${cpuPct.toFixed(1)}%` : "\u2014"}
-                      </td>
-                      <td style={tdStyle}>{ui ? `${Math.round(ui.mem_alloc_gb)}G` : dash}</td>
-                      <td style={{ ...tdStyle, color: ui ? trafficColor(memPct) : "#d1d5db", background: ui ? trafficBg(memPct) : "transparent", fontWeight: ui ? 600 : 400 }}>
-                        {ui ? `${memPct.toFixed(1)}%` : "\u2014"}
-                      </td>
-                    </React.Fragment>
-                  );
-                })}
-                {/* Total column */}
-                <td style={{ ...tdStyle, borderLeft: "2px solid #d1d5db", background: "#fafafa", fontWeight: 600 }}>
-                  {sumCpu > 0 ? sumCpu : dash}
-                </td>
-                <td style={{ ...tdStyle, background: "#fafafa", color: sumCpu > 0 ? trafficColor(totalCpuPct) : "#d1d5db", fontWeight: sumCpu > 0 ? 700 : 400 }}>
-                  {sumCpu > 0 ? `${totalCpuPct.toFixed(1)}%` : "\u2014"}
-                </td>
-                <td style={{ ...tdStyle, background: "#fafafa", fontWeight: 600 }}>
-                  {sumMem > 0 ? `${Math.round(sumMem)}G` : dash}
-                </td>
-                <td style={{ ...tdStyle, background: "#fafafa", color: sumMem > 0 ? trafficColor(totalMemPct) : "#d1d5db", fontWeight: sumMem > 0 ? 700 : 400 }}>
-                  {sumMem > 0 ? `${totalMemPct.toFixed(1)}%` : "\u2014"}
-                </td>
-              </tr>
-            );
-          })}
+          {/* Inactive users section header */}
+          {inactiveUsers.length > 0 && (
+            <tr
+              onClick={() => setShowInactive(v => !v)}
+              style={{ cursor: "pointer" }}
+            >
+              <td
+                colSpan={totalColCount}
+                style={{
+                  padding: "6px 8px", fontSize: 10, fontWeight: 600,
+                  textTransform: "uppercase", color: "hsl(var(--muted-foreground))",
+                  borderBottom: "1px solid hsl(var(--border))", borderTop: "1px solid hsl(var(--border))",
+                  letterSpacing: "0.04em", background: "hsl(var(--muted) / 0.5)",
+                }}
+              >
+                <span style={{ marginRight: 4, display: "inline-block", width: 10 }}>{showInactive ? "\u25be" : "\u25b8"}</span>
+                Inactive ({inactiveUsers.length})
+              </td>
+            </tr>
+          )}
+
+          {/* Inactive user rows */}
+          {showInactive && inactiveUsers.map(user => renderUserRow(user, false))}
         </tbody>
       </table>
     </div>
@@ -754,10 +973,14 @@ function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers }: {
 
 // ─── Partitions Section ───────────────────────────────────────
 
-function PartitionsSection({ partitions, report }: {
-  partitions: { name: string; data: PartitionData }[];
+function PartitionsSection({ partitions, report, userColorMap, selectedUsers, onToggleUser }: {
+  partitions: { name: string; cluster: string; data: PartitionData }[];
   report: ComputingReport;
+  userColorMap: Map<string, string>;
+  selectedUsers: Set<string>;
+  onToggleUser: (user: string) => void;
 }) {
+
   // All CIL group members + any SU users not in the hardcoded list
   const allAccountUsers = useMemo(() => {
     const set = new Set<string>(CIL_GROUP_MEMBERS);
@@ -770,33 +993,15 @@ function PartitionsSection({ partitions, report }: {
     return Array.from(set).sort();
   }, [report]);
 
-  const userColorMap = useMemo(() => {
-    // Build color map from all account users so inactive users also get colors
-    const map = new Map<string, string>();
-    for (const user of allAccountUsers) {
-      map.set(user, USER_COLORS[map.size % USER_COLORS.length]);
-    }
-    // Also pick up any partition-only users not in SU data
-    for (const { data } of partitions) {
-      for (const node of data.nodes) {
-        for (const u of node.users) {
-          if (!map.has(u.user)) {
-            map.set(u.user, USER_COLORS[map.size % USER_COLORS.length]);
-          }
-        }
-      }
-    }
-    return map;
-  }, [partitions, allAccountUsers]);
-
   if (partitions.length === 0) return null;
 
   return (
     <Section title="Partition CIL · Nodes" icon={Server}>
-      {partitions.map(({ name, data }) => {
+      {partitions.map(({ name, cluster, data }) => {
         const t = data.totals;
+        const theme = getPartitionTheme(cluster, name);
         return (
-          <div key={name}>
+          <div key={`${cluster}-${name}`}>
             <div className="text-[10px] text-muted-foreground mb-3">
               <span className="font-medium text-foreground text-xs">{name}</span>
               <span className="ml-2">
@@ -805,21 +1010,29 @@ function PartitionsSection({ partitions, report }: {
               </span>
             </div>
 
-            {/* Rack + Table side by side */}
-            <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-              <RackFrame nodes={data.nodes} userColorMap={userColorMap} />
-              <div style={{ flex: 1, overflowX: "auto", minWidth: 0 }}>
-                <ConsolidatedUserTable partitions={[{ name, data }]} userColorMap={userColorMap} allAccountUsers={allAccountUsers} />
+            {/* Rack + Table: stacked on mobile, side-by-side on lg+ */}
+            <div className="flex flex-col lg:flex-row gap-4 items-center lg:items-start">
+              {/* Rack + legend — centered on mobile, left-aligned on desktop */}
+              <div className="flex flex-col items-center lg:items-start shrink-0 overflow-x-auto max-w-full">
+                <RackFrame nodes={data.nodes} userColorMap={userColorMap} selectedUsers={selectedUsers} theme={theme} partitionName={name} onToggleUser={onToggleUser} />
+                <div style={{ marginTop: 6 }}>
+                  <GridKey theme={theme} />
+                </div>
+              </div>
+              {/* Table */}
+              <div className="w-full lg:flex-1 overflow-x-auto min-w-0">
+                <ConsolidatedUserTable
+                  partitions={[{ name, cluster, data }]}
+                  userColorMap={userColorMap}
+                  allAccountUsers={allAccountUsers}
+                  selectedUsers={selectedUsers}
+                  onToggleUser={onToggleUser}
+                />
               </div>
             </div>
           </div>
         );
       })}
-
-      {/* Legend below everything */}
-      <div style={{ marginTop: 12 }}>
-        <GridKey />
-      </div>
     </Section>
   );
 }
@@ -862,7 +1075,7 @@ function QuotaBar({ quota: q }: { quota: QuotaFilesystem }) {
         <span className="font-medium">{q.filesystem}</span>
         <span className="text-muted-foreground">
           {formatGB(q.space_used_gb)} / {formatGB(q.space_limit_gb)}
-          {q.space_pct != null && <span className={cn("ml-2", pctColor(q.space_pct))}>{formatPct(q.space_pct)}</span>}
+          {q.space_pct != null && <span className="ml-2" style={{ color: getPctColor(q.space_pct) }}>{formatPct(q.space_pct)}</span>}
         </span>
       </div>
       <ProgressBar value={q.space_pct ?? 0} />
@@ -871,7 +1084,7 @@ function QuotaBar({ quota: q }: { quota: QuotaFilesystem }) {
           <span>Files</span>
           <span>
             {q.files_used.toLocaleString()} / {q.files_limit.toLocaleString()}
-            {q.files_pct != null && <span className={cn("ml-2", pctColor(q.files_pct))}>{formatPct(q.files_pct)}</span>}
+            {q.files_pct != null && <span className="ml-2" style={{ color: getPctColor(q.files_pct) }}>{formatPct(q.files_pct)}</span>}
           </span>
         </div>
       )}
@@ -886,6 +1099,18 @@ export function ComputingDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
+
+  const toggleUser = useCallback((user: string) => {
+    setSelectedUsers(prev => {
+      const next = new Set(prev);
+      if (next.has(user)) next.delete(user);
+      else next.add(user);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedUsers(new Set()), []);
 
   const fetchReport = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -930,13 +1155,37 @@ export function ComputingDashboard() {
 
   if (!report) return null;
 
+  // Global user color map — built once, shared by all components
+  const globalUserColorMap = (() => {
+    const allUsers = new Set<string>(CIL_GROUP_MEMBERS);
+    for (const cluster of Object.values(report.clusters)) {
+      if (!cluster) continue;
+      for (const u of cluster.service_units.by_user) {
+        if (u.user) allUsers.add(u.user);
+      }
+      for (const job of cluster.jobs.list) {
+        if (job.user) allUsers.add(job.user);
+      }
+      for (const pdata of Object.values(cluster.partitions)) {
+        for (const node of pdata.nodes) {
+          for (const u of node.users) allUsers.add(u.user);
+        }
+      }
+    }
+    const map = new Map<string, string>();
+    Array.from(allUsers).sort().forEach((user, i) => {
+      map.set(user, USER_COLORS[i % USER_COLORS.length]);
+    });
+    return map;
+  })();
+
   // Collect private partitions from all clusters
-  const privatePartitions: { name: string; data: PartitionData }[] = [];
-  for (const cluster of Object.values(report.clusters)) {
+  const privatePartitions: { name: string; cluster: string; data: PartitionData }[] = [];
+  for (const [clusterName, cluster] of Object.entries(report.clusters)) {
     if (!cluster) continue;
     for (const [pname, pdata] of Object.entries(cluster.partitions)) {
       if (pdata.is_private) {
-        privatePartitions.push({ name: pname, data: pdata });
+        privatePartitions.push({ name: pname, cluster: clusterName, data: pdata });
       }
     }
   }
@@ -945,12 +1194,21 @@ export function ComputingDashboard() {
 
   return (
     <div className="space-y-4">
-      {/* Header with refresh */}
+      {/* Header with refresh + clear selection */}
       <div className="flex items-center justify-between">
         <div className="text-xs text-muted-foreground flex items-center gap-2">
           <Clock size={12} />
           Report: {timeAgo(publishedAt)}
           <span className="text-[10px]">({new Date(publishedAt).toLocaleString()})</span>
+          {selectedUsers.size > 0 && (
+            <button
+              onClick={clearSelection}
+              className="inline-flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X size={10} />
+              {selectedUsers.size} selected
+            </button>
+          )}
         </div>
         <button
           onClick={() => fetchReport(true)}
@@ -969,13 +1227,13 @@ export function ComputingDashboard() {
       </div>
 
       {/* SU by User */}
-      <SUByUserTable report={report} />
+      <SUByUserTable report={report} userColorMap={globalUserColorMap} selectedUsers={selectedUsers} onToggleUser={toggleUser} />
 
       {/* Active Jobs */}
-      <ActiveJobs report={report} />
+      <ActiveJobs report={report} userColorMap={globalUserColorMap} selectedUsers={selectedUsers} onToggleUser={toggleUser} />
 
       {/* Private Partitions */}
-      <PartitionsSection partitions={privatePartitions} report={report} />
+      <PartitionsSection partitions={privatePartitions} report={report} userColorMap={globalUserColorMap} selectedUsers={selectedUsers} onToggleUser={toggleUser} />
     </div>
   );
 }
