@@ -14,6 +14,8 @@ import {
   AlertCircle,
   Download,
   Sparkles,
+  Info,
+  Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
@@ -22,6 +24,31 @@ import { SearchResultsTable } from "@/components/search-results-table";
 import type { QueryResponse } from "@/lib/types";
 
 type ConsoleMode = "filters" | "guided" | "sql" | "ai";
+
+function explainError(msg: string): { explanation: string; suggestion: string } | null {
+  const m = msg.toLowerCase();
+  if (m.includes("unknown function"))
+    return { explanation: "The query uses a function that doesn't exist in this version of ClickHouse.", suggestion: "Check the function name for typos, or use a simpler alternative." };
+  if (m.includes("limit for result exceeded") || m.includes("max_result_rows"))
+    return { explanation: "The query tried to return too many rows, exceeding the server limit.", suggestion: "Add or reduce the LIMIT clause, or use GROUP BY to aggregate results." };
+  if (m.includes("max_result_bytes"))
+    return { explanation: "The query result is too large in size.", suggestion: "Reduce the number of columns or rows returned (add LIMIT or remove large text columns)." };
+  if (m.includes("timeout") || m.includes("timed out"))
+    return { explanation: "The query took too long to execute.", suggestion: "Narrow the search with more specific WHERE conditions, or reduce the LIMIT." };
+  if (m.includes("syntax error") || m.includes("unexpected token"))
+    return { explanation: "There's a syntax error in the SQL — a keyword, comma, or parenthesis is likely misplaced.", suggestion: "Check for missing commas, unmatched parentheses, or typos in column/table names." };
+  if (m.includes("column") && m.includes("not found"))
+    return { explanation: "The query references a column that doesn't exist in the table.", suggestion: "Valid columns: path, name, size, owner, is_directory, file_type, modified_time, accessed_time, parent_path, snapshot_date." };
+  if (m.includes("table") && (m.includes("doesn't exist") || m.includes("not found")))
+    return { explanation: "The query references a table that doesn't exist.", suggestion: "Available tables: filesystem.entries, filesystem.directory_recursive_sizes." };
+  if (m.includes("snapshot_date"))
+    return { explanation: "The query is missing the required snapshot_date filter.", suggestion: "Add WHERE snapshot_date = %(snapshot_date)s to your query." };
+  if (m.includes("select") && m.includes("only"))
+    return { explanation: "Only SELECT queries are allowed — no INSERT, UPDATE, DELETE, or DROP.", suggestion: "Rewrite as a SELECT statement." };
+  if (m.includes("memory limit"))
+    return { explanation: "The query used too much memory on the server.", suggestion: "Simplify aggregations, reduce LIMIT, or add more specific WHERE filters." };
+  return null;
+}
 type SearchMode = "contains" | "exact" | "prefix" | "suffix";
 
 interface FilterState {
@@ -368,6 +395,7 @@ function GuidedSQLMode({
   const [generatedSQL, setGeneratedSQL] = useState("");
   const [hasExecuted, setHasExecuted] = useState(false);
   const [copiedSQL, setCopiedSQL] = useState(false);
+  const [isFixing, setIsFixing] = useState(false);
 
   // Update params when template changes
   useEffect(() => {
@@ -538,15 +566,54 @@ function GuidedSQLMode({
         </div>
       )}
 
-      {/* Error Display */}
-      {error && (
-        <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
-          <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
-          <div className="text-[10px] text-red-400 leading-relaxed font-mono">
-            {error instanceof Error ? error.message : "Query execution failed"}
+      {/* Error Display with AI Fix */}
+      {error && (() => {
+        const errorMsg = error instanceof Error ? error.message : "Query execution failed";
+        const hint = explainError(errorMsg);
+        return (
+          <div className="space-y-2">
+            <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
+              <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
+              <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
+                {errorMsg}
+              </div>
+            </div>
+            {hint && (
+              <div className="p-2.5 bg-muted/10 border border-border/30 rounded-sm space-y-1.5">
+                <div className="flex items-start gap-2">
+                  <Info className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
+                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">What happened:</strong> {hint.explanation}</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Wrench className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
+                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">Suggested fix:</strong> {hint.suggestion}</span>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-2 p-2.5 bg-primary/5 border border-primary/20 rounded-sm">
+              <span className="text-[10px] text-primary/80 flex-1">Edit the SQL above manually, or let the AI fix it automatically.</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  if (!generatedSQL || !selectedSnapshot) return;
+                  setIsFixing(true);
+                  setHasExecuted(false);
+                  try {
+                    const result = await fixSQLWithAI({ snapshot_date: selectedSnapshot, sql: generatedSQL, error: errorMsg });
+                    setGeneratedSQL(result.sql);
+                  } catch {} finally { setIsFixing(false); }
+                }}
+                disabled={isFixing || !generatedSQL}
+                className="text-xs h-7 px-3"
+              >
+                <Sparkles className="h-3 w-3 mr-1" />
+                {isFixing ? "Fixing..." : "Fix with AI"}
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Results */}
       {hasExecuted && queryResult && (
@@ -649,6 +716,7 @@ function RawSQLMode({
   const [limit, setLimit] = useState(100);
   const [hasExecuted, setHasExecuted] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
+  const [isFixing, setIsFixing] = useState(false);
 
   const { data: queryResult, isLoading, error } = useQuery({
     queryKey: ["raw-sql", selectedSnapshot, sql, limit, hasExecuted],
@@ -771,15 +839,54 @@ LIMIT 100`}
         </Button>
       </div>
 
-      {/* Error Display */}
-      {error && (
-        <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
-          <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
-          <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
-            {error instanceof Error ? error.message : "Query execution failed"}
+      {/* Error Display with AI Fix */}
+      {error && (() => {
+        const errorMsg = error instanceof Error ? error.message : "Query execution failed";
+        const hint = explainError(errorMsg);
+        return (
+          <div className="space-y-2">
+            <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
+              <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
+              <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
+                {errorMsg}
+              </div>
+            </div>
+            {hint && (
+              <div className="p-2.5 bg-muted/10 border border-border/30 rounded-sm space-y-1.5">
+                <div className="flex items-start gap-2">
+                  <Info className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
+                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">What happened:</strong> {hint.explanation}</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Wrench className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
+                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">Suggested fix:</strong> {hint.suggestion}</span>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-2 p-2.5 bg-primary/5 border border-primary/20 rounded-sm">
+              <span className="text-[10px] text-primary/80 flex-1">Edit the SQL above manually, or let the AI fix it automatically.</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  if (!sql || !selectedSnapshot) return;
+                  setIsFixing(true);
+                  setHasExecuted(false);
+                  try {
+                    const result = await fixSQLWithAI({ snapshot_date: selectedSnapshot, sql, error: errorMsg });
+                    setSQL(result.sql);
+                  } catch {} finally { setIsFixing(false); }
+                }}
+                disabled={isFixing || !sql.trim()}
+                className="text-xs h-7 px-3"
+              >
+                <Sparkles className="h-3 w-3 mr-1" />
+                {isFixing ? "Fixing..." : "Fix with AI"}
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Results */}
       {hasExecuted && queryResult && (
@@ -998,28 +1105,45 @@ function AIQueryMode({
       )}
 
       {/* Execution error */}
-      {execError && (
-        <div className="space-y-2">
-          <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
-            <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
-            <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
-              {execError instanceof Error
-                ? execError.message
-                : "Query execution failed"}
+      {execError && (() => {
+        const errorMsg = execError instanceof Error ? execError.message : "Query execution failed";
+        const hint = explainError(errorMsg);
+        return (
+          <div className="space-y-2">
+            <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
+              <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
+              <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
+                {errorMsg}
+              </div>
+            </div>
+            {hint && (
+              <div className="p-2.5 bg-muted/10 border border-border/30 rounded-sm space-y-1.5">
+                <div className="flex items-start gap-2">
+                  <Info className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
+                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">What happened:</strong> {hint.explanation}</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Wrench className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
+                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">Suggested fix:</strong> {hint.suggestion}</span>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-2 p-2.5 bg-primary/5 border border-primary/20 rounded-sm">
+              <span className="text-[10px] text-primary/80 flex-1">Edit the SQL above manually, or let the AI fix it automatically.</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleFix}
+                disabled={isFixing}
+                className="text-xs h-7 px-3"
+              >
+                <Sparkles className="h-3 w-3 mr-1" />
+                {isFixing ? "Fixing..." : "Fix with AI"}
+              </Button>
             </div>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleFix}
-            disabled={isFixing}
-            className="text-xs"
-          >
-            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-            {isFixing ? "Fixing..." : "Fix with AI"}
-          </Button>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Results */}
       {hasExecuted && queryResult && (
