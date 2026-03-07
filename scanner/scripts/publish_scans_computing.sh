@@ -189,8 +189,9 @@ cp "/tmp/cil_report_${REPORT_ID}.json" "$PUBLISH_DIR/$REPORT_FILE"
 # Make all files readable
 chmod -R o+r "$PUBLISH_DIR"
 
-# Update latest.json symlink
-ln -sf "$REPORT_FILE" "$PUBLISH_DIR/latest.json"
+# Copy as latest.json (symlinks may not be followed by the web server)
+cp "$PUBLISH_DIR/$REPORT_FILE" "$PUBLISH_DIR/latest.json"
+chmod o+r "$PUBLISH_DIR/latest.json"
 
 # Generate index.json
 python3 -c "
