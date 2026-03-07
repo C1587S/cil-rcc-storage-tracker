@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,6 @@ import {
   ChevronUp,
   Search,
   Database,
-  Code,
   FileText,
   AlertCircle,
   Download,
@@ -23,7 +22,7 @@ import { search, executeQuery, generateSQLFromNL, fixSQLWithAI } from "@/lib/api
 import { SearchResultsTable } from "@/components/search-results-table";
 import type { QueryResponse } from "@/lib/types";
 
-type ConsoleMode = "filters" | "guided" | "sql" | "ai";
+type ConsoleMode = "filters" | "query";
 
 function explainError(msg: string): { explanation: string; suggestion: string } | null {
   const m = msg.toLowerCase();
@@ -197,27 +196,22 @@ ORDER BY size DESC
 LIMIT ${filters.limit}`;
 }
 
-// SQL Templates for Guided Mode
+// SQL Templates
 interface SQLTemplate {
   id: string;
   name: string;
   description: string;
   category: "files" | "directories" | "storage" | "hygiene";
-  params: { name: string; label: string; type: "text" | "number"; default: any; placeholder?: string }[];
-  generateSQL: (params: Record<string, any>) => string;
+  sql: string;
 }
 
 const SQL_TEMPLATES: SQLTemplate[] = [
   {
     id: "largest-files-in-dir",
-    name: "Top N largest files in directory",
+    name: "Top 15 largest files in directory",
     description: "Find the largest files under a specific path",
     category: "files",
-    params: [
-      { name: "path", label: "Directory Path", type: "text", default: "/project/cil/gcp", placeholder: "/project/cil/gcp" },
-      { name: "limit", label: "Limit", type: "number", default: 15 },
-    ],
-    generateSQL: (params) => `SELECT
+    sql: `SELECT
   path,
   name,
   formatReadableSize(size) AS size,
@@ -225,22 +219,54 @@ const SQL_TEMPLATES: SQLTemplate[] = [
   toDateTime(modified_time) AS modified
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '${params.path}/')
+  AND startsWith(path, '/project/cil/gcp/')
   AND is_directory = 0
 ORDER BY size DESC
-LIMIT ${params.limit}`,
+LIMIT 15`,
+  },
+  {
+    id: "file-type-breakdown",
+    name: "File type breakdown in directory",
+    description: "Count files by extension/type (.zarr, .csv, .py, etc.)",
+    category: "files",
+    sql: `SELECT
+  file_type,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/sacagawea_shares/')
+  AND is_directory = 0
+  AND file_type != ''
+GROUP BY file_type
+ORDER BY sum(size) DESC
+LIMIT 20`,
+  },
+  {
+    id: "shapefile-outputs-gcp",
+    name: "Shapefile outputs in /gcp",
+    description: "Top 15 largest shapefile-related files under /project/cil/gcp",
+    category: "files",
+    sql: `SELECT
+  path,
+  name,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(modified_time) AS modified
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/gcp/')
+  AND is_directory = 0
+  AND (positionCaseInsensitive(name, '.shp') > 0 OR positionCaseInsensitive(name, 'shapefile') > 0 OR positionCaseInsensitive(parent_path, 'output') > 0)
+ORDER BY size DESC
+LIMIT 15`,
   },
   {
     id: "files-not-accessed",
-    name: "Files not accessed in N days",
+    name: "Files not accessed in 180 days",
     description: "Find stale files that haven't been accessed recently",
     category: "storage",
-    params: [
-      { name: "path", label: "Directory Path", type: "text", default: "/project/cil", placeholder: "/project/cil" },
-      { name: "days", label: "Days", type: "number", default: 180 },
-      { name: "limit", label: "Limit", type: "number", default: 100 },
-    ],
-    generateSQL: (params) => `SELECT
+    sql: `SELECT
   path,
   name,
   formatReadableSize(size) AS size,
@@ -249,429 +275,17 @@ LIMIT ${params.limit}`,
   dateDiff('day', toDateTime(accessed_time), now()) AS days_since_access
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '${params.path}/')
+  AND startsWith(path, '/project/cil/')
   AND is_directory = 0
-  AND accessed_time < toUnixTimestamp(now() - INTERVAL ${params.days} DAY)
+  AND accessed_time < toUnixTimestamp(now() - INTERVAL 180 DAY)
 ORDER BY size DESC
-LIMIT ${params.limit}`,
+LIMIT 100`,
   },
   {
     id: "dirs-with-most-empty-files",
     name: "Directories with most empty files",
     description: "Find directories containing many empty (0-byte) files",
     category: "hygiene",
-    params: [
-      { name: "path", label: "Scope Path", type: "text", default: "/project/cil", placeholder: "/project/cil" },
-      { name: "limit", label: "Limit", type: "number", default: 20 },
-    ],
-    generateSQL: (params) => `SELECT
-  parent_path,
-  count() AS empty_file_count,
-  formatReadableSize(sum(size)) AS total_size
-FROM filesystem.entries
-WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '${params.path}/')
-  AND is_directory = 0
-  AND size = 0
-GROUP BY parent_path
-ORDER BY empty_file_count DESC
-LIMIT ${params.limit}`,
-  },
-  {
-    id: "total-empty-files",
-    name: "Total empty files audit",
-    description: "Count all empty (0-byte) files across the project",
-    category: "hygiene",
-    params: [
-      { name: "path", label: "Scope Path", type: "text", default: "/project/cil", placeholder: "/project/cil" },
-    ],
-    generateSQL: (params) => `SELECT
-  count() AS total_empty_files,
-  formatReadableSize(sum(size)) AS total_size
-FROM filesystem.entries
-WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '${params.path}/')
-  AND is_directory = 0
-  AND size = 0`,
-  },
-  {
-    id: "home-dirs-by-file-count",
-    name: "home_dirs -- users with most files",
-    description: "Rank home directories by number of files (useful for storage audits)",
-    category: "directories",
-    params: [
-      { name: "limit", label: "Limit", type: "number", default: 20 },
-    ],
-    generateSQL: (params) => `SELECT
-  splitByChar('/', path)[5] AS user,
-  count() AS file_count,
-  formatReadableSize(sum(size)) AS total_size,
-  formatReadableSize(avg(size)) AS avg_file_size
-FROM filesystem.entries
-WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '/project/cil/home_dirs/')
-  AND is_directory = 0
-  AND length(splitByChar('/', path)) >= 6
-GROUP BY user
-ORDER BY file_count DESC
-LIMIT ${params.limit}`,
-  },
-  {
-    id: "size-by-top-level-dir",
-    name: "File count and size by top-level directory",
-    description: "Group files by top-level directory (e.g., gcp, battuta-shares)",
-    category: "directories",
-    params: [
-      { name: "limit", label: "Limit", type: "number", default: 10 },
-    ],
-    generateSQL: (params) => `SELECT
-  splitByChar('/', path)[3] AS top_level_dir,
-  count() AS file_count,
-  formatReadableSize(sum(size)) AS total_size
-FROM filesystem.entries
-WHERE snapshot_date = %(snapshot_date)s
-  AND is_directory = 0
-  AND length(splitByChar('/', path)) >= 4
-GROUP BY top_level_dir
-ORDER BY sum(size) DESC
-LIMIT ${params.limit}`,
-  },
-  {
-    id: "file-type-breakdown",
-    name: "File type breakdown in directory",
-    description: "Count files by extension/type (.zarr, .csv, .py, etc.)",
-    category: "files",
-    params: [
-      { name: "path", label: "Directory Path", type: "text", default: "/project/cil/sacagawea_shares", placeholder: "/project/cil/sacagawea_shares" },
-      { name: "limit", label: "Limit", type: "number", default: 20 },
-    ],
-    generateSQL: (params) => `SELECT
-  file_type,
-  count() AS file_count,
-  formatReadableSize(sum(size)) AS total_size
-FROM filesystem.entries
-WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '${params.path}/')
-  AND is_directory = 0
-  AND file_type != ''
-GROUP BY file_type
-ORDER BY sum(size) DESC
-LIMIT ${params.limit}`,
-  },
-  {
-    id: "shapefile-outputs-gcp",
-    name: "Top shapefile outputs in /gcp",
-    description: "Top 15 largest shapefile-related files under /project/cil/gcp",
-    category: "files",
-    params: [
-      { name: "limit", label: "Limit", type: "number", default: 15 },
-    ],
-    generateSQL: (params) => `SELECT
-  path,
-  name,
-  formatReadableSize(size) AS size,
-  owner,
-  toDateTime(modified_time) AS modified
-FROM filesystem.entries
-WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '/project/cil/gcp/')
-  AND is_directory = 0
-  AND (positionCaseInsensitive(name, '.shp') > 0 OR positionCaseInsensitive(name, 'shapefile') > 0 OR positionCaseInsensitive(parent_path, 'output') > 0)
-ORDER BY size DESC
-LIMIT ${params.limit}`,
-  },
-];
-
-// Guided SQL Mode Component
-function GuidedSQLMode({
-  selectedSnapshot,
-  onAddToReport,
-}: {
-  selectedSnapshot: string | null;
-  onAddToReport: (entry: Omit<ReportEntry, "id" | "timestamp">) => void;
-}) {
-  const [selectedTemplate, setSelectedTemplate] = useState<SQLTemplate | null>(null);
-  const [templateParams, setTemplateParams] = useState<Record<string, any>>({});
-  const [generatedSQL, setGeneratedSQL] = useState("");
-  const [hasExecuted, setHasExecuted] = useState(false);
-  const [copiedSQL, setCopiedSQL] = useState(false);
-  const [isFixing, setIsFixing] = useState(false);
-
-  // Update params when template changes
-  useEffect(() => {
-    if (selectedTemplate) {
-      const defaultParams: Record<string, any> = {};
-      selectedTemplate.params.forEach(param => {
-        defaultParams[param.name] = param.default;
-      });
-      setTemplateParams(defaultParams);
-
-      if (selectedSnapshot) {
-        const sql = selectedTemplate.generateSQL(defaultParams);
-        setGeneratedSQL(sql);
-      }
-    }
-  }, [selectedTemplate, selectedSnapshot]);
-
-  // Regenerate SQL when params change
-  const handleParamChange = (paramName: string, value: any) => {
-    const updated = { ...templateParams, [paramName]: value };
-    setTemplateParams(updated);
-
-    if (selectedTemplate && selectedSnapshot) {
-      const sql = selectedTemplate.generateSQL(updated);
-      setGeneratedSQL(sql);
-    }
-  };
-
-  const { data: queryResult, isLoading, error } = useQuery({
-    queryKey: ["guided-sql", selectedSnapshot, generatedSQL, hasExecuted],
-    queryFn: async () => {
-      if (!selectedSnapshot) throw new Error("No snapshot selected");
-
-      const sanitizedSQL = generatedSQL.trim().replace(/;+\s*$/, '');
-
-      return executeQuery({
-        snapshot_date: selectedSnapshot,
-        sql: sanitizedSQL,
-        limit: 8000,
-      });
-    },
-    enabled: hasExecuted && !!selectedSnapshot && !!generatedSQL,
-    retry: false,
-  });
-
-  const handleCopySQL = async () => {
-    await navigator.clipboard.writeText(generatedSQL);
-    setCopiedSQL(true);
-    setTimeout(() => setCopiedSQL(false), 1500);
-  };
-
-  const templatesByCategory = {
-    files: SQL_TEMPLATES.filter(t => t.category === "files"),
-    directories: SQL_TEMPLATES.filter(t => t.category === "directories"),
-    storage: SQL_TEMPLATES.filter(t => t.category === "storage"),
-    hygiene: SQL_TEMPLATES.filter(t => t.category === "hygiene"),
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="text-xs text-muted-foreground mb-2">
-        Select a query template, adjust parameters, and execute. snapshot_date is auto-injected.
-      </div>
-
-      {/* Template Selector */}
-      <div className="border border-border/50 rounded-sm bg-muted/5">
-        <div className="bg-muted/10 border-b border-border/50 px-3 py-2">
-          <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
-            Query Templates {selectedTemplate && <span className="font-normal normal-case text-primary/70">— {selectedTemplate.name}</span>}
-          </div>
-        </div>
-        <div className="max-h-[240px] overflow-y-auto p-3 space-y-1">
-          {Object.entries(templatesByCategory).map(([category, templates]) => (
-            <details key={category} className="group">
-              <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide cursor-pointer select-none list-none flex items-center gap-1 py-1 hover:text-foreground transition-colors">
-                <ChevronDown className="h-3 w-3 -rotate-90 group-open:rotate-0 transition-transform" />
-                {category}
-              </summary>
-              <div className="grid grid-cols-1 gap-1 mt-1 mb-2 ml-4">
-                {templates.map(template => (
-                  <button
-                    key={template.id}
-                    onClick={() => {
-                      setSelectedTemplate(template);
-                      setHasExecuted(false);
-                    }}
-                    className={`text-left px-2.5 py-1.5 border rounded-sm transition-colors ${
-                      selectedTemplate?.id === template.id
-                        ? "bg-primary/10 border-primary/30"
-                        : "border-border/20 hover:bg-muted/10"
-                    }`}
-                  >
-                    <div className="text-xs font-medium text-foreground">{template.name}</div>
-                    <div className="text-[10px] text-muted-foreground">{template.description}</div>
-                  </button>
-                ))}
-              </div>
-            </details>
-          ))}
-        </div>
-      </div>
-
-      {/* Template Parameters */}
-      {selectedTemplate && selectedTemplate.params.length > 0 && (
-        <div className="border border-border/30 rounded-sm">
-          <div className="bg-muted/10 border-b border-border/30 px-3 py-2">
-            <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
-              Parameters
-            </div>
-          </div>
-          <div className="p-3 grid grid-cols-2 gap-3">
-            {selectedTemplate.params.map(param => (
-              <div key={param.name}>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-                  {param.label}
-                </label>
-                <input
-                  type={param.type}
-                  value={templateParams[param.name] ?? param.default}
-                  onChange={(e) => handleParamChange(param.name, param.type === "number" ? parseInt(e.target.value) : e.target.value)}
-                  placeholder={param.placeholder}
-                  className="w-full px-3 py-1.5 text-xs bg-background border border-border rounded-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* SQL Display */}
-      {generatedSQL && (
-        <div className="border border-border/30 rounded-sm bg-muted/5">
-          <div className="bg-muted/10 border-b border-border/30 px-3 py-2 flex items-center justify-between">
-            <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
-              Generated SQL <span className="font-normal normal-case text-muted-foreground/40">— editable</span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCopySQL}
-              className={cn("h-6 px-2 text-[10px] font-mono transition-all duration-300", copiedSQL && "text-emerald-500 bg-emerald-500/10")}
-            >
-              {copiedSQL ? "Copied!" : "Copy SQL"}
-            </Button>
-          </div>
-          <textarea
-            ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
-            value={generatedSQL}
-            onChange={(e) => { setGeneratedSQL(e.target.value); setHasExecuted(false); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
-            className="w-full p-3 text-[11px] font-mono text-foreground bg-transparent resize-none overflow-hidden focus:outline-none focus:ring-1 focus:ring-primary/30 rounded-sm"
-            spellCheck={false}
-          />
-        </div>
-      )}
-
-      {/* Execute Button */}
-      {generatedSQL && (
-        <div className="flex justify-end">
-          <Button
-            size="sm"
-            onClick={() => setHasExecuted(true)}
-            disabled={!selectedSnapshot || !generatedSQL}
-            className="text-xs"
-          >
-            <Database className="h-3.5 w-3.5 mr-1.5" />
-            Execute Query
-          </Button>
-        </div>
-      )}
-
-      {/* Error Display with AI Fix */}
-      {error && (() => {
-        const errorMsg = error instanceof Error ? error.message : "Query execution failed";
-        const hint = explainError(errorMsg);
-        return (
-          <div className="space-y-2">
-            <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
-              <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
-              <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
-                {errorMsg}
-              </div>
-            </div>
-            {hint && (
-              <div className="p-2.5 bg-muted/10 border border-border/30 rounded-sm space-y-1.5">
-                <div className="flex items-start gap-2">
-                  <Info className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
-                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">What happened:</strong> {hint.explanation}</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Wrench className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
-                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">Suggested fix:</strong> {hint.suggestion}</span>
-                </div>
-              </div>
-            )}
-            <div className="flex items-center gap-2 p-2.5 bg-primary/5 border border-primary/20 rounded-sm">
-              <span className="text-[10px] text-primary/80 flex-1">Edit the SQL above manually, or let the AI fix it automatically.</span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={async () => {
-                  if (!generatedSQL || !selectedSnapshot) return;
-                  setIsFixing(true);
-                  setHasExecuted(false);
-                  try {
-                    const result = await fixSQLWithAI({ snapshot_date: selectedSnapshot, sql: generatedSQL, error: errorMsg });
-                    setGeneratedSQL(result.sql);
-                  } catch {} finally { setIsFixing(false); }
-                }}
-                disabled={isFixing || !generatedSQL}
-                className="text-xs h-7 px-3"
-              >
-                <Sparkles className="h-3 w-3 mr-1" />
-                {isFixing ? "Fixing..." : "Fix with AI"}
-              </Button>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Results */}
-      {hasExecuted && queryResult && (
-        <div className="border-t border-border/20 pt-4">
-          <QueryResultsTable
-            result={queryResult}
-            isLoading={isLoading}
-            sql={generatedSQL}
-            mode="guided"
-            onAddToReport={onAddToReport}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Example queries for Raw SQL mode
-const EXAMPLE_RAW_QUERIES = [
-  {
-    id: "largest-gcp-files",
-    name: "Largest files in /gcp",
-    description: "Top 15 largest files under /project/cil/gcp",
-    sql: `SELECT
-  path,
-  name,
-  formatReadableSize(size) AS size,
-  owner,
-  toDateTime(modified_time) AS modified
-FROM filesystem.entries
-WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '/project/cil/gcp/')
-  AND is_directory = 0
-ORDER BY size DESC
-LIMIT 15`,
-  },
-  {
-    id: "shapefile-outputs",
-    name: "Shapefile-related outputs",
-    description: "Find shapefile outputs in /gcp (by size)",
-    sql: `SELECT
-  path,
-  name,
-  formatReadableSize(size) AS size,
-  owner,
-  toDateTime(modified_time) AS modified
-FROM filesystem.entries
-WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '/project/cil/gcp/')
-  AND is_directory = 0
-  AND (positionCaseInsensitive(name, '.shp') > 0 OR positionCaseInsensitive(name, 'shapefile') > 0 OR positionCaseInsensitive(parent_path, 'output') > 0)
-ORDER BY size DESC
-LIMIT 15`,
-  },
-  {
-    id: "dirs-with-empty-files",
-    name: "Directories with empty files",
-    description: "Directories containing the most 0-byte files",
     sql: `SELECT
   parent_path,
   count() AS empty_file_count,
@@ -686,234 +300,70 @@ ORDER BY empty_file_count DESC
 LIMIT 20`,
   },
   {
-    id: "file-type-breakdown",
-    name: "File type breakdown",
-    description: "Count files by extension in a directory",
+    id: "total-empty-files",
+    name: "Total empty files audit",
+    description: "Count all empty (0-byte) files across the project",
+    category: "hygiene",
     sql: `SELECT
-  file_type,
+  count() AS total_empty_files,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/')
+  AND is_directory = 0
+  AND size = 0`,
+  },
+  {
+    id: "home-dirs-by-file-count",
+    name: "home_dirs — users with most files",
+    description: "Rank home directories by number of files",
+    category: "directories",
+    sql: `SELECT
+  splitByChar('/', path)[5] AS user,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size,
+  formatReadableSize(avg(size)) AS avg_file_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/home_dirs/')
+  AND is_directory = 0
+  AND length(splitByChar('/', path)) >= 6
+GROUP BY user
+ORDER BY file_count DESC
+LIMIT 20`,
+  },
+  {
+    id: "size-by-top-level-dir",
+    name: "File count and size by top-level directory",
+    description: "Group files by top-level directory (e.g., gcp, battuta-shares)",
+    category: "directories",
+    sql: `SELECT
+  splitByChar('/', path)[3] AS top_level_dir,
   count() AS file_count,
   formatReadableSize(sum(size)) AS total_size
 FROM filesystem.entries
 WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '/project/cil/gcp/')
   AND is_directory = 0
-  AND file_type != ''
-GROUP BY file_type
+  AND length(splitByChar('/', path)) >= 4
+GROUP BY top_level_dir
 ORDER BY sum(size) DESC
-LIMIT 20`,
+LIMIT 10`,
   },
 ];
 
-// Raw SQL Mode Component
-function RawSQLMode({
-  selectedSnapshot,
-  onAddToReport,
-}: {
-  selectedSnapshot: string | null;
-  onAddToReport: (entry: Omit<ReportEntry, "id" | "timestamp">) => void;
-}) {
-  const [sql, setSQL] = useState("");
-  const [limit, setLimit] = useState(100);
-  const [hasExecuted, setHasExecuted] = useState(false);
-  const [showExamples, setShowExamples] = useState(false);
-  const [isFixing, setIsFixing] = useState(false);
+const EXAMPLE_PROMPTS = [
+  "Biggest 5 directories in home_dirs",
+  "Biggest 100 files not accessed in the last 5 years",
+  "Find all .log files larger than 100 MB",
+  "Largest .tmp, .bak, .old, and .cache files across the filesystem",
+  "Directories with more than 10000 files",
+  "Files that share the same name and size but exist in different home_dirs — possible duplicates",
+  "Total wasted space: empty files grouped by directory, top 20",
+  "Duplicate archives (.tar.gz, .zip, .bak) over 500 MB sorted by size",
+];
 
-  const { data: queryResult, isLoading, error } = useQuery({
-    queryKey: ["raw-sql", selectedSnapshot, sql, limit, hasExecuted],
-    queryFn: async () => {
-      if (!selectedSnapshot) throw new Error("No snapshot selected");
-      return executeQuery({
-        snapshot_date: selectedSnapshot,
-        sql: sql.trim(),
-        limit,
-      });
-    },
-    enabled: hasExecuted && !!selectedSnapshot && !!sql.trim(),
-    retry: false,
-  });
-
-  const handleExecute = () => {
-    if (!sql.trim()) return;
-    setHasExecuted(true);
-  };
-
-  const loadExample = (exampleSQL: string) => {
-    // Load the SQL template directly (snapshot_date is handled by backend)
-    setSQL(exampleSQL);
-    setHasExecuted(false);
-    setShowExamples(false);
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-start gap-2 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-sm">
-        <AlertCircle className="h-3.5 w-3.5 text-yellow-400 mt-0.5 flex-shrink-0" />
-        <div className="text-[10px] text-yellow-400 leading-relaxed">
-          <strong>Advanced mode:</strong> Write raw SQL queries with strict backend guardrails.
-          Only SELECT statements allowed. snapshot_date filter required. Max 8000 rows.
-        </div>
-      </div>
-
-      {/* Example Queries */}
-      <div className="border border-border/50 rounded-sm bg-muted/5">
-        <button
-          onClick={() => setShowExamples(!showExamples)}
-          className="w-full flex items-center justify-between p-3 hover:bg-muted/10 transition-colors"
-        >
-          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            Example Queries
-          </h4>
-          {showExamples ? (
-            <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-          ) : (
-            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-          )}
-        </button>
-
-        {showExamples && (
-          <div className="px-3 pb-3 border-t border-border/50">
-            <div className="grid grid-cols-1 gap-2 mt-3">
-              {EXAMPLE_RAW_QUERIES.map((example) => (
-                <button
-                  key={example.id}
-                  onClick={() => loadExample(example.sql)}
-                  className="text-left p-2.5 border border-border/20 rounded-sm hover:bg-muted/10 hover:border-primary/30 transition-colors"
-                >
-                  <div className="text-xs font-medium text-foreground">{example.name}</div>
-                  <div className="text-[10px] text-muted-foreground mt-0.5">{example.description}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* SQL Editor */}
-      <div>
-        <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-          SQL Query
-        </label>
-        <textarea
-          value={sql}
-          onChange={(e) => setSQL(e.target.value)}
-          placeholder={`SELECT path, name, formatReadableSize(size) AS size, owner
-FROM filesystem.entries
-WHERE snapshot_date = %(snapshot_date)s
-  AND startsWith(path, '/project/cil/gcp/')
-  AND is_directory = 0
-ORDER BY size DESC
-LIMIT 100`}
-          className="w-full px-3 py-2 text-xs bg-background border border-border rounded-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50 min-h-[200px] resize-y"
-        />
-      </div>
-
-      {/* Controls */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mr-2">
-              Max Rows:
-            </label>
-            <select
-              value={limit}
-              onChange={(e) => setLimit(parseInt(e.target.value))}
-              className="px-3 py-1.5 text-xs bg-background border border-border rounded-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
-            >
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={500}>500</option>
-              <option value={1000}>1000</option>
-              <option value={8000}>8000</option>
-            </select>
-          </div>
-        </div>
-
-        <Button
-          size="sm"
-          onClick={handleExecute}
-          disabled={!selectedSnapshot || !sql.trim()}
-          className="text-xs"
-        >
-          <Code className="h-3.5 w-3.5 mr-1.5" />
-          Execute Query
-        </Button>
-      </div>
-
-      {/* Error Display with AI Fix */}
-      {error && (() => {
-        const errorMsg = error instanceof Error ? error.message : "Query execution failed";
-        const hint = explainError(errorMsg);
-        return (
-          <div className="space-y-2">
-            <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
-              <AlertCircle className="h-3.5 w-3.5 text-red-400 mt-0.5 flex-shrink-0" />
-              <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
-                {errorMsg}
-              </div>
-            </div>
-            {hint && (
-              <div className="p-2.5 bg-muted/10 border border-border/30 rounded-sm space-y-1.5">
-                <div className="flex items-start gap-2">
-                  <Info className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
-                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">What happened:</strong> {hint.explanation}</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Wrench className="h-3 w-3 text-muted-foreground/70 mt-0.5 flex-shrink-0" />
-                  <span className="text-[10px] text-muted-foreground leading-relaxed"><strong className="text-foreground/80">Suggested fix:</strong> {hint.suggestion}</span>
-                </div>
-              </div>
-            )}
-            <div className="flex items-center gap-2 p-2.5 bg-primary/5 border border-primary/20 rounded-sm">
-              <span className="text-[10px] text-primary/80 flex-1">Edit the SQL above manually, or let the AI fix it automatically.</span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={async () => {
-                  if (!sql || !selectedSnapshot) return;
-                  setIsFixing(true);
-                  setHasExecuted(false);
-                  try {
-                    const result = await fixSQLWithAI({ snapshot_date: selectedSnapshot, sql, error: errorMsg });
-                    setSQL(result.sql);
-                  } catch {} finally { setIsFixing(false); }
-                }}
-                disabled={isFixing || !sql.trim()}
-                className="text-xs h-7 px-3"
-              >
-                <Sparkles className="h-3 w-3 mr-1" />
-                {isFixing ? "Fixing..." : "Fix with AI"}
-              </Button>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Results */}
-      {hasExecuted && queryResult && (
-        <div className="border-t border-border/20 pt-4">
-          <QueryResultsTable
-            result={queryResult}
-            isLoading={isLoading}
-            sql={sql}
-            mode="sql"
-            onAddToReport={onAddToReport}
-          />
-        </div>
-      )}
-
-      {/* Help Text */}
-      <div className="text-[10px] text-muted-foreground/70 space-y-1">
-        <div><strong>Allowed:</strong> SELECT statements only</div>
-        <div><strong>Required:</strong> snapshot_date filter in WHERE clause</div>
-        <div><strong>Blocked:</strong> INSERT, UPDATE, DELETE, DROP, external functions, multiple statements</div>
-        <div><strong>Tables:</strong> filesystem.entries, filesystem.directory_recursive_sizes</div>
-      </div>
-    </div>
-  );
-}
-
-// AI Query Mode Component
-function AIQueryMode({
+// Unified Query Mode — replaces GuidedSQLMode, RawSQLMode, AIQueryMode
+function UnifiedQueryMode({
   selectedSnapshot,
   onAddToReport,
 }: {
@@ -921,41 +371,17 @@ function AIQueryMode({
   onAddToReport: (entry: Omit<ReportEntry, "id" | "timestamp">) => void;
 }) {
   const [question, setQuestion] = useState("");
-  const [generatedSQL, setGeneratedSQL] = useState("");
+  const [sql, setSQL] = useState("");
+  const [hasExecuted, setHasExecuted] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
-  const [hasExecuted, setHasExecuted] = useState(false);
-  const [copiedSQL, setCopiedSQL] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
-
-  const handleFix = async () => {
-    if (!generatedSQL || !execError || !selectedSnapshot) return;
-    setIsFixing(true);
-    setHasExecuted(false);
-
-    try {
-      const errorMsg =
-        execError instanceof Error ? execError.message : "Query execution failed";
-      const result = await fixSQLWithAI({
-        snapshot_date: selectedSnapshot,
-        sql: generatedSQL,
-        error: errorMsg,
-      });
-      setGeneratedSQL(result.sql);
-    } catch (err) {
-      setGenerateError(
-        err instanceof Error ? err.message : "Failed to fix SQL"
-      );
-    } finally {
-      setIsFixing(false);
-    }
-  };
+  const [copiedSQL, setCopiedSQL] = useState(false);
 
   const handleGenerate = async () => {
     if (!question.trim() || !selectedSnapshot) return;
     setIsGenerating(true);
     setGenerateError(null);
-    setGeneratedSQL("");
     setHasExecuted(false);
 
     try {
@@ -963,7 +389,7 @@ function AIQueryMode({
         snapshot_date: selectedSnapshot,
         question: question.trim(),
       });
-      setGeneratedSQL(result.sql);
+      setSQL(result.sql);
     } catch (err) {
       setGenerateError(
         err instanceof Error ? err.message : "Failed to generate SQL"
@@ -973,30 +399,6 @@ function AIQueryMode({
     }
   };
 
-  const {
-    data: queryResult,
-    isLoading,
-    error: execError,
-  } = useQuery({
-    queryKey: ["ai-sql", selectedSnapshot, generatedSQL, hasExecuted],
-    queryFn: async () => {
-      if (!selectedSnapshot) throw new Error("No snapshot selected");
-      return executeQuery({
-        snapshot_date: selectedSnapshot,
-        sql: generatedSQL.trim(),
-        limit: 8000,
-      });
-    },
-    enabled: hasExecuted && !!selectedSnapshot && !!generatedSQL.trim(),
-    retry: false,
-  });
-
-  const handleCopySQL = async () => {
-    await navigator.clipboard.writeText(generatedSQL);
-    setCopiedSQL(true);
-    setTimeout(() => setCopiedSQL(false), 1500);
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1004,42 +406,145 @@ function AIQueryMode({
     }
   };
 
+  const { data: queryResult, isLoading, error } = useQuery({
+    queryKey: ["unified-sql", selectedSnapshot, sql, hasExecuted],
+    queryFn: async () => {
+      if (!selectedSnapshot) throw new Error("No snapshot selected");
+      const sanitizedSQL = sql.trim().replace(/;+\s*$/, '');
+      return executeQuery({
+        snapshot_date: selectedSnapshot,
+        sql: sanitizedSQL,
+        limit: 8000,
+      });
+    },
+    enabled: hasExecuted && !!selectedSnapshot && !!sql.trim(),
+    retry: false,
+  });
+
+  const handleCopySQL = async () => {
+    await navigator.clipboard.writeText(sql);
+    setCopiedSQL(true);
+    setTimeout(() => setCopiedSQL(false), 1500);
+  };
+
+  const handleFix = async () => {
+    if (!sql || !error || !selectedSnapshot) return;
+    setIsFixing(true);
+    setHasExecuted(false);
+    try {
+      const errorMsg = error instanceof Error ? error.message : "Query execution failed";
+      const result = await fixSQLWithAI({ snapshot_date: selectedSnapshot, sql, error: errorMsg });
+      setSQL(result.sql);
+    } catch {} finally { setIsFixing(false); }
+  };
+
+  const loadTemplate = (template: SQLTemplate) => {
+    setSQL(template.sql);
+    setHasExecuted(false);
+  };
+
+  const loadPrompt = (prompt: string) => {
+    setQuestion(prompt);
+  };
+
+  const templatesByCategory = {
+    files: SQL_TEMPLATES.filter(t => t.category === "files"),
+    directories: SQL_TEMPLATES.filter(t => t.category === "directories"),
+    storage: SQL_TEMPLATES.filter(t => t.category === "storage"),
+    hygiene: SQL_TEMPLATES.filter(t => t.category === "hygiene"),
+  };
+
   return (
     <div className="space-y-4">
-      {/* Info banner */}
-      <div className="flex items-start gap-2 p-3 bg-primary/5 border border-primary/20 rounded-sm">
-        <Sparkles className="h-3.5 w-3.5 text-primary mt-0.5 flex-shrink-0" />
-        <div className="text-[10px] text-primary/80 leading-relaxed">
-          Put your question in plain English. This uses Groq (llama-3.3-70b) to translate it into a SQL query for you. This service is hosted locally — no API communication or data sharing.
-        </div>
-      </div>
+      {/* Templates (collapsible) */}
+      <details className="group border border-border/50 rounded-sm bg-muted/5">
+        <summary className="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-muted/10 transition-colors list-none">
+          <div className="flex items-center gap-2">
+            <Database className="h-3 w-3 text-muted-foreground/70" />
+            <span className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
+              Templates & Examples
+            </span>
+          </div>
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/50 -rotate-90 group-open:rotate-0 transition-transform" />
+        </summary>
+        <div className="border-t border-border/50 max-h-[320px] overflow-y-auto p-3 space-y-1">
+          {/* SQL Templates by category */}
+          {Object.entries(templatesByCategory).map(([category, templates]) => (
+            <details key={category} className="group/cat">
+              <summary className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide cursor-pointer select-none list-none flex items-center gap-1 py-1 hover:text-foreground transition-colors">
+                <ChevronDown className="h-3 w-3 -rotate-90 group-open/cat:rotate-0 transition-transform" />
+                {category}
+              </summary>
+              <div className="grid grid-cols-1 gap-1 mt-1 mb-2 ml-4">
+                {templates.map(template => (
+                  <button
+                    key={template.id}
+                    onClick={() => loadTemplate(template)}
+                    className="text-left px-2.5 py-1.5 border border-border/20 rounded-sm transition-colors hover:bg-muted/10 hover:border-primary/30"
+                  >
+                    <div className="text-xs font-medium text-foreground">{template.name}</div>
+                    <div className="text-[10px] text-muted-foreground">{template.description}</div>
+                  </button>
+                ))}
+              </div>
+            </details>
+          ))}
 
-      {/* Question input */}
-      <div>
-        <label className="text-xs font-medium text-muted-foreground block mb-1.5">
-          Your Question
-        </label>
-        <textarea
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="e.g., Show me the 20 largest CSV files under /project/cil/gcp modified in the last 30 days"
-          className="w-full px-3 py-2 text-xs bg-background border border-border rounded-sm focus:outline-none focus:ring-1 focus:ring-primary/50 min-h-[80px] resize-y"
-          maxLength={500}
-        />
-        <div className="flex items-center justify-between mt-1.5">
-          <span className="text-[10px] text-muted-foreground/50">
-            {question.length}/500
-          </span>
-          <Button
-            size="sm"
-            onClick={handleGenerate}
-            disabled={!selectedSnapshot || !question.trim() || isGenerating}
-            className="text-xs"
-          >
-            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-            {isGenerating ? "Generating..." : "Generate SQL"}
-          </Button>
+          {/* Example Prompts */}
+          <details className="group/cat">
+            <summary className="text-[10px] font-semibold text-primary/70 uppercase tracking-wide cursor-pointer select-none list-none flex items-center gap-1 py-1 hover:text-primary transition-colors">
+              <ChevronDown className="h-3 w-3 -rotate-90 group-open/cat:rotate-0 transition-transform" />
+              <Sparkles className="h-2.5 w-2.5" />
+              Example Prompts
+            </summary>
+            <div className="grid grid-cols-1 gap-1 mt-1 mb-2 ml-4">
+              {EXAMPLE_PROMPTS.map((prompt, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => loadPrompt(prompt)}
+                  className="text-left px-2.5 py-1.5 border border-primary/10 rounded-sm transition-colors hover:bg-primary/5 hover:border-primary/30"
+                >
+                  <div className="text-[10px] text-foreground/80">{prompt}</div>
+                </button>
+              ))}
+            </div>
+          </details>
+        </div>
+      </details>
+
+      {/* AI Prompt Panel */}
+      <div className="border border-border/50 rounded-sm bg-muted/5">
+        <div className="bg-muted/10 border-b border-border/50 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-3 w-3 text-primary/70" />
+            <span className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
+              Describe what you want in plain English
+            </span>
+          </div>
+        </div>
+        <div className="p-3">
+          <textarea
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="e.g., Show me the 20 largest CSV files under /project/cil/gcp modified in the last 30 days"
+            className="w-full px-3 py-2 text-xs bg-background border border-border rounded-sm focus:outline-none focus:ring-1 focus:ring-primary/50 min-h-[60px] resize-y"
+            maxLength={500}
+          />
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="text-[10px] text-muted-foreground/50">
+              {question.length}/500 — llama-3.3-70b hosted locally — no data sharing
+            </span>
+            <Button
+              size="sm"
+              onClick={handleGenerate}
+              disabled={!selectedSnapshot || !question.trim() || isGenerating}
+              className="text-xs"
+            >
+              <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+              {isGenerating ? "Generating..." : "Generate SQL"}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -1053,60 +558,53 @@ function AIQueryMode({
         </div>
       )}
 
-      {/* Generated SQL display */}
-      {generatedSQL && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-medium text-muted-foreground">
-              Generated SQL <span className="font-normal text-muted-foreground/40">— editable</span>
-            </label>
-            <button
-              onClick={handleCopySQL}
-              className={cn(
-                "text-[10px] transition-colors",
-                copiedSQL
-                  ? "text-emerald-500"
-                  : "text-muted-foreground hover:text-primary"
-              )}
-            >
-              {copiedSQL ? "Copied!" : "Copy"}
-            </button>
+      {/* SQL Editor */}
+      <div className="border border-border/30 rounded-sm bg-muted/5">
+        <div className="bg-muted/10 border-b border-border/30 px-3 py-2 flex items-center justify-between">
+          <div className="text-[10px] font-mono font-semibold uppercase tracking-wide text-muted-foreground/70">
+            SQL Editor
           </div>
-          <textarea
-            ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
-            value={generatedSQL}
-            onChange={(e) => { setGeneratedSQL(e.target.value); setHasExecuted(false); e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
-            className="w-full px-3 py-2 text-xs bg-muted/10 border border-border/50 rounded-sm font-mono resize-none overflow-hidden focus:outline-none focus:ring-1 focus:ring-primary/30"
-            spellCheck={false}
-          />
-          <div className="flex items-center justify-end gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setGeneratedSQL("");
-                setHasExecuted(false);
-              }}
-              className="text-xs"
-            >
-              Clear
-            </Button>
+          <div className="flex items-center gap-2">
+            {sql && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCopySQL}
+                className={cn("h-6 px-2 text-[10px] font-mono transition-all duration-300", copiedSQL && "text-emerald-500 bg-emerald-500/10")}
+              >
+                {copiedSQL ? "Copied!" : "Copy SQL"}
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={() => setHasExecuted(true)}
-              disabled={!selectedSnapshot}
-              className="text-xs"
+              disabled={!selectedSnapshot || !sql.trim()}
+              className="text-xs h-7"
             >
-              <Code className="h-3.5 w-3.5 mr-1.5" />
+              <Database className="h-3.5 w-3.5 mr-1.5" />
               Run Query
             </Button>
           </div>
         </div>
-      )}
+        <textarea
+          ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = Math.max(el.scrollHeight, 120) + "px"; } }}
+          value={sql}
+          onChange={(e) => { setSQL(e.target.value); setHasExecuted(false); e.target.style.height = "auto"; e.target.style.height = Math.max(e.target.scrollHeight, 120) + "px"; }}
+          placeholder={`SELECT path, name, formatReadableSize(size) AS size, owner
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/gcp/')
+  AND is_directory = 0
+ORDER BY size DESC
+LIMIT 100`}
+          className="w-full p-3 text-[11px] font-mono text-foreground bg-transparent resize-none overflow-hidden focus:outline-none focus:ring-1 focus:ring-primary/30 rounded-sm min-h-[120px]"
+          spellCheck={false}
+        />
+      </div>
 
-      {/* Execution error */}
-      {execError && (() => {
-        const errorMsg = execError instanceof Error ? execError.message : "Query execution failed";
+      {/* Error Display with AI Fix */}
+      {error && (() => {
+        const errorMsg = error instanceof Error ? error.message : "Query execution failed";
         const hint = explainError(errorMsg);
         return (
           <div className="space-y-2">
@@ -1134,7 +632,7 @@ function AIQueryMode({
                 size="sm"
                 variant="outline"
                 onClick={handleFix}
-                disabled={isFixing}
+                disabled={isFixing || !sql.trim()}
                 className="text-xs h-7 px-3"
               >
                 <Sparkles className="h-3 w-3 mr-1" />
@@ -1151,26 +649,17 @@ function AIQueryMode({
           <QueryResultsTable
             result={queryResult}
             isLoading={isLoading}
-            sql={generatedSQL}
-            mode="ai"
+            sql={sql}
+            mode="query"
             onAddToReport={onAddToReport}
           />
         </div>
       )}
 
-      {/* Example questions */}
+      {/* Help Text */}
       <div className="text-[10px] text-muted-foreground/70 space-y-1">
-        <div>
-          <strong>Try asking:</strong>
-        </div>
-        <div>- Biggest 5 directories in home_dirs</div>
-        <div>- Biggest 100 files not accessed in the last 5 years</div>
-        <div>- Find all .log files larger than 100 MB</div>
-        <div>- Largest .tmp, .bak, .old, and .cache files across the filesystem</div>
-        <div>- Directories with more than 10000 files</div>
-        <div>- Files that share the same name and size but exist in different home_dirs — possible duplicates</div>
-        <div>- Total wasted space: empty files grouped by directory, top 20</div>
-        <div>- Duplicate archives (.tar.gz, .zip, .bak) over 500 MB sorted by size</div>
+        <div><strong>Allowed:</strong> SELECT statements only. snapshot_date filter required. Max 8000 rows.</div>
+        <div><strong>Tables:</strong> filesystem.entries, filesystem.directory_recursive_sizes</div>
       </div>
     </div>
   );
@@ -1256,17 +745,13 @@ function QueryResultsTable({
   };
 
   const downloadTXT = () => {
-    // Calculate column widths
     const colWidths = result.columns.map((col, idx) => {
       const cellWidths = filteredRows.map(row => String(row[idx] || "").length);
       return Math.max(col.length, ...cellWidths);
     });
 
-    // Create header
     const header = result.columns.map((col, idx) => col.padEnd(colWidths[idx])).join(" | ");
     const separator = colWidths.map(w => "-".repeat(w)).join("-+-");
-
-    // Create rows
     const rows = filteredRows.map(row =>
       row.map((cell, idx) => String(cell || "").padEnd(colWidths[idx])).join(" | ")
     );
@@ -1297,22 +782,16 @@ function QueryResultsTable({
   const aggregations = useMemo(() => {
     if (!showAggregation || aggGroupByColumns.length === 0) return [];
 
-    // Find indices for grouping columns and numeric columns
     const groupByIndices = aggGroupByColumns.map(col => result.columns.indexOf(col)).filter(idx => idx !== -1);
     if (groupByIndices.length === 0) return [];
 
-    // Find numeric columns (exclude formatted size strings)
     const numericColumnIndices = result.columns.map((col, idx) => {
-      // Skip if it's a grouping column
       if (groupByIndices.includes(idx)) return -1;
-
-      // Check if most values are numeric
       const sampleValues = filteredRows.slice(0, Math.min(10, filteredRows.length)).map(row => row[idx]);
       const numericCount = sampleValues.filter(v => typeof v === 'number' || !isNaN(Number(v))).length;
       return numericCount > sampleValues.length / 2 ? idx : -1;
     }).filter(idx => idx !== -1);
 
-    // Group by selected columns
     const groups = new Map<string, { keys: Record<string, any>; count: number; sums: number[] }>();
 
     filteredRows.forEach(row => {
@@ -1329,7 +808,6 @@ function QueryResultsTable({
       const group = groups.get(key)!;
       group.count++;
 
-      // Sum numeric columns
       numericColumnIndices.forEach((colIdx, i) => {
         const value = row[colIdx];
         const numValue = typeof value === 'number' ? value : parseFloat(String(value));
@@ -1346,9 +824,7 @@ function QueryResultsTable({
     }));
   }, [result, filteredRows, showAggregation, aggGroupByColumns]);
 
-  // Get available grouping columns (text columns)
   const availableGroupByColumns = result.columns.filter((col, idx) => {
-    // Check if column contains mostly text values
     const sampleValues = filteredRows.slice(0, Math.min(10, filteredRows.length)).map(row => row[idx]);
     const textCount = sampleValues.filter(v => typeof v === 'string' || (typeof v !== 'number' && isNaN(Number(v)))).length;
     return textCount > sampleValues.length / 2;
@@ -1681,7 +1157,6 @@ function ReportPanel({
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-mono text-muted-foreground">Query {idx + 1}</span>
                         <span className="text-[9px] text-muted-foreground/70">{entry.timestamp.toLocaleTimeString()}</span>
-                        <span className="text-[9px] text-primary/70 font-mono">{entry.mode}</span>
                       </div>
                       <div className="text-[10px] font-mono text-foreground mt-1 truncate">
                         {entry.sql.substring(0, 80)}...
@@ -1741,7 +1216,6 @@ export function SearchConsole() {
   const [showReport, setShowReport] = useState(false);
 
   const addToReport = (entry: Omit<ReportEntry, "id" | "timestamp">) => {
-    // Check if exact same query already exists
     const duplicate = reportEntries.find(e => e.sql === entry.sql);
     if (duplicate) {
       alert("This query is already in the report");
@@ -1765,7 +1239,6 @@ export function SearchConsole() {
     const reportDate = new Date().toISOString().split('T')[0];
     const reportName = `rcc_report_${reportDate}`;
 
-    // Generate markdown content
     let content = `# RCC Storage Report\n\n`;
     content += `**Snapshot:** ${selectedSnapshot}\n`;
     content += `**Generated:** ${new Date().toLocaleString()}\n`;
@@ -1773,12 +1246,11 @@ export function SearchConsole() {
     content += `---\n\n`;
 
     reportEntries.forEach((entry, idx) => {
-      content += `## Query ${idx + 1} (${entry.mode})\n\n`;
+      content += `## Query ${idx + 1}\n\n`;
       content += `**Executed:** ${entry.timestamp.toLocaleString()}\n\n`;
       content += `### SQL\n\n\`\`\`sql\n${entry.sql}\n\`\`\`\n\n`;
       content += `### Results (${entry.rowCount} rows)\n\n`;
 
-      // Add markdown table
       const header = `| ${entry.columns.join(" | ")} |`;
       const separator = `| ${entry.columns.map(() => "---").join(" | ")} |`;
       const rows = entry.rows.slice(0, 100).map(row => `| ${row.map(cell => String(cell || "")).join(" | ")} |`);
@@ -1818,7 +1290,6 @@ export function SearchConsole() {
   const handleSearch = () => {
     if (!selectedSnapshot) return;
 
-    // Simple search requires text; complex (SQL) path allows empty text when size filters set
     if (!isComplexQuery && !filters.searchText.trim()) {
       setSearchError("Search text is required.");
       return;
@@ -1828,7 +1299,6 @@ export function SearchConsole() {
     setHasSearched(true);
   };
 
-  // Build search query from filters
   const buildSearchParams = () => {
     const params: Parameters<typeof search>[0] = {
       snapshot_date: selectedSnapshot!,
@@ -1839,7 +1309,6 @@ export function SearchConsole() {
       limit: filters.limit,
     };
 
-    // Path scope
     if (filters.scopeMode === "custom" && filters.customPath.trim()) {
       params.scope_path = filters.customPath.trim();
     }
@@ -1847,7 +1316,6 @@ export function SearchConsole() {
     return params;
   };
 
-  // Execute simple search query (single pattern, no size filters)
   const { data: searchResults, isLoading: isSearching, error: queryError } = useQuery({
     queryKey: ["search", selectedSnapshot, filters, hasSearched],
     queryFn: () => search(buildSearchParams()),
@@ -1855,15 +1323,12 @@ export function SearchConsole() {
     retry: false,
   });
 
-  // Execute complex query via SQL (multi-pattern or size filters)
   const { data: complexResults, isLoading: isComplexSearching, error: complexError } = useQuery({
     queryKey: ["search-complex", selectedSnapshot, complexSQL, hasSearched],
     queryFn: () => executeQuery({ snapshot_date: selectedSnapshot!, sql: complexSQL, limit: 8000 }),
     enabled: hasSearched && isComplexQuery && !!selectedSnapshot && !!complexSQL,
     retry: false,
   });
-
-  // (presets rendered as flat list — no grouping needed)
 
   return (
     <Card className="border-t-2 border-border/50">
@@ -1883,40 +1348,16 @@ export function SearchConsole() {
               Filter Builder
             </button>
             <button
-              onClick={() => setMode("ai")}
+              onClick={() => setMode("query")}
               className={cn(
                 "flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm transition-colors",
-                mode === "ai"
-                  ? "bg-primary/10 text-primary border border-primary/30"
-                  : "text-muted-foreground hover:bg-muted/20"
-              )}
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              AI Query
-            </button>
-            <button
-              onClick={() => setMode("guided")}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm transition-colors",
-                mode === "guided"
+                mode === "query"
                   ? "bg-primary/10 text-primary border border-primary/30"
                   : "text-muted-foreground hover:bg-muted/20"
               )}
             >
               <Database className="h-3.5 w-3.5" />
-              Guided SQL
-            </button>
-            <button
-              onClick={() => setMode("sql")}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm transition-colors",
-                mode === "sql"
-                  ? "bg-primary/10 text-primary border border-primary/30"
-                  : "text-muted-foreground hover:bg-muted/20"
-              )}
-            >
-              <Code className="h-3.5 w-3.5" />
-              Raw SQL
+              Query Console
             </button>
           </div>
 
@@ -2080,7 +1521,6 @@ export function SearchConsole() {
                         <option value={100}>100 results</option>
                         <option value={500}>500 results</option>
                         <option value={1000}>1000 results</option>
-                        <option value={8000}>8000 results</option>
                         <option value={8000}>8000 results (max)</option>
                       </select>
                     </div>
@@ -2204,25 +1644,9 @@ export function SearchConsole() {
             </div>
           )}
 
-          {/* Guided SQL Mode */}
-          {mode === "guided" && (
-            <GuidedSQLMode
-              selectedSnapshot={selectedSnapshot}
-              onAddToReport={addToReport}
-            />
-          )}
-
-          {/* Raw SQL Mode */}
-          {mode === "sql" && (
-            <RawSQLMode
-              selectedSnapshot={selectedSnapshot}
-              onAddToReport={addToReport}
-            />
-          )}
-
-          {/* AI Query Mode */}
-          {mode === "ai" && (
-            <AIQueryMode
+          {/* Query Console Mode */}
+          {mode === "query" && (
+            <UnifiedQueryMode
               selectedSnapshot={selectedSnapshot}
               onAddToReport={addToReport}
             />
