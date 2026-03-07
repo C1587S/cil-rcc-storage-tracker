@@ -177,13 +177,17 @@ echo "Publishing to $PUBLISH_DIR..."
 
 # Set up directory and permissions
 mkdir -p "$PUBLISH_DIR"
-chmod o+x "$HOME" 2>/dev/null
-chmod o+x "$HOME/public_html" 2>/dev/null
-chmod -R o+rX "$HOME/public_html/cil_scans" 2>/dev/null
+chmod o+x "$HOME"
+chmod o+x "$HOME/public_html"
+chmod o+x "$HOME/public_html/cil_scans"
+chmod o+x "$PUBLISH_DIR"
+chmod o+r "$PUBLISH_DIR"
 
 # Copy report
 cp "/tmp/cil_report_${REPORT_ID}.json" "$PUBLISH_DIR/$REPORT_FILE"
-chmod o+r "$PUBLISH_DIR/$REPORT_FILE"
+
+# Make all files readable
+chmod -R o+r "$PUBLISH_DIR"
 
 # Update latest.json symlink
 ln -sf "$REPORT_FILE" "$PUBLISH_DIR/latest.json"
