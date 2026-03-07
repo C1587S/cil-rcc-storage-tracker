@@ -22,8 +22,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCAN_SCRIPT="${SCRIPT_DIR}/cil_scan_computing.sh"
+SCAN_SCRIPT="./scanner/scripts/cil_scan_computing.sh"
 OUTPUT_DIR="/scratch/midway3/${USER}/cil_scans"
 ACCOUNT="${CIL_ACCOUNT:-cil}"
 

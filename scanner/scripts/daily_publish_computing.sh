@@ -25,8 +25,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PUBLISH_SCRIPT="${SCRIPT_DIR}/publish_scans_computing.sh"
+PUBLISH_SCRIPT="./scanner/scripts/publish_scans_computing.sh"
 
 echo "Computing publish started at $(date)"
 echo "Running on: $(hostname)"
