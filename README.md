@@ -292,14 +292,39 @@ Route DNS and start:
 cloudflared tunnel route dns dev-tracker your-domain.com
 ```
 
-Start with auto-reconnect (survives internet drops):
+Set up as a systemd service (auto-start on boot, auto-restart on crash):
 ```bash
-nohup bash -c 'while true; do cloudflared tunnel run dev-tracker; sleep 5; done' &
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/cloudflared.service << 'EOF'
+[Unit]
+Description=Cloudflare Tunnel (dev-tracker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/cloudflared tunnel run dev-tracker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable cloudflared
+systemctl --user start cloudflared
+
+# Keep service running after logout
+loginctl enable-linger $USER
 ```
 
-Stop:
+Manage:
 ```bash
-pkill cloudflared
+systemctl --user status cloudflared     # check status
+systemctl --user restart cloudflared    # restart
+systemctl --user stop cloudflared       # stop
+journalctl --user -u cloudflared -f     # view logs
 ```
 
 Access: `https://your-domain.com/cil-rcc-tracker`
