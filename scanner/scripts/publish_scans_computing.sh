@@ -6,7 +6,7 @@
 # 1. Runs cil_scan.sh --json locally for Midway2 data
 # 2. Picks up latest Midway3 scan from shared scratch
 # 3. Merges both into a combined report
-# 4. Publishes to ~/public_html/cil/scans/rcc-quotas/
+# 4. Publishes to ~/public_html/cil_scans/quotas/
 # 5. Keeps only the N most recent reports
 #
 # Usage:
@@ -23,8 +23,8 @@ ACCOUNT="${CIL_ACCOUNT:-cil}"
 
 MIDWAY2_SCAN_DIR="${MIDWAY2_SCAN_DIR:-/scratch/midway2/${USER}/cil_scans}"
 MIDWAY3_SCAN_DIR="${MIDWAY3_SCAN_DIR:-/scratch/midway3/${USER}/cil_scans}"
-PUBLISH_DIR="${PUBLISH_DIR:-${HOME}/public_html/cil/scans/rcc-quotas}"
-PUBLIC_URL="http://users.rcc.uchicago.edu/~${USER}/cil/scans/rcc-quotas"
+PUBLISH_DIR="${PUBLISH_DIR:-${HOME}/public_html/cil_scans/quotas}"
+PUBLIC_URL="http://users.rcc.uchicago.edu/~${USER}/cil_scans/quotas"
 
 KEEP=10
 CLEAN=false
@@ -179,7 +179,7 @@ echo "Publishing to $PUBLISH_DIR..."
 mkdir -p "$PUBLISH_DIR"
 chmod o+x "$HOME" 2>/dev/null
 chmod o+x "$HOME/public_html" 2>/dev/null
-chmod -R o+rX "$HOME/public_html/cil" 2>/dev/null
+chmod -R o+rX "$HOME/public_html/cil_scans" 2>/dev/null
 
 # Copy report
 cp "/tmp/cil_report_${REPORT_ID}.json" "$PUBLISH_DIR/$REPORT_FILE"
