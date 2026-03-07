@@ -18,7 +18,7 @@ set -o pipefail
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCAN_SCRIPT="${SCRIPT_DIR}/cil_scan.sh"
+SCAN_SCRIPT="${SCRIPT_DIR}/cil_scan_computing.sh"
 ACCOUNT="${CIL_ACCOUNT:-cil}"
 
 MIDWAY2_SCAN_DIR="${MIDWAY2_SCAN_DIR:-/scratch/midway2/${USER}/cil_scans}"
