@@ -279,6 +279,7 @@ Create `~/.cloudflared/config.yml`:
 ```yaml
 tunnel: dev-tracker
 credentials-file: /home/<user>/.cloudflared/<TUNNEL-ID>.json
+protocol: http2
 
 ingress:
   - hostname: your-domain.com
@@ -286,6 +287,8 @@ ingress:
     service: http://localhost:3000
   - service: http_status:404
 ```
+
+`protocol: http2` is important -- the default QUIC (UDP) protocol drops idle connections on residential/NAT networks, causing periodic tunnel outages. HTTP/2 uses TCP, which handles keepalives and NAT mapping much better.
 
 Route DNS and start:
 ```bash
