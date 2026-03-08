@@ -10,6 +10,31 @@ A system to track 400+ TB of storage at UChicago RCC:
 - **Scanner** (Rust): Scans filesystem, generates Parquet snapshots
 - **Database** (ClickHouse): Stores 74M+ entries, <0.1s queries
 - **Dashboard** (Next.js): Dark/light mode, interactive Voronoi treemap
+- **Computing Monitor**: Live view of CIL node usage, Slurm jobs, and resource quotas
+
+---
+
+## Computing Monitoring
+
+The dashboard includes a computing panel that shows the current state of CIL's RCC resources. It pulls together node usage, active Slurm jobs, and quota information so team members can check on things without starting a terminal session on the cluster.
+
+### What it shows
+
+- **Node usage** -- CPU and RAM allocation across CIL partitions on Midway2 and Midway3, displayed as a visual PCB-style rack diagram
+- **Active Slurm jobs** -- running and pending jobs across all CIL partitions, with user, partition, node count, and elapsed time
+- **Service unit quotas** -- current SU balance and usage from daily snapshots
+- **Storage quotas** -- allocation and usage per filesystem, also from daily snapshots
+
+### Schedule
+
+Slurm data (node usage and active jobs) is fetched on a schedule tuned for working hours:
+
+- **Weekdays 9 AM -- 5 PM**: every 15 minutes
+- **Weekends**: every hour
+
+Outside those windows the data is not refreshed. This keeps the monitoring lightweight while still being useful if you want to check on a heavy job from your phone or a laptop away from the cluster.
+
+Quota information (SU and storage) comes from the daily filesystem snapshots and updates once per day.
 
 ---
 

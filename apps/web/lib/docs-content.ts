@@ -18,7 +18,7 @@ export interface DocSection {
 }
 
 export const DOC_SECTIONS: DocSection[] = [
-  { id: 'architecture', title: 'How It Works', content: architecture },
+  { id: 'architecture', title: 'Overview', content: architecture },
   { id: 'database', title: 'Database', content: database },
   { id: 'query-console', title: 'Query Console', content: queryConsole },
   { id: 'tree-explorer', title: 'Tree Explorer', content: treeExplorer },
