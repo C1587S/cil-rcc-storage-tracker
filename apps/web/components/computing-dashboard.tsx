@@ -127,15 +127,11 @@ function isMonitoringJob(name: string): boolean {
   return MONITORING_JOB_PATTERNS.some(p => name === p || name.startsWith(p));
 }
 
-// CIL group members (from `getent group cil` on midway3)
-// This is the canonical list — SU data only includes users who consumed SUs
-const CIL_GROUP_MEMBERS = [
-  "aarode", "amirjina", "atiwari2", "blanco", "bmalevich", "bolliger",
-  "cadavidsanchez", "champion", "davidrzhdu", "do1", "egrenier",
-  "emanakayama", "hultgren", "jenniferagbo", "johannarayl", "jonahmgilbert",
-  "jrising", "kmccusker", "maiqi", "mdefranciosi", "mgreenst",
-  "nishkasharma", "nvsl", "pnsinha", "rachely", "rfrost", "wanru",
-];
+// CIL group members — pulled from the report (via `getent group cil` on RCC).
+// Falls back to an empty array if the report doesn't include group_members yet.
+function getGroupMembers(report: ComputingReport | null): string[] {
+  return report?.group_members ?? [];
+}
 
 // User color palette — distinct, accessible colors
 const USER_COLORS = [
@@ -981,9 +977,9 @@ function PartitionsSection({ partitions, report, userColorMap, selectedUsers, on
   onToggleUser: (user: string) => void;
 }) {
 
-  // All CIL group members + any SU users not in the hardcoded list
+  // All CIL group members + any SU users not in the group list
   const allAccountUsers = useMemo(() => {
-    const set = new Set<string>(CIL_GROUP_MEMBERS);
+    const set = new Set<string>(getGroupMembers(report));
     for (const cluster of Object.values(report.clusters)) {
       if (!cluster) continue;
       for (const u of cluster.service_units.by_user) {
@@ -1157,7 +1153,7 @@ export function ComputingDashboard() {
 
   // Global user color map — built once, shared by all components
   const globalUserColorMap = (() => {
-    const allUsers = new Set<string>(CIL_GROUP_MEMBERS);
+    const allUsers = new Set<string>(getGroupMembers(report));
     for (const cluster of Object.values(report.clusters)) {
       if (!cluster) continue;
       for (const u of cluster.service_units.by_user) {

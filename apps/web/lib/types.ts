@@ -217,6 +217,7 @@ export interface ClusterScan {
 
 export interface ComputingReport {
   report_meta: ComputingReportMeta;
+  group_members?: string[];
   clusters: {
     midway2: ClusterScan | null;
     midway3: ClusterScan | null;

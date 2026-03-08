@@ -774,6 +774,25 @@ ts_end=$(date +%s%N)
 SCAN_DURATION=$(awk "BEGIN{printf \"%.1f\", ($ts_end - $ts_start) / 1000000000}")
 
 # =============================================================================
+# COLLECT: Group members (from system group database)
+# =============================================================================
+GROUP_MEMBERS_JSON="[]"
+GROUP_RAW=$(getent group "$ACCOUNT" 2>/dev/null)
+if [[ -n "$GROUP_RAW" ]]; then
+    members_csv=$(echo "$GROUP_RAW" | cut -d: -f4)
+    GROUP_MEMBERS_JSON="["
+    gm_first=1
+    IFS=',' read -ra MEMBERS <<< "$members_csv"
+    for m in "${MEMBERS[@]}"; do
+        [[ -z "$m" ]] && continue
+        [[ "$gm_first" -eq 0 ]] && GROUP_MEMBERS_JSON+=","
+        GROUP_MEMBERS_JSON+="$(json_str "$m")"
+        gm_first=0
+    done
+    GROUP_MEMBERS_JSON+="]"
+fi
+
+# =============================================================================
 # ASSEMBLE FULL JSON
 # =============================================================================
 FULL_JSON="{"
@@ -811,6 +830,9 @@ FULL_JSON+=",\"quota\":$QUOTA_JSON"
 
 # errors
 FULL_JSON+=",\"errors\":$ERRORS_JSON"
+
+# group members
+FULL_JSON+=",\"group_members\":$GROUP_MEMBERS_JSON"
 
 FULL_JSON+="}"
 

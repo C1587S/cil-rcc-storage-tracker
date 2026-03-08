@@ -134,6 +134,13 @@ def job_counts(scan):
 m2r, m2p, m2t = job_counts(m2)
 m3r, m3p, m3t = job_counts(m3)
 
+# Merge group_members from both clusters (prefer midway3, deduplicate)
+gm = set()
+for scan in [m2, m3]:
+    if scan:
+        for u in scan.get('group_members', []):
+            gm.add(u)
+
 report = {
     'report_meta': {
         'published_at': datetime.now().astimezone().isoformat(),
@@ -141,6 +148,7 @@ report = {
         'report_id': '${REPORT_ID}',
         'schema_version': '1.0.0'
     },
+    'group_members': sorted(gm),
     'clusters': {
         'midway2': m2,
         'midway3': m3
