@@ -61,6 +61,10 @@ const config: Config = {
         mono: ["JetBrains Mono", "Fira Code", "Consolas", "monospace"],
       },
       keyframes: {
+        "spin-slow": {
+          "0%": { transform: "rotate(0deg)" },
+          "100%": { transform: "rotate(360deg)" },
+        },
         "slide-in-from-left": {
           "0%": { transform: "translateX(-100%)", opacity: "0" },
           "100%": { transform: "translateX(0)", opacity: "1" },
@@ -79,6 +83,7 @@ const config: Config = {
         },
       },
       animation: {
+        "spin-slow": "spin-slow 1.5s ease-in-out",
         "slide-in-from-left": "slide-in-from-left 0.3s ease-out",
         "slide-out-to-left": "slide-out-to-left 0.3s ease-in",
         "slide-in-from-right": "slide-in-from-right 0.3s ease-out",

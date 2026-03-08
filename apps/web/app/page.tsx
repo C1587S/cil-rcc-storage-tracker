@@ -8,7 +8,7 @@ import { DocsPage } from "@/components/docs-page";
 import { ComputingDashboard } from "@/components/computing-dashboard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LoginGate, LogoutButton } from "@/components/login-gate";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
 
@@ -37,6 +37,8 @@ type TabId = typeof TAB_GROUPS[number]["tabs"][number]["id"];
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabId>("docs");
   const isVoronoiFullscreen = useAppStore(state => state.isVoronoiFullscreen);
+  const [logoSpinning, setLogoSpinning] = useState(false);
+  const logoRef = useRef<HTMLImageElement>(null);
 
   const containerClass = "max-w-[1440px] mx-auto px-8";
 
@@ -52,11 +54,14 @@ export default function Home() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <img
+                    ref={logoRef}
                     src="/cil-rcc-tracker/cil_rcc_console.png"
                     alt="CRC"
                     width={28}
                     height={28}
-                    className="rounded-full"
+                    className={cn("rounded-full logo-spin", logoSpinning && "spinning")}
+                    onMouseEnter={() => setLogoSpinning(true)}
+                    onAnimationEnd={() => setLogoSpinning(false)}
                   />
                   <h1 className="text-lg font-semibold tracking-tight text-foreground">
                     CIL RCC <span className="font-normal text-muted-foreground">Console</span>

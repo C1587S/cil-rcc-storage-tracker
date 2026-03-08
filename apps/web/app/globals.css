@@ -92,6 +92,24 @@
     snapshot-cursor 0.65s step-end      0.5s 4;
 }
 
+/* Logo spin on hover */
+@keyframes logo-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.logo-spin {
+  animation: none;
+  cursor: pointer;
+}
+.logo-spin.spinning {
+  animation: logo-rotate 0.8s ease-in-out;
+}
+
+/* Logo spin once on mount (login page) */
+.logo-spin-once {
+  animation: logo-rotate 1s ease-in-out 0.3s both;
+}
+
 /* Loader: dual rotating squares (voronoi main overlay) */
 .loader-squares {
   display: inline-flex;

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Providers } from "@/lib/providers";
+import { RotatingFavicon } from "@/components/rotating-favicon";
 import "./globals.css";
 
 const basePath = "/cil-rcc-tracker";
@@ -25,6 +26,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="light">
       <body className="font-mono antialiased terminal-texture">
+        <RotatingFavicon />
         <Providers>{children}</Providers>
       </body>
     </html>

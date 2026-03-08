@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAppStore } from "@/lib/store";
 import { validateUser } from "@/lib/api";
 import { ThemeToggle } from "./ThemeToggle";
@@ -107,7 +107,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: string) => void }) {
               alt="CIL RCC Console"
               width={64}
               height={64}
-              className="mx-auto mb-5 rounded-xl shadow-sm"
+              className="mx-auto mb-5 rounded-xl shadow-sm logo-spin-once"
             />
             <h2 className="text-xl font-semibold text-foreground mb-2">Sign in</h2>
             <p className="text-sm text-muted-foreground leading-relaxed">
