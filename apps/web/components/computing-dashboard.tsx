@@ -20,7 +20,7 @@ import {
   AlertTriangle,
   X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, getUserColor } from "@/lib/utils";
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -133,21 +133,7 @@ function getGroupMembers(report: ComputingReport | null): string[] {
   return report?.group_members ?? [];
 }
 
-// User color palette — distinct, accessible colors
-const USER_COLORS = [
-  "#3b82f6", // blue
-  "#ef4444", // red
-  "#10b981", // emerald
-  "#f59e0b", // amber
-  "#8b5cf6", // violet
-  "#ec4899", // pink
-  "#06b6d4", // cyan
-  "#f97316", // orange
-  "#6366f1", // indigo
-  "#14b8a6", // teal
-  "#e11d48", // rose
-  "#84cc16", // lime
-];
+// User colors imported from shared utility
 
 // ─── Progress Bar ─────────────────────────────────────────────
 
@@ -246,7 +232,7 @@ function SUByUserTable({ report, userColorMap, selectedUsers, onToggleUser }: {
   const hasSelection = selectedUsers.size > 0;
 
   return (
-    <Section title="SU Usage by User" icon={Users}>
+    <Section title="SU Usage for the Current Cycle" icon={Users}>
       <div className="space-y-2">
         {users.map((u) => {
           const pct = total > 0 ? (u.consumed / total) * 100 : 0;
@@ -1129,16 +1115,7 @@ export function ComputingDashboard() {
     return () => clearInterval(interval);
   }, [fetchReport]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20 text-sm text-muted-foreground">
-        <div className="loader-morph mr-3" />
-        Loading computing report...
-      </div>
-    );
-  }
-
-  if (error) {
+  if (error && !report) {
     return (
       <div className="border border-border rounded-lg bg-card p-6 text-center">
         <AlertTriangle className="mx-auto mb-2 text-amber-500" size={24} />
@@ -1149,7 +1126,84 @@ export function ComputingDashboard() {
     );
   }
 
-  if (!report) return null;
+  // Show skeleton layout while loading
+  if (!report) {
+    return (
+      <div className="space-y-4 animate-pulse">
+        {/* Header skeleton */}
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-muted-foreground flex items-center gap-2">
+            <Clock size={12} />
+            Loading report...
+          </div>
+          <div className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <RefreshCw size={12} className="animate-spin" />
+            Refresh
+          </div>
+        </div>
+
+        {/* SU Overview + Storage Quota skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Section title="Service Units" icon={Flame}>
+            <div className="space-y-3">
+              <div className="h-3 bg-secondary rounded w-3/4" />
+              <div className="h-8 bg-secondary rounded" />
+              <div className="h-3 bg-secondary rounded w-1/2" />
+              <div className="h-3 bg-secondary rounded w-2/3" />
+            </div>
+          </Section>
+          <Section title="Storage Quotas" icon={HardDrive}>
+            <div className="space-y-3">
+              <div className="h-3 bg-secondary rounded w-3/4" />
+              <div className="h-8 bg-secondary rounded" />
+              <div className="h-3 bg-secondary rounded w-1/2" />
+              <div className="h-3 bg-secondary rounded w-2/3" />
+            </div>
+          </Section>
+        </div>
+
+        {/* SU by User skeleton */}
+        <Section title="SU Usage for the Current Cycle" icon={Users}>
+          <div className="space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="h-3 bg-secondary rounded w-20" />
+                <div className="h-3 bg-secondary rounded flex-1" />
+                <div className="h-3 bg-secondary rounded w-16" />
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        {/* Active Jobs skeleton */}
+        <Section title="Active Jobs" icon={Cpu}>
+          <div className="space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div className="h-3 bg-secondary rounded w-16" />
+                <div className="h-3 bg-secondary rounded w-24" />
+                <div className="h-3 bg-secondary rounded flex-1" />
+                <div className="h-3 bg-secondary rounded w-20" />
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        {/* Partitions skeleton */}
+        <Section title="Partitions" icon={Server}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="border border-border rounded-lg p-4 space-y-2">
+                <div className="h-3 bg-secondary rounded w-1/3" />
+                <div className="h-6 bg-secondary rounded" />
+                <div className="h-3 bg-secondary rounded w-1/2" />
+              </div>
+            ))}
+          </div>
+        </Section>
+      </div>
+    );
+  }
 
   // Global user color map — built once, shared by all components
   const globalUserColorMap = (() => {
@@ -1169,9 +1223,9 @@ export function ComputingDashboard() {
       }
     }
     const map = new Map<string, string>();
-    Array.from(allUsers).sort().forEach((user, i) => {
-      map.set(user, USER_COLORS[i % USER_COLORS.length]);
-    });
+    for (const user of allUsers) {
+      map.set(user, getUserColor(user));
+    }
     return map;
   })();
 
