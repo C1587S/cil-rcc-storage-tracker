@@ -1,0 +1,13 @@
+# Root .dockerignore — used by web service (context: repo root)
+# Other services (api, clickhouse) use their own context/.dockerignore
+.git/
+node_modules/
+apps/api/
+clickhouse/
+scanner/
+scripts/
+cil_scans/
+snapshots/
+nohup.out
+*.md
+!docs/
