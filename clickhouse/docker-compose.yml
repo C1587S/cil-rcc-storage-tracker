@@ -16,7 +16,7 @@ services:
     environment:
       CLICKHOUSE_DB: filesystem
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
 
     ulimits:
@@ -25,7 +25,7 @@ services:
         hard: 262144
 
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      test: ["CMD-SHELL", "clickhouse-client --password \"$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'"]
       interval: 10s
       timeout: 5s
       retries: 5

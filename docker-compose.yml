@@ -16,7 +16,7 @@ services:
     environment:
       CLICKHOUSE_DB: filesystem
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
 
     ulimits:
@@ -25,7 +25,7 @@ services:
         hard: 262144
 
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      test: ["CMD-SHELL", "clickhouse-client --password \"$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -43,6 +43,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+    environment:
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
     command:
       - /bin/sh
       - -c
@@ -52,8 +54,9 @@ services:
         import time
         from clickhouse_driver import Client
 
+        import os
         print('Waiting for ClickHouse...')
-        client = Client(host='clickhouse')
+        client = Client(host='clickhouse', password=os.environ.get('CLICKHOUSE_PASSWORD', ''))
         for i in range(30):
             try:
                 client.execute('SELECT 1')
@@ -205,7 +208,7 @@ services:
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: 9000
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DATABASE: filesystem
     volumes:
       # Mount the cil_scans directory (adjust path as needed)
@@ -231,7 +234,7 @@ services:
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: 9000
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DATABASE: filesystem
       MAX_EXECUTION_TIME: 20
       MAX_RESULT_ROWS: 5000
