@@ -67,6 +67,15 @@ export interface NLToSQLResponse {
   snapshot_date: string;
 }
 
+export interface FeedbackEntry {
+  id: string;
+  username: string;
+  message: string;
+  created_at: string;
+  parent_id?: string | null;
+  replies: FeedbackEntry[];
+}
+
 // Computing monitoring types
 
 export interface ComputingReportMeta {
