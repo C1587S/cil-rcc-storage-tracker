@@ -1,0 +1,41 @@
+# Tree Explorer
+
+The Tree Explorer lets you browse the filesystem like a file manager. It shows the directory hierarchy with sizes, so you can drill down and find where storage is being used.
+
+[Open Tree Explorer](tab:tree)
+
+![Tree Explorer](theme:tree)
+
+---
+
+## How it works
+
+Start at the top level and click any directory to expand it. Each entry shows:
+
+- **Name**: the file or directory name
+- **Size**: how much space it uses
+- **Recursive size** (for directories): the total size of everything inside, all the way down
+- **Owner**: who owns it
+- **File count**: how many files are inside (for directories)
+
+The view fills the available screen height. If the list is longer than the viewport, it scrolls.
+
+---
+
+## Direct size vs. recursive size
+
+This is the most important distinction in the Tree Explorer.
+
+- **Direct size** is the sum of files sitting right inside a directory, not counting subdirectories.
+- **Recursive size** is the total of everything underneath, every file in every subdirectory, no matter how deep.
+
+A directory might show 500 MB of direct files but 50 TB recursively. The recursive size is usually what you care about when asking "how big is this folder?"
+
+Recursive sizes are pre-computed at import time, so lookups are instant.
+
+---
+
+## Tips
+
+- Start broad (top-level directories) and drill down to where you see large sizes.
+- If you find something interesting, switch to the Query Console to run a detailed query on that path.

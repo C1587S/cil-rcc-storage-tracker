@@ -1,0 +1,147 @@
+# Deployment
+
+Everything runs in Docker containers on a local server. A Cloudflare Tunnel makes the dashboard accessible from the web.
+
+---
+
+## Quick start
+
+```bash
+docker compose up -d
+```
+
+This starts three containers:
+
+- **tracker-clickhouse**: the database
+- **tracker-api**: the FastAPI backend
+- **tracker-web**: the Next.js dashboard
+
+---
+
+## Rebuilding after changes
+
+If you change frontend code:
+
+```bash
+docker compose build web && docker compose up -d web
+```
+
+If you change backend code:
+
+```bash
+docker compose build api && docker compose up -d api
+```
+
+---
+
+## Environment variables
+
+The API container needs a few environment variables. Set them in `apps/api/.env`:
+
+| Variable | Purpose |
+|----------|---------|
+| `CLICKHOUSE_HOST` | ClickHouse hostname (default: `clickhouse`) |
+| `CLICKHOUSE_PORT` | ClickHouse port (default: `9000`) |
+| `GROQ_API_KEY` | API key for the AI model |
+
+The web container uses:
+
+| Variable | Purpose |
+|----------|---------|
+| `NEXT_PUBLIC_API_URL` | URL of the API (set in docker-compose.yml) |
+| `NEXT_PUBLIC_BASE_PATH` | URL subpath (e.g. `/cil-rcc-tracker`) |
+
+---
+
+## Updating snapshots
+
+### Automatic (recommended)
+
+Set up cron to check for new data three times a day:
+
+```bash
+./scripts/setup-cron.sh
+```
+
+This installs cron jobs at 5 AM, noon, and 9 PM that run `update-snapshot.sh`.
+
+### Manual
+
+```bash
+./scripts/update-snapshot.sh              # detect new data, import, delete old
+./scripts/update-snapshot.sh --force      # re-import even if date matches
+./scripts/update-snapshot.sh --keep-old   # don't delete the previous snapshot
+```
+
+The script does four things:
+1. Checks if new Parquet data is available
+2. Downloads and validates it
+3. Imports it into ClickHouse as a new snapshot
+4. Deletes the old snapshot (unless `--keep-old`)
+
+---
+
+## Cloudflare Tunnel
+
+The tunnel connects the local server to a public URL without opening ports.
+
+### Setup
+
+Create the tunnel and configure it (one-time):
+
+```bash
+cloudflared tunnel create dev-tracker
+cloudflared tunnel route dns dev-tracker your-domain.com
+```
+
+### Run as a systemd service
+
+This keeps the tunnel running across reboots and restarts it if it crashes:
+
+```bash
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/cloudflared.service << 'EOF'
+[Unit]
+Description=Cloudflare Tunnel (dev-tracker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/cloudflared tunnel run dev-tracker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable cloudflared
+systemctl --user start cloudflared
+loginctl enable-linger $USER
+```
+
+### Managing the tunnel
+
+```bash
+systemctl --user status cloudflared      # check if it's running
+systemctl --user restart cloudflared     # restart
+systemctl --user stop cloudflared        # stop
+journalctl --user -u cloudflared -f      # view logs
+```
+
+---
+
+## Directory structure
+
+```
+dev-tracker-app/
+  scanner/          Rust filesystem scanner
+  clickhouse/       database schema and scripts
+  apps/api/         FastAPI backend
+  apps/web/         Next.js frontend
+  scripts/          automation (update, cron, import)
+  docs/             this documentation
+  docker-compose.yml
+```

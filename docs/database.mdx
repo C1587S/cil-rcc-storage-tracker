@@ -1,0 +1,99 @@
+# Database
+
+The database is ClickHouse, a columnar engine built for analytical queries. It can scan 72 million rows in under 100 milliseconds.
+
+Each daily scan produces a **snapshot**: a complete picture of the filesystem on that date. You pick which snapshot to query from the dropdown at the top of the dashboard.
+
+---
+
+## Tables
+
+### `filesystem.entries`
+
+The main table. One row per file or directory, per snapshot.
+
+| Column | Type | What it is |
+|--------|------|-----------|
+| `snapshot_date` | Date | Which snapshot this belongs to |
+| `path` | String | Full absolute path |
+| `parent_path` | String | Parent directory |
+| `name` | String | Filename or directory name |
+| `size` | UInt64 | Size in bytes (0 for directories) |
+| `owner` | String | Unix owner |
+| `is_directory` | UInt8 | 1 = directory, 0 = file |
+| `file_type` | String | Extension (e.g. "py", "csv") or "directory" |
+| `modified_time` | UInt32 | Last modified (Unix timestamp) |
+| `accessed_time` | UInt32 | Last accessed (Unix timestamp) |
+| `created_time` | UInt32 | Created (Unix timestamp) |
+| `depth` | UInt16 | How deep in the tree |
+| `top_level_dir` | String | Top-level category (home_dirs, gcp, etc.) |
+| `inode` | UInt64 | Unix inode |
+| `permissions` | UInt16 | Permission bits |
+| `group_name` | String | Unix group |
+
+### `filesystem.directory_recursive_sizes`
+
+Pre-computed recursive sizes for every directory. One row per directory, per snapshot. This powers the Tree Explorer and Voronoi views.
+
+| Column | Type | What it is |
+|--------|------|-----------|
+| `path` | String | Directory path |
+| `recursive_size_bytes` | UInt64 | Total bytes in the entire subtree |
+| `recursive_file_count` | UInt64 | Total files in the subtree |
+| `recursive_dir_count` | UInt64 | Total subdirectories in the subtree |
+| `direct_size_bytes` | UInt64 | Bytes of files directly in this directory |
+| `direct_file_count` | UInt64 | Files directly in this directory |
+
+### `filesystem.snapshots`
+
+Metadata about each imported snapshot: total entries, total size, when the scan ran, and when it was imported.
+
+---
+
+## Key concepts
+
+### Snapshots
+
+A snapshot is one day's scan. It has a date like `2025-12-12`. Every query runs against a single snapshot. You choose which one in the dashboard.
+
+In SQL, the snapshot filter looks like this:
+
+```sql
+WHERE snapshot_date = %(snapshot_date)s
+```
+
+The `%(snapshot_date)s` part is a parameter that the backend fills in automatically with whatever snapshot you have selected.
+
+### Direct size vs. recursive size
+
+- **Direct size** is the size of files sitting right inside a directory, not counting subdirectories.
+- **Recursive size** is the total size of everything underneath, all the way down.
+
+For example, `/project/cil/gcp` might have 1 GiB of direct files but contain hundreds of TB across its subdirectories.
+
+The `entries` table has `size` (direct). The `directory_recursive_sizes` table has both.
+
+---
+
+## Writing queries
+
+### Rules
+
+- Only `SELECT` statements. No INSERT, UPDATE, DELETE, DROP.
+- Every query must include `snapshot_date = %(snapshot_date)s` in the WHERE clause.
+- Results are capped at 8000 rows. If you leave out LIMIT, the backend adds one.
+- The connection is read-only at the driver level.
+
+### Functions to use
+
+ClickHouse has its own functions. Avoid `LIKE` with `%` because the Python driver treats `%` as a parameter placeholder and it breaks.
+
+| Instead of | Use |
+|-----------|-----|
+| `path LIKE '/project/cil/%'` | `startsWith(path, '/project/cil/')` |
+| `name ILIKE '%report%'` | `positionCaseInsensitive(name, 'report') > 0` |
+| `name LIKE '%.csv'` | `endsWith(lower(name), '.csv')` |
+| raw bytes | `formatReadableSize(size)` returns "1.23 GiB" |
+| raw timestamps | `toDateTime(modified_time)` returns "2025-01-15 10:30:00" |
+| days since access | `dateDiff('day', toDateTime(accessed_time), now())` |
+| path components | `splitByChar('/', path)[3]` extracts the 3rd segment |

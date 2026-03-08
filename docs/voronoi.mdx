@@ -1,0 +1,56 @@
+# Voronoi Treemap
+
+The Voronoi view is a visual map of storage usage. Every file and directory becomes a region, and the area of each region is proportional to its size. Big files take up more space on screen. It's a fast way to spot what's eating storage.
+
+[Open Voronoi](tab:voronoi)
+
+![Voronoi Treemap](theme:voronoi)
+
+---
+
+## How to use it
+
+1. Select a snapshot from the dropdown.
+2. Click **Run Visualization** to load the data. (It doesn't load automatically because the query is large.)
+3. The treemap appears. Larger regions = more storage.
+4. Click any region to zoom into that directory.
+5. Use the breadcrumb at the top to navigate back up.
+
+---
+
+## The partition panel
+
+When you hover over or click a region, a side panel shows details:
+
+- Path
+- Size (human-readable)
+- Owner
+- Type (file or directory)
+
+---
+
+## Reference directory
+
+The Voronoi uses a "reference directory" to decide what to show. By default it's `/project/cil`. Everything under that path is visualized, and sizes are relative to the reference total.
+
+You can change the reference directory to zoom into a specific subtree.
+
+---
+
+## Why the manual execution gate?
+
+The Voronoi loads a lot of data (the recursive sizes of all directories under the reference path). To avoid running this large query every time you switch snapshots or reload the page, the visualization starts with a button instead of loading automatically. Click it when you're ready.
+
+If you change the selected snapshot, the visualization resets and asks you to click again.
+
+---
+
+## Tips
+
+- Use Voronoi for a bird's-eye view of where space is going.
+- Click into large regions to drill down.
+- If you spot something worth investigating, note the path and switch to the Query Console for detailed queries.
+
+---
+
+> **TODO:** The current Voronoi only visualizes folder size. It would be useful to add a mode that sizes regions by number of files instead. This would help identify directories with a huge number of small files, which are a different kind of storage problem (inode pressure, slow operations) that the size-based view does not surface.

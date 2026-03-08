@@ -1,0 +1,149 @@
+# CIL RCC Console
+
+A dashboard for the CIL team to monitor and manage our computing and storage resources on the RCC. The aim is to make it easier to understand and improve how we use the cluster. It supports common tasks like looking up files, checking resource usage, and identifying storage hotspots without relying on the terminal for routine checks. Ultimately, the goal is to smooth our daily workflow and reduce avoidable bottlenecks.
+
+This is an initial version and will likely evolve as we start using it. Since its purpose is to support our work, suggestions, concerns, and ideas for improvement are very welcome. Please share them in the [Feedback](feedback.mdx) section.
+
+---
+
+## What's in the dashboard
+
+The dashboard has four main sections. Here's a quick overview of what each one does and when you'd use it.
+
+### Query Console
+
+The main tool for searching and analyzing the filesystem data. You can write SQL queries directly, pick from a set of templates, or just type a plain English question and let the AI generate the SQL for you.
+
+This is the go-to for things like: finding files that match a pattern, compiling usage reports, identifying large or stale files that could be moved to cold storage or removed. You can export results as CSV or Markdown to share with the team. If you already know what you're looking for, this is the fastest path.
+
+More details in [Query Console](query-console.mdx) | [Open Query Console](tab:query)
+
+### Tree Explorer
+
+Browse the filesystem like a directory tree, similar to mounting a volume and exploring it in a file manager. Each entry shows size, owner, timestamps, and other metadata. Useful for poking around a directory when you're not sure what's in there.
+
+Note: the first time you load a large directory, it queries the database on the fly, so it might take a few seconds. That's expected.
+
+More details in [Tree Explorer](tree-explorer.mdx) | [Open Tree Explorer](tab:tree)
+
+### Voronoi Treemap
+
+A visual map of storage usage. Each region represents a directory or file, and its area is proportional to how much space it takes. It's an attempt at making it easy to spot the biggest directories and see what's inside them at a glance. There are probably better ways to do this, but it works for getting a quick sense of where space is going.
+
+The Voronoi and Tree Explorer can help you find files worth cleaning up. But if you already know the pattern of the files you're looking for (e.g., "all .log files older than 6 months"), the [Query Console](query-console.mdx) is more efficient.
+
+Like the Tree Explorer, the first load runs a large query and can take a few seconds or even a minute for deep trees. That's normal.
+
+More details in [Voronoi Treemap](voronoi.mdx) | [Open Voronoi](tab:voronoi)
+
+### Computing Panel
+
+Shows the current state of CIL's compute resources on the RCC: CPU and RAM usage across our partitions on Midway2 and Midway3, active Slurm jobs, and quota information for service units and storage.
+
+The point is to let you check on things quickly: is anyone running a big job? How loaded are the nodes? Are we close to our SU or storage quotas? You can do this from your phone, a laptop, wherever. No need to SSH into the cluster.
+
+Slurm data refreshes every 15 minutes during weekday working hours (9 AM to 5 PM) and every hour on weekends. Quota data comes from the daily snapshots and updates once per day.
+
+[Open Computing Panel](tab:computing)
+
+---
+
+## How It Works
+
+> **Note:** This is currently hosted on a local machine behind a Cloudflare Tunnel. The setup described here is a short-term arrangement. One of the pending tasks is to move this to a more stable institutional web hosting platform, so the deployment details will change. Think of this as a technical note for maintaining things in the meantime.
+
+A daily scan of the CIL shared filesystem generates a snapshot of every file and directory. The dashboard provides a framework for CIL users to explore this data. Below is the full pipeline from scan to browser.
+
+### Step 1. Scan the filesystem
+
+A Rust program runs on the RCC cluster every night around 2 AM (via Slurm). It walks the entire `/project/cil` tree (about 72 million files and directories) and records the path, size, owner, timestamps, and permissions of each one.
+
+The output is a set of Parquet files. Parquet is a compact columnar format, good for moving large amounts of structured data.
+
+#### Starting the Slurm jobs (one-time setup)
+
+The scan runs as two self-resubmitting Slurm jobs. You submit them once, manually, and they keep running every day on their own.
+
+**On Midway3** (where the scan runs):
+
+```bash
+sbatch --begin=02:00 scanner/scripts/daily_pipeline.sh
+```
+
+This submits a job array that scans 7 top-level directories in parallel (one Slurm task per directory). When all tasks finish, it writes a flag file and resubmits itself for tomorrow at 2 AM.
+
+**On Midway2** (where the results are published):
+
+```bash
+sbatch --begin=04:00 scanner/scripts/daily_publish.sh
+```
+
+This checks for the flag from the scan job, copies the Parquet files to `public_html`, and resubmits itself for tomorrow at 4 AM.
+
+Both jobs are fire-and-forget. Once submitted, they run indefinitely. To stop them, cancel the pending job with `scancel <job_id>` (find it with `squeue -u $USER`).
+
+If a scan fails (any task in the array), the flag is not written and the publish step skips that day. The next day's scan starts fresh.
+
+### Step 2. Publish the data
+
+Once the scan finishes, the Parquet files are placed on Midway2's public HTTP server. This makes them accessible from outside the cluster without SSH.
+
+### Step 3. Download and validate
+
+On the local server, a script (`download-scans.sh`) pulls the Parquet files over HTTP. It checks each file with Polars to make sure the data is intact (correct row counts, valid schema). If a file is corrupted, it re-downloads it.
+
+This runs automatically three times a day (5 AM, noon, 9 PM) via cron.
+
+### Step 4. Import into the database
+
+Another script (`update-snapshot.sh`) detects when new data arrives and imports it into ClickHouse. ClickHouse is a columnar database built for fast analytics. It can query 72 million rows in under 100 milliseconds.
+
+Each import creates a "snapshot": a complete picture of the filesystem on that day. Old snapshots are deleted after a successful import (unless you pass `--keep-old`).
+
+### Step 5. Serve the data
+
+A FastAPI backend sits in front of ClickHouse and exposes the data through a REST API. It handles:
+
+- Listing available snapshots
+- Browsing the directory tree
+- Searching files by name
+- Running SQL queries (with safety guardrails)
+- Translating plain English questions into SQL
+
+All queries are read-only. The backend enforces SELECT-only, requires a snapshot filter, and caps results at 8000 rows.
+
+### Step 6. Display in the dashboard
+
+A Next.js web app consumes the API and provides the four views described above (Query Console, Tree Explorer, Voronoi, Computing).
+
+### Step 7. Computing monitoring
+
+A scheduled process queries Slurm for active jobs and node usage across CIL partitions on Midway2 and Midway3, and makes the data available through the API.
+
+During weekday working hours (9 AM to 5 PM) this runs every 15 minutes. On weekends it runs every hour. Quota data (SU and storage) comes from the daily filesystem snapshots.
+
+### Step 8. AI assistance
+
+A local instance of llama-3.3-70b handles natural language queries. You type something like "show me the 10 biggest CSV files not accessed in 2 years" and it generates the SQL for you. It also offers a "Fix with AI" option when a query fails.
+
+The model runs entirely on the local server. No data leaves the machine.
+
+### Step 9. Public access
+
+A Cloudflare Tunnel connects the local server to a public URL. It runs as a systemd service that restarts automatically if it crashes and survives reboots.
+
+---
+
+## Summary
+
+| Stage | What | When |
+|-------|------|------|
+| Scan | Rust scanner walks `/project/cil` on RCC | Daily, ~2 AM |
+| Publish | Parquet files placed on Midway2 HTTP | After scan |
+| Download | Local server pulls and validates Parquet | 3x daily (cron) |
+| Import | ClickHouse creates a new snapshot | After download |
+| Serve | FastAPI exposes data via REST API | Always running |
+| Display | Dashboard renders queries and visualizations | Always running |
+| Computing | Slurm jobs and node usage from RCC | Every 15 min (weekdays), hourly (weekends) |
+| AI | llama-3.3-70b translates English to SQL | On demand, local |
+| Tunnel | Cloudflare connects local server to the web | Always running |

@@ -25,4 +25,5 @@ export const DOC_SECTIONS: DocSection[] = [
   { id: 'voronoi', title: 'Voronoi Treemap', content: voronoi },
   { id: 'examples', title: 'Examples', content: examples },
   { id: 'deployment', title: 'Deployment', content: deployment },
+  { id: 'feedback', title: 'Feedback', content: '' },
 ];

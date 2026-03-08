@@ -1,0 +1,97 @@
+# Query Console
+
+The Query Console is where you explore the data. It has two tabs: **Filter Builder** for quick form-based searches, and **Query Console** for SQL, whether you write it yourself, pick a template, or ask in plain English.
+
+[Open Query Console](tab:query)
+
+![Query Console](theme:query)
+
+---
+
+## Query Console tab
+
+This is a single panel with three ways to get started. All three land in the same SQL editor.
+
+### 1. Ask in plain English
+
+Type a question in the prompt panel at the top. Something like:
+
+> Show me the 10 biggest files not accessed in 2 years
+
+Click **Generate SQL** and the AI translates it into a ClickHouse query. The generated SQL appears in the editor below, where you can review it, tweak it, and run it.
+
+The AI model (llama-3.3-70b) runs locally on the server. Nothing leaves the machine.
+
+### 2. Pick a template
+
+Expand the **Templates & Examples** section. Templates are grouped by category (files, directories, storage, hygiene). Click one and its SQL loads into the editor.
+
+There's also an **Example Prompts** section with sample questions you can click to load into the AI prompt panel.
+
+### 3. Write SQL directly
+
+Type or paste SQL straight into the editor. The placeholder text shows the basic structure:
+
+```sql
+SELECT path, name, formatReadableSize(size) AS size, owner
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/gcp/')
+  AND is_directory = 0
+ORDER BY size DESC
+LIMIT 100
+```
+
+You don't need to fill in `%(snapshot_date)s`. The backend replaces it with whatever snapshot you have selected.
+
+### Running and results
+
+Click **Run Query** to execute. Results appear in a table with:
+
+- **Column highlighting**: click a column header to highlight it
+- **Row highlighting**: click a row to highlight it
+- **Include filter** (blue): keep only rows matching a pattern
+- **Exclude filter** (red): remove rows matching a pattern
+- **Regex toggle** (`/rx`): switch filters to regex mode
+- **Summary**: group and count by text columns
+- **Export**: download as CSV, TXT, or copy as Markdown
+- **Add to Report**: save results to the Report Builder for combined export
+
+### When something goes wrong
+
+If a query fails, you'll see:
+
+1. The raw error message (in red)
+2. A plain English explanation of what happened and how to fix it
+3. A **Fix with AI** button that sends the broken query and error to the AI, which returns a corrected version
+
+---
+
+## Filter Builder tab
+
+A form-based search for people who don't want to write SQL.
+
+- **Search text**: type a filename pattern. Comma-separate for multiple patterns.
+- **Match mode**: contains, exact, starts with, or ends with
+- **Path scope**: search everywhere or under a specific directory
+- **Type**: files, folders, or both
+- **Size range**: filter by min/max size in MB
+- **Result limit**: 50 to 8000 rows
+
+There are preset searches at the top you can click to fill in the form.
+
+Results appear in the same table as the Query Console, with the same highlighting, filtering, and export features.
+
+---
+
+## Guardrails
+
+The backend enforces a few rules to keep things safe:
+
+- Only SELECT queries (no changes to the database)
+- Must filter on `snapshot_date`
+- Maximum 8000 rows returned
+- No external table functions (url, remote, s3, etc.)
+- The database connection is read-only at the driver level
+
+If you break a rule, you get a clear error explaining what went wrong.

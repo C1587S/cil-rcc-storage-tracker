@@ -1,0 +1,214 @@
+# Query Examples
+
+A collection of useful queries you can paste into the SQL editor. All of them require a snapshot to be selected. The `%(snapshot_date)s` parameter is filled in automatically.
+
+[Open Query Console](tab:query)
+
+---
+
+## Find the largest files in a directory
+
+```sql
+SELECT
+  path,
+  name,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(modified_time) AS modified
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/gcp/')
+  AND is_directory = 0
+ORDER BY size DESC
+LIMIT 20
+```
+
+Change the path to look in a different directory.
+
+---
+
+## Files not accessed in 180 days
+
+```sql
+SELECT
+  path,
+  name,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(accessed_time) AS last_accessed,
+  dateDiff('day', toDateTime(accessed_time), now()) AS days_since_access
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/')
+  AND is_directory = 0
+  AND accessed_time < toUnixTimestamp(now() - INTERVAL 180 DAY)
+ORDER BY size DESC
+LIMIT 100
+```
+
+Change `180` to any number of days. Good for finding stale data.
+
+---
+
+## File type breakdown
+
+```sql
+SELECT
+  file_type,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/gcp/')
+  AND is_directory = 0
+  AND file_type != ''
+GROUP BY file_type
+ORDER BY sum(size) DESC
+LIMIT 20
+```
+
+Shows which file types use the most space in a directory.
+
+---
+
+## Home directory audit
+
+```sql
+SELECT
+  splitByChar('/', path)[5] AS user,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size,
+  formatReadableSize(avg(size)) AS avg_file_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/home_dirs/')
+  AND is_directory = 0
+  AND length(splitByChar('/', path)) >= 6
+GROUP BY user
+ORDER BY file_count DESC
+LIMIT 20
+```
+
+Ranks users by how many files they have in their home directories.
+
+---
+
+## Top-level directory sizes
+
+```sql
+SELECT
+  splitByChar('/', path)[3] AS top_level_dir,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND is_directory = 0
+  AND length(splitByChar('/', path)) >= 4
+GROUP BY top_level_dir
+ORDER BY sum(size) DESC
+LIMIT 10
+```
+
+Quick overview of how storage is distributed across top-level directories.
+
+---
+
+## Directories with the most empty files
+
+```sql
+SELECT
+  parent_path,
+  count() AS empty_file_count
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/')
+  AND is_directory = 0
+  AND size = 0
+GROUP BY parent_path
+ORDER BY empty_file_count DESC
+LIMIT 20
+```
+
+Empty files don't waste much space, but thousands of them can indicate build artifacts or incomplete processes.
+
+---
+
+## Large log files
+
+```sql
+SELECT
+  path,
+  name,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(modified_time) AS modified
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/')
+  AND is_directory = 0
+  AND endsWith(lower(name), '.log')
+ORDER BY size DESC
+LIMIT 50
+```
+
+Log files are often safe to archive or remove.
+
+---
+
+## Large archives
+
+```sql
+SELECT
+  path,
+  name,
+  formatReadableSize(size) AS size,
+  owner,
+  toDateTime(modified_time) AS modified
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/')
+  AND is_directory = 0
+  AND (endsWith(lower(name), '.zip')
+    OR endsWith(lower(name), '.tar')
+    OR endsWith(lower(name), '.gz')
+    OR endsWith(lower(name), '.tgz')
+    OR endsWith(lower(name), '.bz2'))
+ORDER BY size DESC
+LIMIT 50
+```
+
+Compressed archives that might be duplicates or no longer needed.
+
+---
+
+## Directories with the most files
+
+```sql
+SELECT
+  parent_path,
+  count() AS file_count,
+  formatReadableSize(sum(size)) AS total_size
+FROM filesystem.entries
+WHERE snapshot_date = %(snapshot_date)s
+  AND startsWith(path, '/project/cil/')
+  AND is_directory = 0
+GROUP BY parent_path
+ORDER BY file_count DESC
+LIMIT 20
+```
+
+Directories with tens of thousands of files can cause performance issues on shared filesystems.
+
+---
+
+## Using the AI instead
+
+You can also type these as plain English in the prompt panel:
+
+- "Show me the 10 biggest CSV files under /project/cil/gcp"
+- "Files not accessed in 5 years, sorted by size"
+- "Which users have the most files in home_dirs?"
+- "Find all .tmp and .bak files larger than 100 MB"
+- "Total storage used by each file type under /project/cil"
+
+The AI generates the SQL for you. You can review and edit it before running.

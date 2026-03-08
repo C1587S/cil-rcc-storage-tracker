@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { DOC_SECTIONS } from "@/lib/docs-content";
 import { ArchitectureFlow } from "./architecture-flow";
+import { FeedbackSection } from "./feedback-section";
 import { useAppStore } from "@/lib/store";
 
 const basePath = "/cil-rcc-tracker";
@@ -29,7 +30,7 @@ const THEME_IMAGES: Record<string, { light: string; dark: string }> = {
 
 // Allow theme: protocol through react-markdown's URL sanitizer
 function urlTransform(url: string): string {
-  if (url.startsWith("theme:")) return url;
+  if (url.startsWith("theme:") || url.startsWith("tab:")) return url;
   // Default behavior: allow http, https, mailto
   const protocols = ["http", "https", "mailto"];
   const colon = url.indexOf(":");
@@ -38,7 +39,7 @@ function urlTransform(url: string): string {
   return protocols.includes(protocol) ? url : "";
 }
 
-export function DocsPage() {
+export function DocsPage({ onNavigateToTab }: { onNavigateToTab?: (tabId: string) => void } = {}) {
   const [activeSectionId, setActiveSectionId] = useState(DOC_SECTIONS[0].id);
   const activeSection = DOC_SECTIONS.find((s) => s.id === activeSectionId)!;
   const activeIndex = DOC_SECTIONS.findIndex((s) => s.id === activeSectionId);
@@ -71,7 +72,7 @@ export function DocsPage() {
 
       {/* Content */}
       <article className="flex-1 pl-8 pr-4 pt-2">
-        <div className="prose-docs">
+        {activeSectionId !== "feedback" && <div className="prose-docs">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             urlTransform={urlTransform}
@@ -121,19 +122,20 @@ export function DocsPage() {
                   if (images) {
                     const imgSrc = theme === "dark" ? images.dark : images.light;
                     return (
-                      <span className="block my-6">
+                      <span className="block my-6 max-w-[85%]">
                         <img
                           src={imgSrc}
                           alt={alt || key}
-                          className="rounded-lg border border-border shadow-sm w-full"
+                          className="rounded-lg border-2 border-border/60 shadow-md opacity-90"
                         />
+                        {alt && <span className="block text-[11px] text-muted-foreground/60 mt-1.5 italic">{alt}</span>}
                       </span>
                     );
                   }
                 }
                 return (
-                  <span className="block my-4">
-                    <img src={src} alt={alt} className="rounded-lg border border-border max-w-full" />
+                  <span className="block my-4 max-w-[85%]">
+                    <img src={src} alt={alt} className="rounded-lg border-2 border-border/60 shadow-md opacity-90" />
                   </span>
                 );
               },
@@ -197,6 +199,19 @@ export function DocsPage() {
                     </a>
                   );
                 }
+                // Tab links: "tab:query" → navigate to dashboard tab
+                if (href?.startsWith("tab:")) {
+                  const tabId = href.replace("tab:", "");
+                  return (
+                    <a
+                      href="#"
+                      className="inline-flex items-center gap-1 text-primary hover:underline cursor-pointer font-medium"
+                      onClick={(e) => { e.preventDefault(); onNavigateToTab?.(tabId); }}
+                    >
+                      {children} →
+                    </a>
+                  );
+                }
                 return (
                   <a
                     href={href}
@@ -219,7 +234,11 @@ export function DocsPage() {
               ? activeSection.content.split(/(?=## How It Works)/)[0]
               : activeSection.content}
           </ReactMarkdown>
-        </div>
+        </div>}
+
+        {activeSectionId === "feedback" && (
+          <FeedbackSection />
+        )}
 
         {activeSectionId === "architecture" && (
           <>
@@ -283,6 +302,13 @@ export function DocsPage() {
                         return (
                           <a href="#" className="text-primary hover:underline cursor-pointer"
                             onClick={(e) => { e.preventDefault(); setActiveSectionId(sectionId); }}>{children}</a>
+                        );
+                      }
+                      if (href?.startsWith("tab:")) {
+                        const tabId = href.replace("tab:", "");
+                        return (
+                          <a href="#" className="inline-flex items-center gap-1 text-primary hover:underline cursor-pointer font-medium"
+                            onClick={(e) => { e.preventDefault(); onNavigateToTab?.(tabId); }}>{children} →</a>
                         );
                       }
                       return <a href={href} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">{children}</a>;
