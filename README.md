@@ -1,22 +1,34 @@
-# RCC Storage Tracker
+# CIL RCC Console
 
-**Complete workflow**: Scan filesystem on RCC, download Parquet files, deploy dashboard on cloud server
+Track 400+ TB of storage and compute resources at UChicago RCC from a single dashboard.
 
 ---
 
 ## Overview
 
-A system to track 400+ TB of storage at UChicago RCC:
-- **Scanner** (Rust): Scans filesystem, generates Parquet snapshots
-- **Database** (ClickHouse): Stores 74M+ entries, <0.1s queries
-- **Dashboard** (Next.js): Dark/light mode, interactive Voronoi treemap
-- **Computing Monitor**: Live view of CIL node usage, Slurm jobs, and resource quotas
+- **Scanner** (Rust): Runs daily on RCC via Slurm, scans `/project/cil`, generates Parquet snapshots
+- **Database** (ClickHouse): 72M+ entries, <0.1s queries, password-protected
+- **API** (FastAPI): Query, browse, search endpoints with SQL guardrails (SELECT only, row limits)
+- **Dashboard** (Next.js): Dark/light mode, responsive (mobile + desktop), GNOME Adwaita styling
+- **AI Query**: Natural language to SQL, runs locally -- no data leaves the server
+- **Tunnel** (Cloudflare): Exposes local server to the web over HTTPS as a systemd service
+
+### Dashboard Tabs
+
+| Tab | Description |
+|-----|-------------|
+| **Docs** | In-app documentation with interactive architecture diagram (ReactFlow) |
+| **Computing** | Live CIL node usage (PCB-style rack diagram), Slurm jobs, SU/storage quotas |
+| **Query Console** | Unified SQL editor -- natural language prompt, templates, or raw SQL. Results with column/row highlighting, include/exclude filters, CSV/TXT/MD export |
+| **Filter Builder** | Form-based filesystem search with presets, multi-pattern matching, size range |
+| **Tree Explorer** | Hierarchical filesystem browser with size bars, sorting, reference directory |
+| **Voronoi** | Area-proportional treemap visualization of storage usage with drill-down navigation |
 
 ---
 
 ## Computing Monitoring
 
-The dashboard includes a computing panel that shows the current state of CIL's RCC resources. It pulls together node usage, active Slurm jobs, and quota information so team members can check on things without starting a terminal session on the cluster.
+The computing panel shows the current state of CIL's RCC resources -- node usage, active Slurm jobs, and quota information -- so team members can check on things without starting a terminal session on the cluster.
 
 ### What it shows
 
@@ -32,275 +44,107 @@ Slurm data (node usage and active jobs) is fetched on a schedule tuned for worki
 - **Weekdays 9 AM -- 5 PM**: every 15 minutes
 - **Weekends**: every hour
 
-Outside those windows the data is not refreshed. This keeps the monitoring lightweight while still being useful if you want to check on a heavy job from your phone or a laptop away from the cluster.
-
-Quota information (SU and storage) comes from the daily filesystem snapshots and updates once per day.
+Outside those windows the data is not refreshed. Quota information (SU and storage) comes from daily filesystem snapshots and updates once per day.
 
 ---
 
-## Complete Workflow (RCC to Cloud)
+## Data Pipeline
 
-### Step 1: Generate Scan Report on RCC
-
-**On RCC login node:**
-
-```bash
-# Clone repository
-git clone <repo-url> ~/storage-tracker
-cd ~/storage-tracker/scanner
-
-# Build scanner
-module load rust
-cargo build --release
-
-# Run parallel scan (recommended for large filesystems)
-cd scripts
-./scan_cil_parallel.sh
 ```
-
-This creates Parquet files in structure like:
-```
-cil_scans/
-├── battuta_shares/2025-12-27/
-│   ├── part-00000.parquet
-│   └── part-00001.parquet
-├── sacagawea_shares/2025-12-27/
-│   └── part-00000.parquet
-└── ...
-```
-
-**Scanner options** (for manual runs):
-```bash
-# Basic scan
-./target/release/storage-scanner \
-  --path /project/cil/battuta_shares \
-  --output scan.parquet
-
-# Faster: Skip checksums, limit depth
-./target/release/storage-scanner \
-  --path /project/cil \
-  --output scan.parquet \
-  --no-checksums \
-  --max-depth 10
-```
-
-See [scanner/README.md](scanner/README.md) for performance tuning.
-
----
-
-### Step 2: Publish and Clean (Automated Daily Pipeline)
-
-The daily pipeline runs automatically every night at 2am. It scans all directories in parallel, publishes results to a public URL on Midway2, and cleans scratch when done.
-
-**First-time setup on Midway2 (run once):**
-
-```bash
-ssh midway2.rcc.uchicago.edu
-chmod o+x $HOME
-mkdir -p $HOME/public_html
-chmod o+x $HOME/public_html
-```
-
-**Start the daily pipeline (run once to activate):**
-
-```bash
-sbatch --begin=02:00 scanner/scripts/daily_pipeline.sh
-```
-
-After that it resubmits itself automatically every day. To stop it:
-
-```bash
-scancel <job_id>  # find it with: squeue -u $USER
-```
-
-**To run the pipeline manually on demand (from Midway2):**
-
-```bash
-bash scanner/scripts/publish_scans.sh --clean
-```
-
-This copies all scan results to `public_html`, makes them available at the URL below, and cleans scratch when done.
-
-Scan results are published at:
-```
-http://users.rcc.uchicago.edu/~[your_CNetID]/cil_scans/
+RCC Filesystem (/project/cil)
+    |
+    | Rust scanner via Slurm (~2am daily)
+    v
+Parquet files in scratch (midway3)
+    |
+    | daily_pipeline.sh -> publish to public_html
+    v
+HTTP on Midway2 (public_html)
+    |
+    | download-scans.sh (validates with Polars, re-downloads corrupted)
+    v
+Local machine (cil_scans/)
+    |
+    | docker-import.sh / update-snapshot.sh
+    v
+ClickHouse (Docker volume)
+    |
+    | FastAPI
+    v
+Dashboard (Next.js) <-- Cloudflare Tunnel --> Browser
 ```
 
 ---
 
-### Step 3: Download Parquet Files to Local Machine
+## Deployment
 
-**From your local machine (downloads via RCC public_html):**
+### Prerequisites
 
-```bash
-./scanner/scripts/download-scans.sh
-```
+- Docker Engine 20.10+ and Docker Compose 2.0+
+- 4GB+ RAM, 10GB+ disk
+- Cloudflare account (free) + domain for tunnel
 
-This script:
-- Auto-detects the latest scan date from the public URL
-- Downloads all parquet chunks into `cil_scans/<source>/<date>/`
-- Validates every file (deletes and re-downloads any corrupted ones)
-- Skips files already present (safe to re-run)
-
-**Alternative: rsync directly from RCC:**
-```bash
-rsync -avz --progress \
-  <your-cnetid>@midway3.rcc.uchicago.edu:/scratch/midway3/<cnetid>/cil_scans/ \
-  ./cil_scans/
-```
-
-**IMPORTANT**: Parquet files stay on your local machine. You will upload them to the cloud server in Step 4.
-
----
-
-### Step 4: Deploy Dashboard on Cloud Server
-
-**Option A: Oracle Cloud Free Tier (Recommended - $0/month)**
-
-1. **Create VM** at [cloud.oracle.com](https://cloud.oracle.com)
-   - Shape: `VM.Standard.A1.Flex` (4 vCPU, 24GB RAM) - Always Free
-   - OS: Ubuntu 22.04
-   - Storage: 200GB boot volume
-
-2. **Initial setup on cloud VM:**
+### 1. Clone and configure
 
 ```bash
-# Install Docker
-sudo apt update && sudo apt install -y docker.io docker-compose-v2
-
-# Add your user to docker group (to run without sudo)
-sudo usermod -aG docker $USER
-newgrp docker
-
-# Clone repo
-git clone <repo-url> storage-tracker
-cd storage-tracker
+git clone <repo-url> dev-tracker-app
+cd dev-tracker-app
 ```
 
-3. **Upload Parquet files from your local machine to the cloud VM:**
-
-**From your LOCAL machine** (not the VM):
+Create a `.env` file in the project root:
 
 ```bash
-rsync -avz --progress \
-  ./cil_scans/ \
-  ubuntu@<VM_PUBLIC_IP>:~/storage-tracker/cil_scans/
+CLICKHOUSE_PASSWORD=<strong-random-password>
+ALLOWED_USERS=user1,user2,user3
 ```
 
-4. **Start services on cloud VM:**
+This file is gitignored and never committed. All secrets are read from here by `docker-compose.yml`.
+
+### 2. Start services
 
 ```bash
 docker compose up -d
 ```
 
-5. **Initialize database (FIRST TIME ONLY):**
+This starts ClickHouse (with password auth), the init container (creates tables on first run), the FastAPI backend, and the Next.js frontend.
+
+### 3. Import data
+
+Download the latest scan from RCC and import:
 
 ```bash
-docker compose exec clickhouse clickhouse-client < clickhouse/schema/01_create_tables.sql
-docker compose exec clickhouse clickhouse-client < clickhouse/schema/02_materialized_views.sql
-docker compose exec clickhouse clickhouse-client < clickhouse/schema/03_recursive_directory_sizes.sql
-docker compose exec clickhouse clickhouse-client < clickhouse/schema/04_voronoi_precomputed.sql
-```
+# Download Parquet files from RCC public_html
+./scanner/scripts/download-scans.sh
 
-**NOTE**: You only run these SQL files ONCE when first setting up the database. They create the tables and views. The database persists in Docker volumes.
-
-6. **Import scans into ClickHouse:**
-
-```bash
+# Import into ClickHouse
 ./scripts/docker-import.sh
 ```
 
-**What this does:**
-- Scans `cil_scans/` directory for all Parquet files
-- For each snapshot date (e.g., 2025-12-27):
-  - Imports Parquet files into ClickHouse `filesystem.entries` table
-  - Computes recursive directory sizes
-  - Generates Voronoi visualization data
-- **IMPORTANT**: Each import APPENDS data. If you import the same date twice, you'll get duplicates.
-- To re-import a date cleanly, first delete old data:
-  ```bash
-  docker compose exec clickhouse clickhouse-client --query \
-    "ALTER TABLE filesystem.entries DELETE WHERE snapshot_date='2025-12-27'"
-  ```
-
-**Manual import (alternative):**
-```bash
-# Import single snapshot
-docker compose run --rm importer python scripts/import_snapshot.py \
-  /scans/battuta/2025-12-27 2025-12-27
-
-# Compute directory sizes
-docker compose run --rm importer python scripts/compute_recursive_sizes_v2.py 2025-12-27
-
-# Generate Voronoi
-docker compose run --rm importer python scripts/compute_voronoi_unified.py 2025-12-27
-
-# Optimize table
-docker compose exec clickhouse clickhouse-client --query \
-  "OPTIMIZE TABLE filesystem.directory_hierarchy FINAL"
-```
-
-7. **Open firewall:**
+Or use the all-in-one update script:
 
 ```bash
-sudo iptables -I INPUT -p tcp --dport 3000 -j ACCEPT
-sudo netfilter-persistent save
+./scripts/update-snapshot.sh
 ```
 
-If `netfilter-persistent` is not installed:
-```bash
-sudo apt install iptables-persistent
-```
-
-8. **Access dashboard:**
-
-Open browser: `http://<VM_PUBLIC_IP>:3000`
-
-**Option B: Hetzner Cloud ($4.50/month)**
-
-- Server: CX21 (2 vCPU, 4GB RAM, 40GB SSD)
-- Follow same steps as Oracle
-- Memory limits in `docker-compose.yml`:
-  ```yaml
-  services:
-    clickhouse:
-      mem_limit: 2.5g
-    api:
-      mem_limit: 512m
-    web:
-      mem_limit: 512m
-  ```
-
----
-
-### Step 5: Add Custom Domain (Optional)
-
-Using Cloudflare (free plan):
-
-1. Buy domain (~$10/year)
-2. Add to Cloudflare, then DNS settings:
-   - Type: `A`
-   - Name: `tracker`
-   - Content: `<VM_PUBLIC_IP>`
-   - Proxy: Enabled (orange cloud)
-3. Access: `https://tracker.yourdomain.com`
-
-**Or use Cloudflare Tunnel (no public IP needed, recommended for local machine):**
+### 4. Set up Cloudflare Tunnel
 
 Install cloudflared:
+
 ```bash
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
 chmod +x cloudflared && sudo mv cloudflared /usr/local/bin
 ```
 
 One-time setup:
+
 ```bash
 cloudflared tunnel login
 cloudflared tunnel create dev-tracker
-# Note the tunnel ID printed (e.g. 367f2abe-...)
+cloudflared tunnel route dns dev-tracker your-domain.com
 ```
 
 Create `~/.cloudflared/config.yml`:
+
 ```yaml
 tunnel: dev-tracker
 credentials-file: /home/<user>/.cloudflared/<TUNNEL-ID>.json
@@ -313,14 +157,10 @@ ingress:
   - service: http_status:404
 ```
 
-`protocol: http2` is important -- the default QUIC (UDP) protocol drops idle connections on residential/NAT networks, causing periodic tunnel outages. HTTP/2 uses TCP, which handles keepalives and NAT mapping much better.
+`protocol: http2` is important -- the default QUIC (UDP) drops idle connections on residential/NAT networks. HTTP/2 uses TCP, which handles keepalives and NAT mapping much better.
 
-Route DNS and start:
-```bash
-cloudflared tunnel route dns dev-tracker your-domain.com
-```
+Set up as a systemd user service (auto-start on boot, auto-restart on crash):
 
-Set up as a systemd service (auto-start on boot, auto-restart on crash):
 ```bash
 mkdir -p ~/.config/systemd/user
 
@@ -342,196 +182,120 @@ EOF
 systemctl --user daemon-reload
 systemctl --user enable cloudflared
 systemctl --user start cloudflared
-
-# Keep service running after logout
 loginctl enable-linger $USER
-```
-
-Manage:
-```bash
-systemctl --user status cloudflared     # check status
-systemctl --user restart cloudflared    # restart
-systemctl --user stop cloudflared       # stop
-journalctl --user -u cloudflared -f     # view logs
 ```
 
 Access: `https://your-domain.com/cil-rcc-tracker`
 
-**Note**: The app must be built with the correct `NEXT_PUBLIC_BASE_PATH` matching the subpath. This is already configured in `docker-compose.yml` as `/cil-rcc-tracker`.
+The app is built with `NEXT_PUBLIC_BASE_PATH=/cil-rcc-tracker` (configured in `docker-compose.yml`).
 
----
+### 5. Enable automatic updates
 
-## Data Management
-
-### How Data Flows
-
-```
-RCC Filesystem
-    |
-    | (Scanner)
-    v
-Parquet Files in scratch (midway3)
-    |
-    | (daily_pipeline.sh)
-    v
-public_html on Midway2 (HTTP)
-    |
-    | (download-scans.sh)
-    v
-Local Machine (cil_scans/)
-    |
-    | (rsync to cloud VM)
-    v
-Cloud VM (cil_scans/)
-    |
-    | (docker-import.sh)
-    v
-ClickHouse Database (Docker volume)
-    |
-    | (API queries)
-    v
-Dashboard (Browser)
-```
-
-### Database Persistence
-
-- **ClickHouse data persists** in Docker volumes even after `docker compose down`
-- Database is NOT reset when importing new scans
-- Each import ADDS data to the database
-- To delete a snapshot:
-  ```bash
-  docker compose exec clickhouse clickhouse-client --query \
-    "ALTER TABLE filesystem.entries DELETE WHERE snapshot_date='2025-12-27'"
-  ```
-
-### Managing Snapshots
-
-> All commands below run **from the project root on your local machine** (where `docker-compose.yml` lives).
-> You do NOT need to enter any container — `docker compose exec` sends the command into the running `clickhouse` container for you.
-
-**List all snapshots in the database:**
-```bash
-docker compose exec clickhouse clickhouse-client --query \
-  "SELECT snapshot_date, formatReadableQuantity(count()) as entries
-   FROM filesystem.entries
-   GROUP BY snapshot_date
-   ORDER BY snapshot_date DESC"
-```
-
-**Delete a specific snapshot (keeps everything else):**
-```bash
-DATE="2025-12-27"
-for table in entries directory_hierarchy voronoi_precomputed snapshots; do
-  docker compose exec clickhouse clickhouse-client --query \
-    "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${DATE}'"
-done
-docker compose exec clickhouse clickhouse-client --query \
-  "OPTIMIZE TABLE filesystem.entries FINAL"
-```
-
-**Keep only the latest snapshot (delete all others):**
-```bash
-LATEST=$(docker compose exec clickhouse clickhouse-client --query \
-  "SELECT max(snapshot_date) FROM filesystem.entries" | tr -d '\r')
-
-echo "Keeping: ${LATEST}"
-
-for table in entries directory_hierarchy voronoi_precomputed snapshots; do
-  docker compose exec clickhouse clickhouse-client --query \
-    "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date != '${LATEST}'"
-done
-docker compose exec clickhouse clickhouse-client --query \
-  "OPTIMIZE TABLE filesystem.entries FINAL"
-echo "Done. Only ${LATEST} remains."
-```
-
-**Replace the current snapshot with a new one:**
-```bash
-NEW_DATE="2026-03-05"
-
-# 1. Delete old data for this date (if re-importing)
-for table in entries directory_hierarchy voronoi_precomputed snapshots; do
-  docker compose exec clickhouse clickhouse-client --query \
-    "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${NEW_DATE}'"
-done
-
-# 2. Import fresh
-./scripts/docker-import.sh
-```
-
----
-
-### Automated Updates
-
-Two scripts handle the full update lifecycle:
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/update-snapshot.sh` | Downloads latest, imports, deletes old — run manually or via cron |
-| `scripts/setup-cron.sh` | Installs cron jobs (5am / noon / 9pm daily) |
-
-**Manual update (run once to test):**
-```bash
-# From project root — downloads latest, imports, deletes old snapshot automatically
-./scripts/update-snapshot.sh
-
-# To keep old snapshots instead of deleting:
-./scripts/update-snapshot.sh --keep-old
-
-# To force re-import even if the date is already in the DB
-# (use when a newer scan was published for the same day):
-./scripts/update-snapshot.sh --force
-```
-
-The script:
-1. Checks the latest published date at the RCC public URL
-2. Compares it against what's in the DB — exits if already up to date
-3. Downloads new files (`download-scans.sh`)
-4. Imports into ClickHouse (`docker-import.sh`)
-5. Deletes the old snapshot from all DB tables + cleans disk
-
-**Enable automatic daily updates (run once after `docker compose up -d`):**
 ```bash
 ./scripts/setup-cron.sh
 ```
 
-This installs 3 cron jobs — at **5am**, **noon**, and **9pm** — so at least one will catch any new scan published that day. The script is idempotent: if nothing is new, it exits silently.
+Installs 3 cron jobs (5am, noon, 9pm) so at least one catches any new scan published that day. Idempotent -- exits silently if nothing is new.
 
-Logs are written to:
-- `logs/auto-update.log` — full output from every run
-- `logs/cron.log` — cron stdout/stderr
-
-**Check or remove:**
 ```bash
 crontab -l                         # see installed jobs
 ./scripts/setup-cron.sh --remove   # remove all auto-update jobs
 ```
 
+Logs: `logs/auto-update.log`, `logs/cron.log`
+
 ---
 
-### Updating Scans
+## RCC Scanner Setup
 
-**1. Run new scan on RCC**
+### First-time setup on Midway2
+
 ```bash
-cd ~/storage-tracker/scanner/scripts
-./scan_cil_parallel.sh
+ssh midway2.rcc.uchicago.edu
+chmod o+x $HOME
+mkdir -p $HOME/public_html
+chmod o+x $HOME/public_html
 ```
 
-**2. Download new files to local machine**
+### Daily pipeline (runs automatically)
+
 ```bash
-./scanner/scripts/download-scans.sh
+sbatch --begin=02:00 scanner/scripts/daily_pipeline.sh
 ```
 
-**3. Upload to cloud server**
+Resubmits itself every day. Stop with `scancel <job_id>`.
+
+### Manual scan
+
 ```bash
-rsync -avz ./cil_scans/ ubuntu@<VM_IP>:~/storage-tracker/cil_scans/
+cd ~/storage-tracker/scanner
+module load rust
+cargo build --release
+cd scripts && ./scan_cil_parallel.sh
 ```
 
-**4. Import on server**
+See [scanner/README.md](scanner/README.md) for performance tuning and scanner options.
+
+---
+
+## Snapshot Management
+
+All `clickhouse-client` commands require the password. Either pass it inline or set the env var:
+
 ```bash
-ssh ubuntu@<VM_IP>
-cd ~/storage-tracker
-./scripts/docker-import.sh
+# Option A: use the password from .env
+source .env
+PASS="--password $CLICKHOUSE_PASSWORD"
+
+# Then use $PASS in commands below
+```
+
+**List snapshots:**
+
+```bash
+docker compose exec clickhouse clickhouse-client $PASS --query \
+  "SELECT snapshot_date, formatReadableQuantity(count()) as entries
+   FROM filesystem.entries GROUP BY snapshot_date ORDER BY snapshot_date DESC"
+```
+
+**Manual update (download + import + delete old):**
+
+```bash
+./scripts/update-snapshot.sh             # auto-detect, import, delete old
+./scripts/update-snapshot.sh --keep-old  # keep previous snapshots
+./scripts/update-snapshot.sh --force     # re-import even if date matches DB
+```
+
+**Delete a specific snapshot:**
+
+```bash
+DATE="2026-03-07"
+for table in entries directory_hierarchy voronoi_precomputed snapshots; do
+  docker compose exec clickhouse clickhouse-client $PASS --query \
+    "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${DATE}'"
+done
+docker compose exec clickhouse clickhouse-client $PASS --query \
+  "OPTIMIZE TABLE filesystem.entries FINAL"
+```
+
+**Keep only the latest snapshot:**
+
+```bash
+LATEST=$(docker compose exec clickhouse clickhouse-client $PASS --query \
+  "SELECT max(snapshot_date) FROM filesystem.entries" | tr -d '\r')
+echo "Keeping: ${LATEST}"
+for table in entries directory_hierarchy voronoi_precomputed snapshots; do
+  docker compose exec clickhouse clickhouse-client $PASS --query \
+    "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date != '${LATEST}'"
+done
+docker compose exec clickhouse clickhouse-client $PASS --query \
+  "OPTIMIZE TABLE filesystem.entries FINAL"
+```
+
+**Regenerate Voronoi (if file counts show 0):**
+
+```bash
+docker compose run --rm importer python scripts/compute_voronoi_unified.py 2026-03-07 --force
 ```
 
 ---
@@ -539,236 +303,114 @@ cd ~/storage-tracker
 ## Project Structure
 
 ```
-storage-tracker/
-├── scanner/              # Rust filesystem scanner
-│   ├── src/             # Scanner source code
-│   └── scripts/         # Slurm and pipeline scripts
-├── clickhouse/          # Database layer
-│   ├── schema/          # SQL table definitions (run once)
-│   ├── scripts/         # Import/processing scripts
-│   └── data/            # ClickHouse data (Docker volume)
+dev-tracker-app/
+├── scanner/                # Rust filesystem scanner
+│   ├── src/               # Scanner source code
+│   └── scripts/           # Slurm pipeline, download, publish scripts
+├── clickhouse/            # Database layer
+│   ├── schema/            # SQL table definitions
+│   ├── scripts/           # Import/processing scripts (voronoi, sizes)
+│   └── config/            # ClickHouse users.xml
 ├── apps/
-│   ├── api/             # FastAPI backend
-│   └── web/             # Next.js dashboard
-├── cil_scans/           # Parquet files (upload to server)
-│   └── <source>/YYYY-MM-DD/*.parquet
+│   ├── api/               # FastAPI backend (query, browse, search)
+│   └── web/               # Next.js dashboard
+├── docs/                  # MDX documentation (rendered in dashboard)
 ├── scripts/
-│   └── docker-import.sh # One-command import
-└── docker-compose.yml   # All-in-one deployment
+│   ├── docker-import.sh   # One-command import
+│   ├── update-snapshot.sh # Full pipeline (download + import + cleanup)
+│   └── setup-cron.sh      # Install daily cron jobs
+├── cil_scans/             # Parquet files (gitignored)
+├── .env                   # Secrets: passwords, allowed users (gitignored)
+└── docker-compose.yml     # All-in-one deployment
 ```
 
 ---
 
 ## Maintenance
 
-**View logs:**
 ```bash
+# View logs
 docker compose logs -f
-```
 
-**Restart services:**
-```bash
+# Restart services
 docker compose restart
-```
 
-**Update dashboard code:**
-```bash
-git pull
-docker compose build
-docker compose up -d
-```
+# Rebuild after code changes
+docker compose build web && docker compose up -d web  # frontend only
+docker compose build && docker compose up -d          # everything
 
-**Check database size:**
-```bash
-docker compose exec clickhouse clickhouse-client --query \
+# Check database size
+source .env && docker compose exec clickhouse clickhouse-client \
+  --password "$CLICKHOUSE_PASSWORD" --query \
   "SELECT formatReadableSize(sum(bytes_on_disk)) FROM system.parts WHERE database='filesystem'"
+
+# Tunnel status
+systemctl --user status cloudflared
+journalctl --user -u cloudflared -f
 ```
-
-**List imported snapshots:**
-```bash
-docker compose exec clickhouse clickhouse-client --query \
-  "SELECT snapshot_date, count() as entries FROM filesystem.entries GROUP BY snapshot_date ORDER BY snapshot_date DESC"
-```
-
-**Regenerate Voronoi (if file counts show 0):**
-```bash
-docker compose run --rm importer python scripts/compute_voronoi_unified.py 2025-12-27 --force
-```
-
-**Delete a snapshot:**
-```bash
-docker compose exec clickhouse clickhouse-client --query \
-  "ALTER TABLE filesystem.entries DELETE WHERE snapshot_date='2025-12-27'"
-docker compose exec clickhouse clickhouse-client --query \
-  "OPTIMIZE TABLE filesystem.entries FINAL"
-```
-
----
-
-## Cost Comparison
-
-| Option | vCPUs | RAM | Storage | Cost/month |
-|--------|-------|-----|---------|-----------|
-| Oracle Free | 4 (ARM) | 24GB | 200GB | $0 |
-| Oracle On-Demand (4h/day) | 2 (ARM) | 12GB | 100GB | $4.56 |
-| Hetzner CX21 | 2 (x86) | 4GB | 40GB | $4.50 |
-| + Domain (optional) | - | - | - | +$0.83/month |
-
-**Recommendation**: Oracle Cloud Free Tier (24/7 dashboard, $0/month)
 
 ---
 
 ## Troubleshooting
 
 **Scanner fails on RCC:**
+
 ```bash
-# Check quotas
 quota -s
 df -h /project/cil
-
-# Run on compute node instead
 srun --partition=bigmem --time=4:00:00 --mem=16G --pty bash
 ```
 
 **Import fails:**
-```bash
-# Check Parquet file structure
-docker compose run --rm importer python -c \
-  "import polars as pl; print(pl.read_parquet('/scans/battuta/2025-12-27/part-00000.parquet').schema)"
 
-# Check ClickHouse is running
-docker compose exec clickhouse clickhouse-client --query "SELECT 1"
+```bash
+docker compose run --rm importer python -c \
+  "import polars as pl; print(pl.read_parquet('/scans/battuta/2026-03-07/part-00000.parquet').schema)"
+docker compose logs clickhouse
 ```
 
 **Dashboard shows "No snapshots":**
-```bash
-# Verify data imported
-docker compose exec clickhouse clickhouse-client --query \
-  "SELECT snapshot_date, count() FROM filesystem.entries GROUP BY snapshot_date"
 
-# Check API is running
+```bash
+source .env
+docker compose exec clickhouse clickhouse-client --password "$CLICKHOUSE_PASSWORD" --query \
+  "SELECT snapshot_date, count() FROM filesystem.entries GROUP BY snapshot_date"
 curl http://localhost:8000/api/snapshots
 ```
 
-**File counts show 0 in Voronoi:**
-```bash
-docker compose run --rm importer python scripts/compute_voronoi_unified.py 2025-12-27 --force
-```
-
 **Cannot connect to ClickHouse:**
+
 ```bash
-# Check if container is running
 docker compose ps
-
-# Check ClickHouse logs
 docker compose logs clickhouse
-
-# Verify ClickHouse is responding
-docker compose exec clickhouse clickhouse-client --query "SELECT 1"
-
-# Restart ClickHouse
 docker compose restart clickhouse
-```
-
-**Port already in use:**
-```bash
-# Find process using the port
-lsof -i :3000 :8000 :9000
-
-# Kill the process or change ports in docker-compose.yml
-```
-
-**Out of memory:**
-```bash
-# Increase Docker memory limit in Docker Desktop settings
-# Recommended: At least 4GB for full stack
-
-# Or reduce ClickHouse memory usage in docker-compose.yml:
-environment:
-  CLICKHOUSE_MAX_MEMORY_USAGE: 2000000000  # 2GB
 ```
 
 ---
 
-## Local Development
+## Development
 
-### Prerequisites
-
-- Docker Engine 20.10+
-- Docker Compose 2.0+
-- 4GB RAM available
-- 10GB disk space
-
-### Development Workflow
-
-**Option 1: Full Docker Stack (Recommended for Testing)**
+**Full Docker stack:**
 
 ```bash
-# Start everything
 docker compose up -d
-
-# Watch logs
 docker compose logs -f api web
-
-# Make code changes, then rebuild
-docker compose build api web
-docker compose up -d
+# Make changes, then:
+docker compose build api web && docker compose up -d
 ```
 
-**Option 2: Hybrid (ClickHouse in Docker, Dev Servers Local)**
+**Hybrid (ClickHouse in Docker, dev servers local):**
 
 ```bash
-# Start only ClickHouse
 docker compose up -d clickhouse
-
-# Run API locally
-cd apps/api
-source venv/bin/activate
-uvicorn app.main:app --reload --port 8000
-
-# Run web locally (in another terminal)
-cd apps/web
-npm run dev
+cd apps/api && source venv/bin/activate && uvicorn app.main:app --reload --port 8000
+cd apps/web && npm run dev
 ```
 
 ---
 
 ## Additional Documentation
 
-- **scanner/README.md** - Scanner performance tuning
-- **clickhouse/scripts/README.md** - Import script options
-
----
-
-## Quick Reference
-
-```bash
-# 1. On RCC: Scan (runs automatically via daily_pipeline.sh)
-cd ~/storage-tracker/scanner/scripts
-./scan_cil_parallel.sh
-
-# 2. On local machine: Download from RCC public_html
-./scanner/scripts/download-scans.sh
-
-# 3. On local machine: Upload to cloud VM
-rsync -avz ./cil_scans/ ubuntu@<VM_IP>:~/storage-tracker/cil_scans/
-
-# 4. On cloud VM: Import
-ssh ubuntu@<VM_IP>
-cd ~/storage-tracker
-./scripts/docker-import.sh
-
-# 5. Access dashboard
-# Open browser: http://<VM_IP>:3000
-```
-
-**First-time cloud setup:**
-```bash
-sudo apt update && sudo apt install -y docker.io docker-compose-v2
-git clone <repo> && cd storage-tracker
-docker compose up -d
-# Run SQL schema files (once)
-# Import scans
-```
-
-**Performance:** 50K+ files/sec scanning, <0.1s queries, 74M entries
+- [scanner/README.md](scanner/README.md) -- Scanner performance tuning
+- [clickhouse/scripts/README.md](clickhouse/scripts/README.md) -- Import script options
+- Dashboard "Docs" tab -- interactive architecture diagram, query examples, feature guides
