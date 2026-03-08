@@ -381,11 +381,11 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
                 : "opacity-0 pointer-events-none bg-transparent"
             )}>
               <div className={cn(
-                "bg-card border border-border px-8 py-5 rounded-xl flex flex-col items-center gap-4 shadow-lg transition-all duration-500",
+                "bg-card border border-border px-5 py-3 rounded-lg flex items-center gap-3 shadow-md transition-all duration-500",
                 isLocked ? "scale-100 opacity-100" : "scale-95 opacity-0"
               )}>
-                <div className="loader-squares" />
-                <div className="text-muted-foreground text-[10px]">Computing visualization -- may take 20-60 s</div>
+                <div className="loader-morph" />
+                <div className="text-muted-foreground text-[10px]">Computing visualization. This can take 60 seconds or more for deep trees.</div>
               </div>
             </div>
 
@@ -396,7 +396,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
                 : "opacity-0 bg-transparent"
             )}>
               <div className={cn(
-                "bg-card border border-border px-6 py-4 rounded-xl flex items-center gap-3 shadow-md transition-all duration-400",
+                "bg-card border border-border px-5 py-3 rounded-lg flex items-center gap-3 shadow-md transition-all duration-400",
                 !isLocked && isRendering ? "scale-100 opacity-100" : "scale-95 opacity-0"
               )}>
                 <div className="loader-morph" />
@@ -411,7 +411,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
                 : "opacity-0 bg-transparent"
             )}>
               <div className={cn(
-                "bg-card/80 border border-border/50 px-6 py-4 rounded-xl flex items-center gap-3 shadow-sm transition-all duration-300",
+                "bg-card/80 border border-border/50 px-5 py-3 rounded-lg flex items-center gap-3 shadow-sm transition-all duration-300",
                 isTransitioning && !isLocked && !isRendering ? "scale-100 opacity-100" : "scale-95 opacity-0"
               )}>
                 <div className="loader-morph" />
