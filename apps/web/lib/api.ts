@@ -6,6 +6,7 @@ import type {
   QueryResponse,
   NLToSQLResponse,
   ComputingReport,
+  FeedbackEntry,
 } from "./types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BASE_PATH || "";
@@ -144,8 +145,39 @@ export async function fixSQLWithAI(params: {
   });
 }
 
+export async function validateUser(username: string): Promise<{ valid: boolean; username: string }> {
+  return apiRequest<{ valid: boolean; username: string }>("/api/auth/validate", {
+    method: "POST",
+    body: JSON.stringify({ username }),
+  });
+}
+
 export async function getComputingReport(): Promise<ComputingReport> {
   return apiRequest<ComputingReport>("/api/computing/latest");
+}
+
+export async function getFeedback(): Promise<FeedbackEntry[]> {
+  return apiRequest<FeedbackEntry[]>("/api/feedback");
+}
+
+export async function postFeedback(params: {
+  username: string;
+  message: string;
+  parent_id?: string | null;
+}): Promise<FeedbackEntry> {
+  return apiRequest<FeedbackEntry>("/api/feedback", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function deleteFeedback(feedbackId: string, username: string): Promise<void> {
+  const url = `${API_BASE_URL}/api/feedback/${feedbackId}?username=${encodeURIComponent(username)}`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`API error: ${res.status} ${errorText}`);
+  }
 }
 
 export const foldersApi = {

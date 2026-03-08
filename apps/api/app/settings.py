@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # Computing monitoring
     computing_report_url: str = "https://users.rcc.uchicago.edu/~cadavidsanchez/cil_scans/quotas/latest.json"
 
+    # Additional allowed users (non-RCC members, comma-separated usernames)
+    allowed_users: str = ""
+
+    def get_allowed_users_list(self) -> list[str]:
+        """Get additional allowed users as a list."""
+        return [u.strip() for u in self.allowed_users.split(",") if u.strip()]
+
     def get_cors_origins_list(self) -> list[str]:
         """Get CORS origins as a list from comma-separated string."""
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

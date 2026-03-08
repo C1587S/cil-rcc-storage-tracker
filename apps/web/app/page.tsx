@@ -7,27 +7,29 @@ import { SearchConsole } from "@/components/search-console";
 import { DocsPage } from "@/components/docs-page";
 import { ComputingDashboard } from "@/components/computing-dashboard";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { LoginGate, LogoutButton } from "@/components/login-gate";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
 
 const TABS = [
+  { id: "docs",      label: "Docs"         },
   { id: "query",   label: "Query Console" },
   { id: "tree",    label: "Tree Explorer" },
   { id: "voronoi",   label: "Voronoi"       },
   { id: "computing", label: "Computing"    },
-  { id: "docs",      label: "Docs"         },
 ] as const;
 
 type TabId = typeof TABS[number]["id"];
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<TabId>("query");
+  const [activeTab, setActiveTab] = useState<TabId>("docs");
   const isVoronoiFullscreen = useAppStore(state => state.isVoronoiFullscreen);
 
   const containerClass = "max-w-[1440px] mx-auto px-8";
 
   return (
+    <LoginGate>
     <main className={cn("min-h-screen", isVoronoiFullscreen ? "p-0" : "pb-8")}>
 
       {!isVoronoiFullscreen && (
@@ -48,7 +50,10 @@ export default function Home() {
                     CIL RCC <span className="font-normal text-muted-foreground">Console</span>
                   </h1>
                 </div>
-                <ThemeToggle />
+                <div className="flex items-center gap-4">
+                  <LogoutButton />
+                  <ThemeToggle />
+                </div>
               </div>
             </div>
           </nav>
@@ -102,10 +107,11 @@ export default function Home() {
         </div>
 
         <div className={cn("space-y-6", containerClass, activeTab !== "docs" && "hidden")}>
-          <DocsPage />
+          <DocsPage onNavigateToTab={(tabId) => setActiveTab(tabId as TabId)} />
         </div>
       </div>
 
     </main>
+    </LoginGate>
   );
 }

@@ -238,6 +238,7 @@ services:
       MAX_RESULT_BYTES: 50000000
       CORS_ORIGINS: http://localhost:3000,http://localhost:3001
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      ALLOWED_USERS: ${ALLOWED_USERS:-}
 
     depends_on:
       clickhouse:
@@ -251,6 +252,8 @@ services:
     volumes:
       # Mount snapshots directory for voronoi artifacts
       - ./snapshots:/app/snapshots
+      # Persistent feedback data
+      - ./data:/app/data:z
 
   # Frontend Web Application
   web:
