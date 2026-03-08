@@ -1193,7 +1193,7 @@ function ReportPanel({
 
 export function SearchConsole() {
   const { selectedSnapshot } = useAppStore();
-  const [mode, setMode] = useState<ConsoleMode>("filters");
+  const [mode, setMode] = useState<ConsoleMode>("query");
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
   const [hasSearched, setHasSearched] = useState(false);
   const [isExamplesExpanded, setIsExamplesExpanded] = useState(false);
