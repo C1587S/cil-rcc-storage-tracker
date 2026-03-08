@@ -12,15 +12,27 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
 
-const TABS = [
-  { id: "docs",      label: "Docs"         },
-  { id: "query",   label: "Query Console" },
-  { id: "tree",    label: "Tree Explorer" },
-  { id: "voronoi",   label: "Voronoi"       },
-  { id: "computing", label: "Computing"    },
+const TAB_GROUPS = [
+  {
+    tabs: [{ id: "docs", label: "Docs" }] as const,
+  },
+  {
+    label: "Storage",
+    color: "#8fbcbb",
+    tabs: [
+      { id: "query",   label: "Query Console" },
+      { id: "tree",    label: "Tree Explorer" },
+      { id: "voronoi", label: "Voronoi"       },
+    ] as const,
+  },
+  {
+    label: "Computing",
+    color: "#5e81ac",
+    tabs: [{ id: "computing", label: "Computing" }] as const,
+  },
 ] as const;
 
-type TabId = typeof TABS[number]["id"];
+type TabId = typeof TAB_GROUPS[number]["tabs"][number]["id"];
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabId>("docs");
@@ -61,22 +73,40 @@ export default function Home() {
           {/* Secondary nav — tab selector */}
           <div className="border-b border-border bg-card sticky top-[73px] z-30">
             <div className={containerClass}>
-              <nav className="flex gap-0" aria-label="Main navigation">
-                {TABS.map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={cn(
-                      "relative px-5 py-3 text-sm font-medium tracking-wide transition-colors",
-                      "focus:outline-none",
-                      activeTab === tab.id
-                        ? "text-foreground after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:bg-primary"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+              <nav className="flex items-center gap-1.5" aria-label="Main navigation">
+                {TAB_GROUPS.map((group, gi) => {
+                  const hasBox = "color" in group && group.color;
+                  const groupActive = group.tabs.some(t => t.id === activeTab);
+                  return (
+                    <div
+                      key={gi}
+                      className={cn(
+                        "flex items-center gap-0 rounded-md transition-colors",
+                        hasBox && "px-1 py-0.5"
+                      )}
+                      style={hasBox ? {
+                        background: `${group.color}${groupActive ? "20" : "10"}`,
+                        border: `1px solid ${group.color}${groupActive ? "60" : "35"}`,
+                      } : undefined}
+                    >
+                      {group.tabs.map(tab => (
+                        <button
+                          key={tab.id}
+                          onClick={() => setActiveTab(tab.id)}
+                          className={cn(
+                            "relative px-4 py-2.5 text-sm font-medium tracking-wide transition-colors rounded",
+                            "focus:outline-none",
+                            activeTab === tab.id
+                              ? "text-foreground after:absolute after:bottom-0 after:left-1 after:right-1 after:h-[2px] after:bg-primary after:rounded-full"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })}
               </nav>
             </div>
           </div>
