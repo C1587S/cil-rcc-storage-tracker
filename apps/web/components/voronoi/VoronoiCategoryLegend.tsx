@@ -50,8 +50,8 @@ export function VoronoiCategoryLegend({ isExpanded = false, isFullscreen = false
           File Categories
         </div>
 
-        {/* Category items - 2 rows of 5 elements */}
-        <div className="grid grid-cols-5 gap-2">
+        {/* Category items - responsive: 3 cols on small, 5 on large */}
+        <div className="grid grid-cols-3 lg:grid-cols-5 gap-2">
           {categories.map((category) => {
             const info = CATEGORY_INFO[category]
             const Icon = CATEGORY_ICONS[category]

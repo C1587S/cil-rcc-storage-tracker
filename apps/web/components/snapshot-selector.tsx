@@ -40,7 +40,7 @@ export function SnapshotSelector() {
   const selectedSnapshot_ = snapshots.find((s) => s.snapshot_date === selectedSnapshot);
 
   return (
-    <div className="flex items-center gap-4 py-3 border-b border-border/50">
+    <div className="flex flex-wrap items-center gap-2 sm:gap-4 py-3 border-b border-border/50">
       <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
         Snapshot
       </span>

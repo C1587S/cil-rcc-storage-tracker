@@ -11,6 +11,7 @@ import {
   Folder,
   Maximize2,
   Minimize2,
+  RotateCcw,
   Target,
 } from "lucide-react";
 import { getFileIcon, getFolderIcon, getSizeColor } from "@/lib/utils/icon-helpers";
@@ -278,7 +279,7 @@ function TreeNode({
           )}
         </div>
 
-        <div className="flex items-baseline gap-2 min-w-[200px] max-w-[300px]">
+        <div className="flex items-baseline gap-2 min-w-[100px] sm:min-w-[200px] max-w-[300px]">
           <span className="text-xs font-medium truncate">{name}</span>
           {isDirectory && (fileCount !== undefined || dirCount !== undefined) && (
             <span className="text-[10px] text-muted-foreground/50 font-mono flex-shrink-0 whitespace-nowrap flex items-center gap-1">
@@ -294,7 +295,7 @@ function TreeNode({
           )}
         </div>
 
-        <div className="flex-1 flex items-center gap-2 min-w-[200px]">
+        <div className="flex-1 flex items-center gap-2 min-w-[100px] sm:min-w-[200px]">
           {shouldShowBar ? (
             <>
               <div className="flex-1 h-3 bg-muted/15 rounded-sm overflow-hidden border border-border/30">
@@ -532,31 +533,31 @@ export function DiskUsageExplorerV2() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-xs">
-          <div className="flex items-center gap-2 min-w-[240px]">
-            <span className="text-muted-foreground/70 font-mono">Storage:</span>
-            <div className="flex-1 h-2 bg-muted/20 rounded-sm overflow-hidden border border-border/30">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground/70 font-mono shrink-0">Storage:</span>
+            <div className="flex-1 h-2 bg-muted/20 rounded-sm overflow-hidden border border-border/30 min-w-[60px]">
               <div className={cn("h-full transition-all", getQuotaColor(storageQuotaPercent))}
                    style={{ width: `${Math.min(storageQuotaPercent, 100)}%` }} />
             </div>
-            <span className="font-mono text-muted-foreground/80 min-w-[110px]">
+            <span className="font-mono text-muted-foreground/80 shrink-0">
               {storageTB.toFixed(1)} / {STORAGE_QUOTA_TB} TB
             </span>
-            <span className={cn("font-mono font-medium min-w-[42px] text-right", getQuotaTextColor(storageQuotaPercent))}>
+            <span className={cn("font-mono font-medium shrink-0", getQuotaTextColor(storageQuotaPercent))}>
               ({storageQuotaPercent.toFixed(1)}%)
             </span>
           </div>
 
-          <div className="flex items-center gap-2 min-w-[240px]">
-            <span className="text-muted-foreground/70 font-mono">Files:</span>
-            <div className="flex-1 h-2 bg-muted/20 rounded-sm overflow-hidden border border-border/30">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground/70 font-mono shrink-0">Files:</span>
+            <div className="flex-1 h-2 bg-muted/20 rounded-sm overflow-hidden border border-border/30 min-w-[60px]">
               <div className={cn("h-full transition-all", getQuotaColor(fileCountQuotaPercent))}
                    style={{ width: `${Math.min(fileCountQuotaPercent, 100)}%` }} />
             </div>
-            <span className="font-mono text-muted-foreground/80 min-w-[110px]">
+            <span className="font-mono text-muted-foreground/80 shrink-0">
               {totalFiles.toLocaleString()} / {FILE_COUNT_QUOTA.toLocaleString()}
             </span>
-            <span className={cn("font-mono font-medium min-w-[42px] text-right", getQuotaTextColor(fileCountQuotaPercent))}>
+            <span className={cn("font-mono font-medium shrink-0", getQuotaTextColor(fileCountQuotaPercent))}>
               ({fileCountQuotaPercent.toFixed(1)}%)
             </span>
           </div>
@@ -564,7 +565,7 @@ export function DiskUsageExplorerV2() {
       </div>
 
       {/* Sorting controls */}
-      <div className="flex items-center gap-4 text-xs mb-3 pb-2 border-b border-border/20">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs mb-3 pb-2 border-b border-border/20">
         <span className="text-muted-foreground">Sort:</span>
         <label className="flex items-center gap-2 cursor-pointer">
           <input type="radio" checked={state.sortMode === "name"} onChange={() => setState((prev) => ({ ...prev, sortMode: "name" }))} className="w-3 h-3" />
@@ -580,10 +581,10 @@ export function DiskUsageExplorerV2() {
         </label>
       </div>
 
-      {/* Info Panels - RESTORED */}
-      <div className="flex justify-end gap-3 mb-3">
+      {/* Info Panels - hidden below lg to save space on phones/tablets */}
+      <div className="hidden lg:flex lg:flex-row lg:justify-end gap-3 mb-3">
         {/* Reference Directory Card */}
-        <div className="w-[280px] bg-muted/20 border-2 border-green-500/40 rounded-md p-3">
+        <div className="w-full sm:w-[280px] bg-muted/20 border-2 border-green-500/40 rounded-md p-3">
           <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border/30">
             <Target className="w-3.5 h-3.5 text-green-500/70" />
             <h4 className="text-xs font-semibold text-green-500/90">Reference</h4>
@@ -619,7 +620,7 @@ export function DiskUsageExplorerV2() {
 
         {/* Selected Item Card */}
         {state.selectedPath && (
-          <div className="w-[280px] bg-muted/20 border-2 border-primary/30 rounded-md p-3">
+          <div className="w-full sm:w-[280px] bg-muted/20 border-2 border-primary/30 rounded-md p-3">
             <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border/30">
               {state.selectedPath && getFileIcon(
                 state.selectedPath.split('/').pop() || "",
@@ -647,9 +648,9 @@ export function DiskUsageExplorerV2() {
         )}
       </div>
 
-      {/* Legend - RESTORED */}
-      <div className="bg-muted/20 border border-border/40 rounded-sm px-3 py-2 mb-3">
-        <div className="grid grid-cols-3 gap-4 text-[10px]">
+      {/* Legend - hidden below lg to save space on phones/tablets */}
+      <div className="hidden lg:block bg-muted/20 border border-border/40 rounded-sm px-3 py-2 mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4 text-[10px]">
           <div className="flex flex-col">
             <div className="text-foreground/70 font-medium mb-1.5">Percentage Bars</div>
             <div className="space-y-1 mb-auto">
@@ -750,8 +751,21 @@ export function DiskUsageExplorerV2() {
   }
 
   return (
-    <Card className="min-h-[400px]" style={{ height: "calc(100vh - 180px)", maxHeight: "calc(100vh - 180px)" }}>
-      <CardContent className="h-full p-6 overflow-y-auto">{content}</CardContent>
-    </Card>
+    <>
+      {/* Portrait mobile: suggest rotating device */}
+      <div className="flex sm:hidden flex-col items-center justify-center gap-4 py-16 text-center px-8">
+        <RotateCcw className="w-10 h-10 text-muted-foreground/40" />
+        <div>
+          <p className="text-sm font-medium text-muted-foreground mb-1">Landscape mode recommended</p>
+          <p className="text-xs text-muted-foreground/60">Rotate your device for the best Tree Explorer experience</p>
+        </div>
+      </div>
+      {/* Landscape / desktop: show tree */}
+      <div className="hidden sm:block">
+        <Card className="min-h-[400px]" style={{ height: "calc(100vh - 180px)", maxHeight: "calc(100vh - 180px)" }}>
+          <CardContent className="h-full p-3 sm:p-6 overflow-y-auto">{content}</CardContent>
+        </Card>
+      </div>
+    </>
   );
 }

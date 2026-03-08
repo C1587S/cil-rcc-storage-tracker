@@ -25,6 +25,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="light">
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+      </head>
       <body className="font-mono antialiased terminal-texture">
         <RotatingFavicon />
         <Providers>{children}</Providers>

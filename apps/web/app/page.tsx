@@ -17,6 +17,11 @@ const TAB_GROUPS = [
     tabs: [{ id: "docs", label: "Docs" }] as const,
   },
   {
+    label: "Computing",
+    color: "#5e81ac",
+    tabs: [{ id: "computing", label: "Computing" }] as const,
+  },
+  {
     label: "Storage",
     color: "#8fbcbb",
     tabs: [
@@ -24,11 +29,6 @@ const TAB_GROUPS = [
       { id: "tree",    label: "Tree Explorer" },
       { id: "voronoi", label: "Voronoi"       },
     ] as const,
-  },
-  {
-    label: "Computing",
-    color: "#5e81ac",
-    tabs: [{ id: "computing", label: "Computing" }] as const,
   },
 ] as const;
 
@@ -40,7 +40,7 @@ export default function Home() {
   const [logoSpinning, setLogoSpinning] = useState(false);
   const logoRef = useRef<HTMLImageElement>(null);
 
-  const containerClass = "max-w-[1440px] mx-auto px-8";
+  const containerClass = "max-w-[1440px] mx-auto px-4 sm:px-8";
 
   return (
     <LoginGate>
@@ -50,24 +50,24 @@ export default function Home() {
         <>
           {/* Top navbar — logo + theme toggle */}
           <nav className="border-b border-border bg-card sticky top-0 z-40">
-            <div className={cn(containerClass, "py-4")}>
+            <div className={cn(containerClass, "py-3 sm:py-4")}>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3">
                   <img
                     ref={logoRef}
                     src="/cil-rcc-tracker/cil_rcc_console.png"
                     alt="CRC"
                     width={28}
                     height={28}
-                    className={cn("rounded-full logo-spin", logoSpinning && "spinning")}
+                    className={cn("rounded-full w-6 h-6 sm:w-7 sm:h-7 logo-spin", logoSpinning && "spinning")}
                     onMouseEnter={() => setLogoSpinning(true)}
                     onAnimationEnd={() => setLogoSpinning(false)}
                   />
-                  <h1 className="text-lg font-semibold tracking-tight text-foreground">
+                  <h1 className="text-base sm:text-lg font-semibold tracking-tight text-foreground">
                     CIL RCC <span className="font-normal text-muted-foreground">Console</span>
                   </h1>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 sm:gap-4">
                   <LogoutButton />
                   <ThemeToggle />
                 </div>
@@ -76,9 +76,9 @@ export default function Home() {
           </nav>
 
           {/* Secondary nav — tab selector */}
-          <div className="border-b border-border bg-card sticky top-[73px] z-30">
+          <div className="border-b border-border bg-card sticky top-[57px] sm:top-[73px] z-30">
             <div className={containerClass}>
-              <nav className="flex items-center gap-1.5" aria-label="Main navigation">
+              <nav className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide" aria-label="Main navigation">
                 {TAB_GROUPS.map((group, gi) => {
                   const hasBox = "color" in group && group.color;
                   const groupActive = group.tabs.some(t => t.id === activeTab);
@@ -99,7 +99,7 @@ export default function Home() {
                           key={tab.id}
                           onClick={() => setActiveTab(tab.id)}
                           className={cn(
-                            "relative px-4 py-2.5 text-sm font-medium tracking-wide transition-colors rounded",
+                            "relative px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium tracking-wide transition-colors rounded whitespace-nowrap",
                             "focus:outline-none",
                             activeTab === tab.id
                               ? "text-foreground after:absolute after:bottom-0 after:left-1 after:right-1 after:h-[2px] after:bg-primary after:rounded-full"

@@ -180,7 +180,7 @@ function SUOverview({ report }: { report: ComputingReport }) {
 
   return (
     <Section title="Service Units" icon={Flame}>
-      <div className="grid grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-6">
         <div>
           <div className="text-[11px] text-muted-foreground mb-1">Allocated</div>
           <div className="text-lg font-semibold">{formatSU(su.allocated)}</div>
@@ -249,15 +249,15 @@ function SUByUserTable({ report, userColorMap, selectedUsers, onToggleUser }: {
                 background: isSelected ? `${userColor}15` : undefined,
               }}
             >
-              <div className="flex items-center gap-1.5 w-32 min-w-0">
+              <div className="flex items-center gap-1.5 w-20 sm:w-32 min-w-0">
                 <div style={{ width: 8, height: 8, borderRadius: 2, background: userColor, flexShrink: 0 }} />
                 <span className="text-xs font-mono truncate">{u.user}</span>
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <ProgressBar value={pct} />
               </div>
-              <span className="text-xs text-muted-foreground w-24 text-right">{formatSU(u.consumed)}</span>
-              <span className="text-[10px] text-muted-foreground w-12 text-right">{formatPct(pct)}</span>
+              <span className="text-xs text-muted-foreground w-16 sm:w-24 text-right">{formatSU(u.consumed)}</span>
+              <span className="text-[10px] text-muted-foreground w-8 sm:w-12 text-right">{formatPct(pct)}</span>
             </div>
           );
         })}
@@ -854,8 +854,8 @@ function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers, sele
   }
 
   return (
-    <div>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+    <div className="overflow-x-auto">
+      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
         <thead>
           <tr>
             <th rowSpan={2} style={{ ...thStyle, textAlign: "left", minWidth: 130 }}>User</th>
@@ -995,10 +995,12 @@ function PartitionsSection({ partitions, report, userColorMap, selectedUsers, on
             {/* Rack + Table: stacked on mobile, side-by-side on lg+ */}
             <div className="flex flex-col lg:flex-row gap-4 items-center lg:items-start">
               {/* Rack + legend — centered on mobile, left-aligned on desktop */}
-              <div className="flex flex-col items-center lg:items-start shrink-0 overflow-x-auto max-w-full">
-                <RackFrame nodes={data.nodes} userColorMap={userColorMap} selectedUsers={selectedUsers} theme={theme} partitionName={name} onToggleUser={onToggleUser} />
-                <div style={{ marginTop: 6 }}>
-                  <GridKey theme={theme} />
+              <div className="flex flex-col items-center lg:items-start shrink-0 max-w-full overflow-hidden">
+                <div className="pcb-rack-scale">
+                  <RackFrame nodes={data.nodes} userColorMap={userColorMap} selectedUsers={selectedUsers} theme={theme} partitionName={name} onToggleUser={onToggleUser} />
+                  <div style={{ marginTop: 6 }}>
+                    <GridKey theme={theme} />
+                  </div>
                 </div>
               </div>
               {/* Table */}

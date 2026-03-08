@@ -48,30 +48,51 @@ export function DocsPage({ onNavigateToTab }: { onNavigateToTab?: (tabId: string
   const theme = useAppStore((s) => s.theme);
 
   return (
-    <div className="flex gap-0 min-h-[calc(100vh-200px)]">
-      {/* Sidebar */}
-      <nav className="w-56 shrink-0 border-r border-border pr-4 pt-2">
-        <ul className="space-y-1">
+    <div className="min-h-[calc(100vh-200px)]">
+      {/* Mobile: horizontal scrollable tabs */}
+      <nav className="sm:hidden overflow-x-auto scrollbar-hide border-b border-border mb-4 -mx-4 px-4">
+        <div className="flex gap-1 pb-2">
           {DOC_SECTIONS.map((section) => (
-            <li key={section.id}>
-              <button
-                onClick={() => setActiveSectionId(section.id)}
-                className={cn(
-                  "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
-                  activeSectionId === section.id
-                    ? "bg-primary/10 text-primary font-medium"
-                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-                )}
-              >
-                {section.title}
-              </button>
-            </li>
+            <button
+              key={section.id}
+              onClick={() => setActiveSectionId(section.id)}
+              className={cn(
+                "px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors",
+                activeSectionId === section.id
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {section.title}
+            </button>
           ))}
-        </ul>
+        </div>
       </nav>
 
-      {/* Content */}
-      <article className="flex-1 pl-8 pr-4 pt-2">
+      <div className="flex gap-0">
+        {/* Desktop sidebar */}
+        <nav className="hidden sm:block w-56 shrink-0 border-r border-border pr-4 pt-2">
+          <ul className="space-y-1">
+            {DOC_SECTIONS.map((section) => (
+              <li key={section.id}>
+                <button
+                  onClick={() => setActiveSectionId(section.id)}
+                  className={cn(
+                    "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
+                    activeSectionId === section.id
+                      ? "bg-primary/10 text-primary font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                  )}
+                >
+                  {section.title}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        {/* Content */}
+        <article className="flex-1 sm:pl-8 pr-0 sm:pr-4 pt-0 sm:pt-2 min-w-0">
         {activeSectionId !== "feedback" && <div className="prose-docs">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
@@ -347,6 +368,7 @@ export function DocsPage({ onNavigateToTab }: { onNavigateToTab?: (tabId: string
           ) : <span />}
         </div>
       </article>
+      </div>
     </div>
   );
 }

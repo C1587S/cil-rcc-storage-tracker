@@ -79,17 +79,17 @@ function LoginScreen({ onLogin }: { onLogin: (user: string) => void }) {
     <main className="min-h-screen flex flex-col">
       {/* Same header as the dashboard */}
       <nav className="border-b border-border bg-card">
-        <div className="max-w-[1440px] mx-auto px-8 py-4">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-8 py-3 sm:py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <img
                 src="/cil-rcc-tracker/cil_rcc_console.png"
                 alt="CRC"
                 width={28}
                 height={28}
-                className="rounded-full"
+                className="rounded-full w-6 h-6 sm:w-7 sm:h-7"
               />
-              <h1 className="text-lg font-semibold tracking-tight text-foreground">
+              <h1 className="text-base sm:text-lg font-semibold tracking-tight text-foreground">
                 CIL RCC <span className="font-normal text-muted-foreground">Console</span>
               </h1>
             </div>
@@ -99,18 +99,18 @@ function LoginScreen({ onLogin }: { onLogin: (user: string) => void }) {
       </nav>
 
       {/* Login form */}
-      <div className="flex-1 flex items-center justify-center">
-        <div className="w-full max-w-sm px-6">
-          <div className="text-center mb-8">
+      <div className="flex-1 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-6 sm:mb-8">
             <img
               src="/cil-rcc-tracker/cil_rcc_console.png"
               alt="CIL RCC Console"
               width={64}
               height={64}
-              className="mx-auto mb-5 rounded-xl shadow-sm logo-spin-once"
+              className="mx-auto mb-4 sm:mb-5 rounded-xl shadow-sm logo-spin-once w-12 h-12 sm:w-16 sm:h-16"
             />
-            <h2 className="text-xl font-semibold text-foreground mb-2">Sign in</h2>
-            <p className="text-sm text-muted-foreground leading-relaxed">
+            <h2 className="text-lg sm:text-xl font-semibold text-foreground mb-2">Sign in</h2>
+            <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
               Enter your RCC username — the one you use to log in on Midway.
               <br />
               If you don't have an RCC account, use the name part of the email you use on the CIL Slack
@@ -119,7 +119,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: string) => void }) {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
             <div>
               <input
                 type="text"
@@ -129,7 +129,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: string) => void }) {
                 autoFocus
                 autoComplete="username"
                 className={cn(
-                  "w-full px-4 py-3 rounded-lg border text-sm font-mono",
+                  "w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg border text-sm font-mono",
                   "bg-secondary/50 text-foreground placeholder:text-muted-foreground/50",
                   "focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary",
                   "transition-colors",
@@ -145,7 +145,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: string) => void }) {
               type="submit"
               disabled={loading || !username.trim()}
               className={cn(
-                "w-full py-3 rounded-lg text-sm font-medium transition-colors",
+                "w-full py-2.5 sm:py-3 rounded-lg text-sm font-medium transition-colors",
                 "bg-primary text-primary-foreground hover:bg-primary/90",
                 "disabled:opacity-40 disabled:cursor-not-allowed"
               )}

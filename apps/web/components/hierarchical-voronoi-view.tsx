@@ -14,7 +14,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
-import { Maximize2, Minimize2, Focus, BarChart2, Play } from 'lucide-react'
+import { Maximize2, Minimize2, Focus, BarChart2, Play, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
 import {
@@ -304,8 +304,8 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         )}
         style={{
           // Altura fija en modo normal, auto en fullscreen para que flex-1 funcione
-          height: isFullscreen ? 'auto' : '550px',
-          minHeight: isFullscreen ? '0' : '550px'
+          height: isFullscreen ? 'auto' : undefined,
+          minHeight: isFullscreen ? '0' : '300px'
         }}
       >
         {/* SVG canvas — always mounted, hidden behind gate when not running */}
@@ -482,16 +482,16 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
         </div>
       </div>
 
-      {/* LEGENDS - Layout: File Categories izquierda (2 filas), Bubble+Quota derecha (vertical) */}
-      <div className="grid grid-cols-[1fr_auto] gap-3">
-        {/* Columna izquierda: File Categories con 2 filas de 5 elementos */}
-        <VoronoiCategoryLegend isExpanded={false} isFullscreen={isFullscreen} />
-
-        {/* Columna derecha: Bubble Size arriba, Quota abajo (ambos en una sola fila) */}
-        <div className="flex flex-col gap-3">
+      {/* LEGENDS - Stacked on mobile, side-by-side on lg+ */}
+      <div className="flex flex-col lg:grid lg:grid-cols-[1fr_auto] gap-3">
+        {/* Bubble Size + Traffic Light — shown first on mobile, right column on desktop */}
+        <div className="flex flex-row gap-3 order-1 lg:order-2">
           <VoronoiBubbleSizeLegend isExpanded={false} isFullscreen={isFullscreen} />
           <VoronoiTrafficLightLegend isExpanded={false} isFullscreen={isFullscreen} />
         </div>
+
+        {/* File Categories — below on mobile, left column on desktop */}
+        <VoronoiCategoryLegend isExpanded={false} isFullscreen={isFullscreen} />
       </div>
 
       {/* CONTROLS */}
@@ -507,5 +507,20 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
     </div>
   )
 
-  return renderContent(false)
+  return (
+    <>
+      {/* Portrait mobile: suggest rotating device */}
+      <div className="flex sm:hidden flex-col items-center justify-center gap-4 py-16 text-center px-8">
+        <RotateCcw className="w-10 h-10 text-muted-foreground/40" />
+        <div>
+          <p className="text-sm font-medium text-muted-foreground mb-1">Landscape mode recommended</p>
+          <p className="text-xs text-muted-foreground/60">Rotate your device for the best Voronoi visualization experience</p>
+        </div>
+      </div>
+      {/* Landscape / desktop: show voronoi */}
+      <div className="hidden sm:block">
+        {renderContent(false)}
+      </div>
+    </>
+  )
 }

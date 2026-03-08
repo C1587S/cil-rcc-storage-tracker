@@ -127,7 +127,7 @@ export function VoronoiPartitionPanel({
 
   return (
     <div className={cn(
-      "border rounded-lg overflow-hidden h-[200px] flex flex-col shrink-0",
+      "border rounded-lg overflow-hidden h-auto sm:h-[200px] flex flex-col shrink-0",
       theme === 'dark' ? 'bg-[#161b22] border-gray-800' : 'bg-card border-border'
     )}>
       <div className={cn(

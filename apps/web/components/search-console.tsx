@@ -834,8 +834,8 @@ function QueryResultsTable({
     <div className="border border-border/50 rounded-sm overflow-hidden shadow-sm">
       {/* Header */}
       <div className="bg-muted/10 border-b border-border/50 px-3 py-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <div className="text-[10px] font-mono text-muted-foreground">
               {isFiltered ? `${filteredRows.length} filtered (of ${result.row_count})` : `${result.row_count} rows`} -- {Number(result.execution_time_ms).toFixed(3)} ms
             </div>
@@ -848,7 +848,7 @@ function QueryResultsTable({
                   placeholder={includeRegex ? "e.g. \\.py$|report" : "e.g. data, report"}
                   value={includeFilter}
                   onChange={(e) => setIncludeFilter(e.target.value)}
-                  className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-sky-500/30 rounded-sm bg-sky-500/5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-sky-500/50 focus:ring-1 focus:ring-sky-500/20 w-36"
+                  className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-sky-500/30 rounded-sm bg-sky-500/5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-sky-500/50 focus:ring-1 focus:ring-sky-500/20 w-28 sm:w-36"
                 />
                 <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-sky-400/70" />
                 {includeFilter && (
@@ -879,7 +879,7 @@ function QueryResultsTable({
                   placeholder={excludeRegex ? "e.g. \\.log$|tmp" : "e.g. tmp, cache"}
                   value={excludeFilter}
                   onChange={(e) => setExcludeFilter(e.target.value)}
-                  className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-rose-500/30 rounded-sm bg-rose-500/5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/20 w-36"
+                  className="pl-6 pr-2 py-0.5 text-[10px] font-mono border border-rose-500/30 rounded-sm bg-rose-500/5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/20 w-28 sm:w-36"
                 />
                 <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-rose-400/70 text-[10px] font-bold leading-none">-</span>
                 {excludeFilter && (
@@ -1447,7 +1447,7 @@ export function SearchConsole() {
                 </div>
 
                 {/* Two-column layout for remaining filters */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Left column */}
                   <div className="space-y-3">
                     {/* Path Scope */}
