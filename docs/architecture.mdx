@@ -10,19 +10,27 @@ This is an initial version and will likely evolve as we start using it. Since it
 
 The dashboard has four main sections. Here's a quick overview of what each one does and when you'd use it.
 
+### Computing Panel
+
+A quick way to check what is happening on the cluster without SSHing in. It shows CPU and RAM usage on the partitions we use on Midway2 and Midway3 (including our private partition on Midway3), active Slurm jobs, and how close we are to our storage and service unit quotas.
+
+Job data refreshes every 15 minutes on weekdays (9 AM to 5 PM) and every hour on weekends. Quota numbers update once a day with the snapshot.
+
+[Open Computing Panel](tab:computing)
+
 ### Query Console
 
-The main tool for searching and analyzing the filesystem data. You can write SQL queries directly, pick from a set of templates, or just type a plain English question and let the AI generate the SQL for you.
+The main tool for searching and analyzing the filesystem data. You can write SQL queries directly, pick from a set of templates, or just type a plain English question and let the AI generate the SQL for you. Plain English questions are turned into SQL by an LLM (llama-3.3-70b) running locally. No data leaves the server. The generated SQL is automatically linted to fix common syntax issues before execution.
 
 This is the go-to for things like: finding files that match a pattern, compiling usage reports, identifying large or stale files that could be moved to cold storage or removed. You can export results as CSV or Markdown to share with the team. If you already know what you're looking for, this is the fastest path.
 
 More details in [Query Console](query-console.mdx) | [Open Query Console](tab:query)
 
+> **Heads up:** Both the Tree Explorer and the Voronoi Treemap compute their data on the fly by querying the database. Since the default directory contains millions of entries, the initial load can take anywhere from a few seconds to a minute. After that, results are cached and navigation is fast. This will be improved by precomputing recursive sizes during import.
+
 ### Tree Explorer
 
 Browse the filesystem like a directory tree, similar to mounting a volume and exploring it in a file manager. Each entry shows size, owner, timestamps, and other metadata. Useful for poking around a directory when you're not sure what's in there.
-
-Note: the first time you load a large directory, it queries the database on the fly, so it might take a few seconds. That's expected.
 
 More details in [Tree Explorer](tree-explorer.mdx) | [Open Tree Explorer](tab:tree)
 
@@ -32,19 +40,7 @@ A visual map of storage usage. Each region represents a directory or file, and i
 
 The Voronoi and Tree Explorer can help you find files worth cleaning up. But if you already know the pattern of the files you're looking for (e.g., "all .log files older than 6 months"), the [Query Console](query-console.mdx) is more efficient.
 
-Like the Tree Explorer, the first load runs a large query and can take a few seconds or even a minute for deep trees. That's normal.
-
 More details in [Voronoi Treemap](voronoi.mdx) | [Open Voronoi](tab:voronoi)
-
-### Computing Panel
-
-Shows the current state of CIL's compute resources on the RCC: CPU and RAM usage across our partitions on Midway2 and Midway3, active Slurm jobs, and quota information for service units and storage.
-
-The point is to let you check on things quickly: is anyone running a big job? How loaded are the nodes? Are we close to our SU or storage quotas? You can do this from your phone, a laptop, wherever. No need to SSH into the cluster.
-
-Slurm data refreshes every 15 minutes during weekday working hours (9 AM to 5 PM) and every hour on weekends. Quota data comes from the daily snapshots and updates once per day.
-
-[Open Computing Panel](tab:computing)
 
 ---
 
@@ -118,13 +114,13 @@ A Next.js web app consumes the API and provides the four views described above (
 
 ### Step 7. Computing monitoring
 
-A scheduled process queries Slurm for active jobs and node usage across CIL partitions on Midway2 and Midway3, and makes the data available through the API.
+A scheduled process checks Slurm for active jobs and node usage on the partitions we use on Midway2 and Midway3 (including our private partition on Midway3), and makes the data available through the API.
 
-During weekday working hours (9 AM to 5 PM) this runs every 15 minutes. On weekends it runs every hour. Quota data (SU and storage) comes from the daily filesystem snapshots.
+This runs every 15 minutes on weekdays (9 AM to 5 PM) and every hour on weekends. Quota data (SU and storage) comes from the daily filesystem snapshots.
 
 ### Step 8. AI assistance
 
-A local instance of llama-3.3-70b handles natural language queries. You type something like "show me the 10 biggest CSV files not accessed in 2 years" and it generates the SQL for you. It also offers a "Fix with AI" option when a query fails.
+Instead of writing SQL yourself, you can type a question in plain English (e.g., "show me the 10 biggest CSV files not accessed in 2 years") and a local LLM (llama-3.3-70b) will write the query for you. If a query fails, there is also a "Fix with AI" button that tries to correct it.
 
 The model runs entirely on the local server. No data leaves the machine.
 
@@ -140,7 +136,7 @@ A Cloudflare Tunnel connects the local server to a public URL. It runs as a syst
 |-------|------|------|
 | Scan | Rust scanner walks `/project/cil` on RCC | Daily, ~2 AM |
 | Publish | Parquet files placed on Midway2 HTTP | After scan |
-| Download | Local server pulls and validates Parquet | 3x daily (cron) |
+| Download | Local server pulls and validates Parquet | 3x daily (cron, in case ingestion failed) |
 | Import | ClickHouse creates a new snapshot | After download |
 | Serve | FastAPI exposes data via REST API | Always running |
 | Display | Dashboard renders queries and visualizations | Always running |
