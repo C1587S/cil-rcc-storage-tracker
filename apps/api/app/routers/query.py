@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from time import time
 from app.db import execute_query_raw
 from app.models import QueryRequest, QueryResponse
-from app.services.guardrails import enforce_sql_guardrails, QueryValidationError
+from app.services.guardrails import enforce_sql_guardrails, lint_clickhouse_sql, QueryValidationError
 
 router = APIRouter(prefix="/api/query", tags=["query"])
 
@@ -29,8 +29,9 @@ async def execute_sql_query(request: QueryRequest):
         Query results with columns and rows
     """
     try:
-        # Enforce guardrails
-        sanitized_sql = enforce_sql_guardrails(request.sql, limit=request.limit)
+        # Lint and enforce guardrails
+        linted_sql = lint_clickhouse_sql(request.sql)
+        sanitized_sql = enforce_sql_guardrails(linted_sql, limit=request.limit)
 
         # Add snapshot_date parameter
         params = {"snapshot_date": request.snapshot_date.isoformat()}

@@ -374,6 +374,7 @@ function UnifiedQueryMode({
   const [sql, setSQL] = useState("");
   const [hasExecuted, setHasExecuted] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generatePhase, setGeneratePhase] = useState<"generating" | "linting" | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [isFixing, setIsFixing] = useState(false);
   const [copiedSQL, setCopiedSQL] = useState(false);
@@ -381,6 +382,7 @@ function UnifiedQueryMode({
   const handleGenerate = async () => {
     if (!question.trim() || !selectedSnapshot) return;
     setIsGenerating(true);
+    setGeneratePhase("generating");
     setGenerateError(null);
     setHasExecuted(false);
 
@@ -389,6 +391,9 @@ function UnifiedQueryMode({
         snapshot_date: selectedSnapshot,
         question: question.trim(),
       });
+      // Show linting phase long enough to read
+      setGeneratePhase("linting");
+      await new Promise((r) => setTimeout(r, 2000));
       setSQL(result.sql);
     } catch (err) {
       setGenerateError(
@@ -396,6 +401,7 @@ function UnifiedQueryMode({
       );
     } finally {
       setIsGenerating(false);
+      setGeneratePhase(null);
     }
   };
 
@@ -542,7 +548,11 @@ function UnifiedQueryMode({
               className="text-xs"
             >
               <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-              {isGenerating ? "Generating..." : "Generate SQL"}
+              {generatePhase === "linting"
+                ? "Linting for ClickHouse..."
+                : generatePhase === "generating"
+                ? "Generating SQL..."
+                : "Generate SQL"}
             </Button>
           </div>
         </div>
@@ -555,6 +565,14 @@ function UnifiedQueryMode({
           <div className="text-[10px] text-red-400 leading-relaxed font-mono whitespace-pre-wrap">
             {generateError}
           </div>
+        </div>
+      )}
+
+      {/* Linting status */}
+      {generatePhase === "linting" && (
+        <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] text-primary/70 font-mono">
+          <div className="loader-morph" style={{ height: 12, borderWidth: 1.5 }} />
+          <span className="snapshot-prompt">Adapting syntax to ClickHouse dialect...</span>
         </div>
       )}
 

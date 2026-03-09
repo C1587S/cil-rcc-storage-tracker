@@ -27,6 +27,117 @@ class QueryValidationError(ValueError):
     pass
 
 
+def lint_clickhouse_sql(sql: str) -> str:
+    """Auto-fix common LLM mistakes that produce invalid ClickHouse SQL.
+
+    Applied between AI generation and guardrails validation. Fixes syntax
+    that the LLM tends to get wrong (PostgreSQL/MySQL habits).
+    """
+    s = sql.strip()
+
+    # Remove trailing semicolons (LLM often adds them, guardrails reject them)
+    s = s.rstrip(";").strip()
+
+    # Strip multiple statements: keep only the first SELECT
+    # (LLM sometimes prepends SET statements or adds comments with semicolons)
+    if ";" in s:
+        parts = [p.strip() for p in s.split(";") if p.strip()]
+        select_parts = [p for p in parts if p.upper().lstrip().startswith("SELECT")]
+        if select_parts:
+            s = select_parts[0]
+
+    # Fix DATEDIFF(DAY, ...) -> dateDiff('day', ...)
+    # PostgreSQL: DATEDIFF(DAY, a, b)  ClickHouse: dateDiff('day', a, b)
+    s = re.sub(
+        r"\bDATEDIFF\s*\(\s*(YEAR|MONTH|WEEK|DAY|HOUR|MINUTE|SECOND)\s*,",
+        lambda m: f"dateDiff('{m.group(1).lower()}',",
+        s,
+        flags=re.IGNORECASE,
+    )
+
+    # Fix INTERVAL N DAY -> INTERVAL N DAY (ensure proper spacing)
+    # Also fix: INTERVAL 5*365 DAY -> INTERVAL 1825 DAY
+    def fix_interval_expr(m):
+        expr = m.group(1).strip()
+        unit = m.group(2).upper()
+        # Evaluate simple arithmetic like 5*365, 2*30
+        try:
+            val = eval(expr, {"__builtins__": {}})  # safe: no builtins
+            return f"INTERVAL {int(val)} {unit}"
+        except Exception:
+            return m.group(0)
+
+    s = re.sub(
+        r"\bINTERVAL\s+([\d\s\*\+\-]+)\s+(YEAR|MONTH|WEEK|DAY|HOUR|MINUTE|SECOND)\b",
+        fix_interval_expr,
+        s,
+        flags=re.IGNORECASE,
+    )
+
+    # Fix CURRENT_DATE -> today()
+    s = re.sub(r"\bCURRENT_DATE\b", "today()", s, flags=re.IGNORECASE)
+
+    # Fix CURRENT_TIMESTAMP -> now()
+    s = re.sub(r"\bCURRENT_TIMESTAMP\b", "now()", s, flags=re.IGNORECASE)
+
+    # Fix NOW() with no args (some LLMs capitalize differently)
+    # Already valid in CH, but ensure lowercase for consistency
+    s = re.sub(r"\bNOW\s*\(\s*\)", "now()", s, flags=re.IGNORECASE)
+
+    # Fix LIKE '%pattern%' -> positionCaseInsensitive(col, 'pattern') > 0
+    # Only for simple cases: WHERE col LIKE '%word%'
+    s = re.sub(
+        r"(\w+)\s+LIKE\s+'%([^%']+)%'",
+        r"positionCaseInsensitive(\1, '\2') > 0",
+        s,
+        flags=re.IGNORECASE,
+    )
+
+    # Fix LIKE 'prefix%' -> startsWith(col, 'prefix')
+    s = re.sub(
+        r"(\w+)\s+LIKE\s+'([^%']+)%'",
+        r"startsWith(\1, '\2')",
+        s,
+        flags=re.IGNORECASE,
+    )
+
+    # Fix EXTRACT(YEAR FROM ...) -> toYear(...)
+    s = re.sub(
+        r"\bEXTRACT\s*\(\s*YEAR\s+FROM\s+([^)]+)\)",
+        r"toYear(\1)",
+        s,
+        flags=re.IGNORECASE,
+    )
+    s = re.sub(
+        r"\bEXTRACT\s*\(\s*MONTH\s+FROM\s+([^)]+)\)",
+        r"toMonth(\1)",
+        s,
+        flags=re.IGNORECASE,
+    )
+
+    # Fix DATE_TRUNC('day', ...) -> toStartOfDay(...)
+    s = re.sub(
+        r"\bDATE_TRUNC\s*\(\s*'day'\s*,\s*([^)]+)\)",
+        r"toStartOfDay(\1)",
+        s,
+        flags=re.IGNORECASE,
+    )
+
+    # Fix COALESCE with 0 for numeric -> use ifNull (more idiomatic CH)
+    # Leave COALESCE as-is since CH supports it
+
+    # Fix LENGTH() -> length() (case normalization)
+    s = re.sub(r"\bLENGTH\s*\(", "length(", s, flags=re.IGNORECASE)
+
+    # Fix LOWER() -> lower()
+    s = re.sub(r"\bLOWER\s*\(", "lower(", s, flags=re.IGNORECASE)
+
+    # Fix UPPER() -> upper()
+    s = re.sub(r"\bUPPER\s*\(", "upper(", s, flags=re.IGNORECASE)
+
+    return s
+
+
 def enforce_sql_guardrails(sql: str, limit: int = 8000) -> str:
     """
     Enforce strict SQL guardrails for user-provided queries.
