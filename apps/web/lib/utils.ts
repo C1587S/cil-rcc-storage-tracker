@@ -7,11 +7,11 @@ export function cn(...inputs: ClassValue[]) {
 
 // Shared user color palette — used by Computing tab and Feedback
 const USER_COLORS = [
-  "#3b82f6", // blue
+  "#8b5cf6", // violet
   "#ef4444", // red
   "#10b981", // emerald
   "#f59e0b", // amber
-  "#8b5cf6", // violet
+  "#3b82f6", // blue
   "#ec4899", // pink
   "#06b6d4", // cyan
   "#f97316", // orange

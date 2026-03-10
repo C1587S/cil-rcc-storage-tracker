@@ -18,6 +18,7 @@ import {
   Clock,
   Server,
   AlertTriangle,
+  ChevronDown,
   X,
 } from "lucide-react";
 import { cn, getUserColor } from "@/lib/utils";
@@ -226,6 +227,8 @@ function SUByUserTable({ report, userColorMap, selectedUsers, onToggleUser }: {
   const m3 = report.clusters.midway3;
   const users = m3?.service_units.by_user || [];
   const total = m3?.service_units.consumed || 1;
+  const partitions = m3?.service_units.by_partition || [];
+  const [showPartitions, setShowPartitions] = useState(false);
 
   if (users.length === 0) return null;
 
@@ -246,7 +249,7 @@ function SUByUserTable({ report, userColorMap, selectedUsers, onToggleUser }: {
               style={{
                 opacity: hasSelection && !isSelected ? 0.4 : 1,
                 borderLeft: isSelected ? `3px solid ${userColor}` : "3px solid transparent",
-                background: isSelected ? `${userColor}15` : undefined,
+                background: isSelected ? `${userColor}30` : undefined,
               }}
             >
               <div className="flex items-center gap-1.5 w-20 sm:w-32 min-w-0">
@@ -262,11 +265,73 @@ function SUByUserTable({ report, userColorMap, selectedUsers, onToggleUser }: {
           );
         })}
       </div>
+      {partitions.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <button
+            onClick={() => setShowPartitions(!showPartitions)}
+            className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+          >
+            <ChevronDown size={12} className={cn("transition-transform", showPartitions ? "" : "-rotate-90")} />
+            By partition
+          </button>
+          {showPartitions && (
+            <div className="mt-2 space-y-1.5 pl-4">
+              {partitions.map((p) => {
+                const pct = total > 0 ? (p.consumed / total) * 100 : 0;
+                return (
+                  <div key={p.partition} className="flex items-center gap-3">
+                    <span className="text-xs font-mono text-muted-foreground w-20 sm:w-32 truncate">{p.partition}</span>
+                    <div className="flex-1 min-w-0">
+                      <ProgressBar value={pct} />
+                    </div>
+                    <span className="text-xs text-muted-foreground w-16 sm:w-24 text-right">{formatSU(p.consumed)}</span>
+                    <span className="text-[10px] text-muted-foreground w-8 sm:w-12 text-right">{formatPct(pct)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </Section>
   );
 }
 
+// ─── Partition Colors ─────────────────────────────────────────
+
+const PARTITION_COLORS: Record<string, string> = {};
+const PARTITION_PALETTE = [
+  "#06b6d4", // cyan
+  "#f59e0b", // amber
+  "#8b5cf6", // violet
+  "#10b981", // emerald
+  "#ec4899", // pink
+  "#f97316", // orange
+  "#6366f1", // indigo
+  "#e11d48", // rose
+];
+let nextPartitionIdx = 0;
+
+function getPartitionColor(partition: string): string {
+  if (!PARTITION_COLORS[partition]) {
+    PARTITION_COLORS[partition] = PARTITION_PALETTE[nextPartitionIdx % PARTITION_PALETTE.length];
+    nextPartitionIdx++;
+  }
+  return PARTITION_COLORS[partition];
+}
+
 // ─── Active Jobs ──────────────────────────────────────────────
+
+interface JobGroup {
+  user: string;
+  partition: string;
+  cluster: string;
+  running: number;
+  pending: number;
+  totalCpus: number;
+  totalMem: string;
+  jobs: (JobEntry & { cluster: string })[];
+}
 
 function ActiveJobs({ report, userColorMap, selectedUsers, onToggleUser }: {
   report: ComputingReport;
@@ -274,6 +339,8 @@ function ActiveJobs({ report, userColorMap, selectedUsers, onToggleUser }: {
   selectedUsers: Set<string>;
   onToggleUser: (user: string) => void;
 }) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
   const allJobs: (JobEntry & { cluster: string })[] = [];
   for (const [name, cluster] of Object.entries(report.clusters)) {
     if (!cluster) continue;
@@ -284,9 +351,50 @@ function ActiveJobs({ report, userColorMap, selectedUsers, onToggleUser }: {
     }
   }
 
+  // Group by user + partition
+  const groupMap = new Map<string, JobGroup>();
+  for (const j of allJobs) {
+    const key = `${j.user}|${j.partition}|${j.cluster}`;
+    let g = groupMap.get(key);
+    if (!g) {
+      g = { user: j.user, partition: j.partition, cluster: j.cluster, running: 0, pending: 0, totalCpus: 0, totalMem: "", jobs: [] };
+      groupMap.set(key, g);
+    }
+    if (j.state === "RUNNING") g.running++;
+    else if (j.state === "PENDING") g.pending++;
+    g.totalCpus += j.cpus || 0;
+    g.jobs.push(j);
+  }
+  // Sum mem per group (parse "XG" strings)
+  for (const g of groupMap.values()) {
+    let memMb = 0;
+    for (const j of g.jobs) {
+      const m = String(j.mem_alloc).match(/^([\d.]+)\s*(G|M|T)?/i);
+      if (m) {
+        const val = parseFloat(m[1]);
+        const unit = (m[2] || "M").toUpperCase();
+        if (unit === "G") memMb += val * 1024;
+        else if (unit === "T") memMb += val * 1024 * 1024;
+        else memMb += val;
+      }
+    }
+    if (memMb >= 1024) g.totalMem = `${(memMb / 1024).toFixed(1)}G`;
+    else g.totalMem = `${Math.round(memMb)}M`;
+  }
+  const groups = Array.from(groupMap.values()).sort((a, b) => b.jobs.length - a.jobs.length);
+
   const running = allJobs.filter(j => j.state === "RUNNING").length;
   const pending = allJobs.filter(j => j.state === "PENDING").length;
   const hasSelection = selectedUsers.size > 0;
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   return (
     <Section title="Active Jobs" icon={Cpu}>
@@ -296,61 +404,78 @@ function ActiveJobs({ report, userColorMap, selectedUsers, onToggleUser }: {
         <span>Total: <span className="font-medium">{allJobs.length}</span></span>
       </div>
 
-      {allJobs.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-muted-foreground text-left">
-                <th className="pb-2 pr-3 font-medium">User</th>
-                <th className="pb-2 pr-3 font-medium">State</th>
-                <th className="pb-2 pr-3 font-medium">Cluster</th>
-                <th className="pb-2 pr-3 font-medium">Partition</th>
-                <th className="pb-2 pr-3 font-medium">Job ID</th>
-                <th className="pb-2 pr-3 font-medium">Name</th>
-                <th className="pb-2 pr-3 font-medium">CPUs</th>
-                <th className="pb-2 pr-3 font-medium">Mem</th>
-                <th className="pb-2 pr-3 font-medium">Elapsed</th>
-                <th className="pb-2 pr-3 font-medium">Limit</th>
-                <th className="pb-2 font-medium">Left</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allJobs.map((j) => {
-                const isSelected = selectedUsers.has(j.user);
-                const userColor = userColorMap.get(j.user) || "#888";
-                return (
-                <tr
-                  key={`${j.cluster}-${j.job_id}`}
-                  className="border-t border-border/50 cursor-pointer"
-                  onClick={() => onToggleUser(j.user)}
-                  style={{
-                    opacity: hasSelection && !isSelected ? 0.4 : 1,
-                    borderLeft: isSelected ? `3px solid ${userColor}` : "3px solid transparent",
-                    background: isSelected ? `${userColor}15` : undefined,
-                    transition: "opacity 0.15s",
-                  }}
+      {groups.length > 0 && (
+        <div className="max-h-[400px] overflow-y-auto space-y-1">
+          {groups.map((g) => {
+            const key = `${g.user}|${g.partition}|${g.cluster}`;
+            const isExpanded = expandedGroups.has(key);
+            const isSelected = selectedUsers.has(g.user);
+            const userColor = userColorMap.get(g.user) || "#888";
+            const partColor = getPartitionColor(g.partition);
+
+            return (
+              <div key={key} style={{
+                opacity: hasSelection && !isSelected ? 0.4 : 1,
+                borderLeft: isSelected ? `3px solid ${userColor}` : "3px solid transparent",
+                background: isSelected ? `${userColor}30` : undefined,
+                transition: "opacity 0.15s",
+              }}>
+                {/* Summary row */}
+                <div
+                  className="flex items-center gap-3 py-1.5 px-1 cursor-pointer hover:bg-muted/30 rounded text-xs"
+                  onClick={() => toggleGroup(key)}
                 >
-                  <td className="py-1.5 pr-3 font-mono">
-                    <div className="flex items-center gap-1.5">
-                      <div style={{ width: 8, height: 8, borderRadius: 2, background: userColor, flexShrink: 0 }} />
-                      {j.user}
-                    </div>
-                  </td>
-                  <td className={cn("py-1.5 pr-3 font-medium", stateColor(j.state))}>{j.state}</td>
-                  <td className="py-1.5 pr-3">{j.cluster}</td>
-                  <td className="py-1.5 pr-3">{j.partition}</td>
-                  <td className="py-1.5 pr-3 font-mono">{j.job_id}</td>
-                  <td className="py-1.5 pr-3 max-w-[150px] truncate">{j.name}</td>
-                  <td className="py-1.5 pr-3">{j.cpus}</td>
-                  <td className="py-1.5 pr-3">{j.mem_alloc}</td>
-                  <td className="py-1.5 pr-3 font-mono">{j.elapsed}</td>
-                  <td className="py-1.5 pr-3 font-mono">{j.time_limit}</td>
-                  <td className="py-1.5 font-mono">{j.time_left}</td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                  <ChevronDown size={12} className={cn("text-muted-foreground transition-transform flex-shrink-0", isExpanded ? "" : "-rotate-90")} />
+                  <div className="flex items-center gap-1.5 min-w-0 w-28 sm:w-36">
+                    <div style={{ width: 8, height: 8, borderRadius: 2, background: userColor, flexShrink: 0 }} />
+                    <span className="font-mono truncate" onClick={(e) => { e.stopPropagation(); onToggleUser(g.user); }}>{g.user}</span>
+                  </div>
+                  <span className="font-mono" style={{ color: partColor }}>{g.partition}</span>
+                  <span className="text-muted-foreground">{g.cluster}</span>
+                  <div className="flex gap-2 ml-auto">
+                    {g.running > 0 && <span className="text-emerald-500 font-medium">{g.running} running</span>}
+                    {g.pending > 0 && <span className="text-amber-500 font-medium">{g.pending} pending</span>}
+                    <span className="text-muted-foreground">{g.totalCpus} CPUs</span>
+                    <span className="text-muted-foreground">{g.totalMem}</span>
+                  </div>
+                </div>
+
+                {/* Expanded job list */}
+                {isExpanded && (
+                  <div className="overflow-x-auto ml-5 mb-2">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-muted-foreground text-left">
+                          <th className="pb-1 pr-3 font-medium">State</th>
+                          <th className="pb-1 pr-3 font-medium">Job ID</th>
+                          <th className="pb-1 pr-3 font-medium">Name</th>
+                          <th className="pb-1 pr-3 font-medium">CPUs</th>
+                          <th className="pb-1 pr-3 font-medium">Mem</th>
+                          <th className="pb-1 pr-3 font-medium">Elapsed</th>
+                          <th className="pb-1 pr-3 font-medium">Limit</th>
+                          <th className="pb-1 font-medium">Left</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {g.jobs.map((j) => (
+                          <tr key={`${j.cluster}-${j.job_id}`} className="border-t border-border/30">
+                            <td className={cn("py-1 pr-3 font-medium", stateColor(j.state))}>{j.state}</td>
+                            <td className="py-1 pr-3 font-mono">{j.job_id}</td>
+                            <td className="py-1 pr-3 max-w-[150px] truncate">{j.name}</td>
+                            <td className="py-1 pr-3">{j.cpus}</td>
+                            <td className="py-1 pr-3">{j.mem_alloc}</td>
+                            <td className="py-1 pr-3 font-mono">{j.elapsed}</td>
+                            <td className="py-1 pr-3 font-mono">{j.time_limit}</td>
+                            <td className="py-1 font-mono">{j.time_left}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -811,7 +936,7 @@ function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers, sele
           opacity: isActive ? 1 : 0.35,
           cursor: "pointer",
           borderLeft: isSelected ? `3px solid ${userColor}` : "3px solid transparent",
-          background: isSelected ? `${userColor}08` : undefined,
+          background: isSelected ? `${userColor}30` : undefined,
         }}
       >
         <td style={{ ...tdStyle, textAlign: "left" }}>
