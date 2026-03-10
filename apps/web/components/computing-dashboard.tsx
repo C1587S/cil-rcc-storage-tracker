@@ -1166,13 +1166,18 @@ function QuotaSection({ report }: { report: ComputingReport }) {
     }
   }
 
-  if (groupQuotas.length === 0) return null;
-
   return (
     <Section title="Storage Quota" icon={HardDrive}>
-      {groupQuotas.map((q) => (
-        <QuotaBar key={`${q.filesystem}-${q.type}`} quota={q} />
-      ))}
+      {groupQuotas.length === 0 ? (
+        <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+          <AlertTriangle size={12} />
+          Quota data unavailable (rcchelp quota may have failed on the cluster)
+        </div>
+      ) : (
+        groupQuotas.map((q) => (
+          <QuotaBar key={`${q.filesystem}-${q.type}`} quota={q} />
+        ))
+      )}
     </Section>
   );
 }

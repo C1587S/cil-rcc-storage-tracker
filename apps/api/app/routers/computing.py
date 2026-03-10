@@ -15,6 +15,52 @@ _cache: dict = {"data": None, "ts": 0}
 _CACHE_TTL = 300  # 5 minutes
 
 
+def _backfill_quotas(data: dict) -> None:
+    """If any cluster has quota=null, patch in the last known quota from ClickHouse."""
+    clusters = data.get("clusters", {})
+    needs_backfill = any(
+        c and not c.get("quota")
+        for c in clusters.values()
+    )
+    if not needs_backfill:
+        return
+
+    try:
+        from app.db import execute_query
+        rows = execute_query(
+            "SELECT cluster, filesystem, quota_type, "
+            "space_used_gb, space_limit_gb, space_pct, "
+            "files_used, files_limit, files_pct "
+            "FROM computing.quota_daily "
+            "WHERE date = (SELECT max(date) FROM computing.quota_daily) "
+            "ORDER BY cluster, filesystem",
+            {}
+        )
+        if not rows:
+            return
+
+        # Group by cluster
+        by_cluster: dict[str, list] = {}
+        for r in rows:
+            cn = r["cluster"]
+            by_cluster.setdefault(cn, []).append({
+                "filesystem": r["filesystem"],
+                "type": r["quota_type"],
+                "space_used_gb": r["space_used_gb"],
+                "space_limit_gb": r["space_limit_gb"],
+                "space_pct": r["space_pct"],
+                "files_used": r["files_used"] or None,
+                "files_limit": r["files_limit"] or None,
+                "files_pct": r["files_pct"] or None,
+            })
+
+        for cluster_name, cluster_data in clusters.items():
+            if cluster_data and not cluster_data.get("quota") and cluster_name in by_cluster:
+                cluster_data["quota"] = {"filesystems": by_cluster[cluster_name]}
+    except Exception:
+        pass  # best-effort
+
+
 def _fetch_report() -> dict | None:
     """Fetch latest report from RCC, with caching."""
     now = time.time()
@@ -33,6 +79,7 @@ def _fetch_report() -> dict | None:
         req = urllib.request.Request(url, headers={"User-Agent": "cil-tracker/1.0"})
         with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
             data = json.loads(resp.read().decode())
+        _backfill_quotas(data)
         _cache["data"] = data
         _cache["ts"] = now
         return data
