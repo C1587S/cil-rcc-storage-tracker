@@ -620,8 +620,8 @@ function CpuGrid({ node, userColorMap, selectedUsers, onToggleUser }: {
           <div key={i} onClick={cell.user ? () => onToggleUser(cell.user!) : undefined} style={{
             width: CELL, height: CELL, borderRadius: 1,
             background: cell.color || "var(--pcb-free-cpu)",
-            border: isSelected ? "2px solid #facc15" : cell.color ? `1px solid ${cell.color}` : "1px solid var(--pcb-free-border)",
-            boxShadow: isSelected ? "0 0 4px #facc15, 0 0 8px rgba(250,204,21,0.4)" : cell.color ? `0 0 2px ${cell.color}40` : "none",
+            border: isSelected ? `2px solid ${cell.color}` : cell.color ? `1px solid ${cell.color}` : "1px solid var(--pcb-free-border)",
+            boxShadow: isSelected ? `0 0 4px ${cell.color}, 0 0 8px ${cell.color}66` : cell.color ? `0 0 2px ${cell.color}40` : "none",
             opacity: hasSelection ? (isSelected ? 1 : dimmed ? 0.25 : isFree ? 0.15 : 1) : 1,
             transition: "opacity 0.15s, box-shadow 0.15s",
             position: isSelected ? "relative" as const : undefined,
@@ -668,7 +668,7 @@ function RamGrid({ node, userColorMap, selectedUsers, onToggleUser }: {
           <div key={i} onClick={cell.user ? () => onToggleUser(cell.user!) : undefined} style={{
             width: CELL, height: CELL, borderRadius: 1,
             background: cell.color ? `${cell.color}25` : "var(--pcb-free-ram)",
-            border: isSelected ? "2px solid #facc15" : cell.color ? `1px solid ${cell.color}35` : "1px solid var(--pcb-free-border)",
+            border: isSelected ? `2px solid ${cell.color}` : cell.color ? `1px solid ${cell.color}35` : "1px solid var(--pcb-free-border)",
             display: "flex", alignItems: "center", justifyContent: "center",
             opacity: hasSelection ? (isSelected ? 1 : dimmed ? 0.25 : isFree ? 0.15 : 1) : 1,
             transition: "opacity 0.15s, box-shadow 0.15s",
@@ -680,7 +680,7 @@ function RamGrid({ node, userColorMap, selectedUsers, onToggleUser }: {
               width: 3, height: 3, borderRadius: "50%",
               background: cell.color || "var(--pcb-free-ram-dot)",
               opacity: cell.color ? 1 : 0.3,
-              boxShadow: isSelected ? "0 0 3px #facc15, 0 0 6px rgba(250,204,21,0.4)" : cell.color ? `0 0 2px ${cell.color}50` : "none",
+              boxShadow: isSelected ? `0 0 3px ${cell.color}, 0 0 6px ${cell.color}66` : cell.color ? `0 0 2px ${cell.color}50` : "none",
             }} />
           </div>
         );
