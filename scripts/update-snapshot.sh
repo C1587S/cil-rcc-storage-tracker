@@ -17,6 +17,13 @@ LOG_FILE="${LOG_DIR}/auto-update.log"
 RCC_URL="https://users.rcc.uchicago.edu/~cadavidsanchez/cil_scans"
 LOCK_FILE="/tmp/dev-tracker-update.lock"
 
+# Load ClickHouse password from .env
+if [ -f "${PROJECT_ROOT}/.env" ]; then
+  CH_PASS=$(grep '^CLICKHOUSE_PASSWORD=' "${PROJECT_ROOT}/.env" | cut -d= -f2-)
+fi
+CH_PASS="${CH_PASS:-}"
+CH_CLIENT="clickhouse-client --password ${CH_PASS}"
+
 KEEP_OLD=false
 FORCE=false
 for arg in "$@"; do
@@ -63,7 +70,7 @@ if [ -z "$NEW_DATE" ]; then
 fi
 
 # Step 2: Get current snapshot in DB
-CURRENT_DATE=$(docker compose exec -T clickhouse clickhouse-client --query \
+CURRENT_DATE=$(docker compose exec -T clickhouse ${CH_CLIENT} --query \
   "SELECT max(snapshot_date) FROM filesystem.snapshots" 2>/dev/null | tr -d '[:space:]')
 
 echo "Published : ${NEW_DATE}"
@@ -86,10 +93,10 @@ if [ "$FORCE" = true ] && [ -n "$CURRENT_DATE" ] && [ "$NEW_DATE" = "$CURRENT_DA
   echo ""
   echo "--- Clearing existing ${NEW_DATE} from DB (--force) ---"
   for table in entries directory_hierarchy voronoi_precomputed snapshots; do
-    docker compose exec -T clickhouse clickhouse-client --query \
+    docker compose exec -T clickhouse ${CH_CLIENT} --query \
       "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${NEW_DATE}'"
   done
-  docker compose exec -T clickhouse clickhouse-client --query \
+  docker compose exec -T clickhouse ${CH_CLIENT} --query \
     "OPTIMIZE TABLE filesystem.entries FINAL"
   # Also clear parquet files from disk so download-scans.sh re-fetches them
   for source_dir in "${PROJECT_ROOT}/cil_scans"/*/; do
@@ -125,30 +132,39 @@ echo ""
 echo "--- Step 2/3: Import ---"
 "${SCRIPT_DIR}/docker-import.sh"
 
-# Step 5: Delete old snapshot from DB and disk
-if [ "$KEEP_OLD" = false ] && [ -n "$CURRENT_DATE" ]; then
-  echo ""
-  echo "--- Step 3/3: Delete old snapshot (${CURRENT_DATE}) ---"
+# Step 5: Delete ALL old snapshots from DB and disk (keep only NEW_DATE)
+if [ "$KEEP_OLD" = false ]; then
+  # Get all snapshot dates except the one we just imported
+  OLD_DATES=$(docker compose exec -T clickhouse ${CH_CLIENT} --query \
+    "SELECT snapshot_date FROM filesystem.snapshots WHERE snapshot_date != '${NEW_DATE}' ORDER BY snapshot_date" 2>/dev/null | tr -d '\r')
 
-  for table in entries directory_hierarchy voronoi_precomputed snapshots; do
-    docker compose exec -T clickhouse clickhouse-client --query \
-      "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${CURRENT_DATE}'"
-    echo "  Deleted from ${table}"
-  done
+  if [ -n "$OLD_DATES" ]; then
+    echo ""
+    echo "--- Step 3/3: Delete old snapshots ---"
 
-  docker compose exec -T clickhouse clickhouse-client --query \
-    "OPTIMIZE TABLE filesystem.entries FINAL"
+    while IFS= read -r OLD_DATE; do
+      [ -z "$OLD_DATE" ] && continue
+      echo "  Removing ${OLD_DATE}..."
+      for table in entries directory_hierarchy voronoi_precomputed snapshots; do
+        docker compose exec -T clickhouse ${CH_CLIENT} --query \
+          "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${OLD_DATE}'"
+      done
 
-  # Clean up old parquet files from disk
-  for source_dir in "${PROJECT_ROOT}/cil_scans"/*/; do
-    old_dir="${source_dir%/}/${CURRENT_DATE}"
-    if [ -d "$old_dir" ]; then
-      rm -rf "$old_dir"
-      echo "  Removed disk: $old_dir"
-    fi
-  done
+      # Clean up old parquet files from disk
+      for source_dir in "${PROJECT_ROOT}/cil_scans"/*/; do
+        old_dir="${source_dir%/}/${OLD_DATE}"
+        [ -d "$old_dir" ] && rm -rf "$old_dir" && echo "    Removed disk: $old_dir"
+      done
+    done <<< "$OLD_DATES"
 
-  echo "  Old snapshot ${CURRENT_DATE} removed."
+    docker compose exec -T clickhouse ${CH_CLIENT} --query \
+      "OPTIMIZE TABLE filesystem.entries FINAL"
+
+    echo "  All old snapshots removed. Only ${NEW_DATE} remains."
+  else
+    echo ""
+    echo "--- Step 3/3: No old snapshots to remove ---"
+  fi
 elif [ "$KEEP_OLD" = true ]; then
   echo ""
   echo "--- Step 3/3: Skipped (--keep-old) ---"
