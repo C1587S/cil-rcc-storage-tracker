@@ -88,6 +88,49 @@ function getPctBg(pct: number | null | undefined): string {
   return `rgba(${r},${g},${b},0.08)`;
 }
 
+/** Parse memory string like "32G", "1G", "16384M" to GB */
+function parseMemGb(mem: string): number {
+  const m = String(mem).match(/^([\d.]+)\s*(G|M|T)?/i);
+  if (!m) return 0;
+  const val = parseFloat(m[1]);
+  const unit = (m[2] || "M").toUpperCase();
+  if (unit === "G") return val;
+  if (unit === "T") return val * 1024;
+  return val / 1024; // M or raw number
+}
+
+/** Fix per-node user memory: backend uses last_mem instead of sum.
+ *  Re-aggregate from the job list which has correct per-job data. */
+function fixNodeUserMemory(data: ComputingReport): void {
+  for (const cluster of Object.values(data.clusters)) {
+    if (!cluster) continue;
+    // Build a map: node -> user -> summed mem_gb from job list
+    const jobMem = new Map<string, Map<string, number>>();
+    for (const job of cluster.jobs.list) {
+      if (job.state !== "RUNNING" || !job.node) continue;
+      // A job can span multiple nodes (comma-separated)
+      for (const nd of job.node.split(",")) {
+        const node = nd.trim();
+        if (!node) continue;
+        if (!jobMem.has(node)) jobMem.set(node, new Map());
+        const userMap = jobMem.get(node)!;
+        userMap.set(job.user, (userMap.get(job.user) || 0) + parseMemGb(job.mem_alloc));
+      }
+    }
+    // Patch node.users with corrected memory
+    for (const pdata of Object.values(cluster.partitions)) {
+      for (const node of pdata.nodes) {
+        const userMem = jobMem.get(node.name);
+        if (!userMem) continue;
+        for (const u of node.users) {
+          const corrected = userMem.get(u.user);
+          if (corrected !== undefined) u.mem_alloc_gb = corrected;
+        }
+      }
+    }
+  }
+}
+
 /** Returns the bar fill color for ProgressBar */
 function getPctBarBg(pct: number | null | undefined): string {
   if (pct == null) return "#e5e7eb"; // muted
@@ -1046,6 +1089,44 @@ function ConsolidatedUserTable({ partitions, userColorMap, allAccountUsers, sele
             );
           })()}
 
+          {/* Free resources row */}
+          {(() => {
+            const freeStyle: React.CSSProperties = { ...tdStyle, background: "hsl(var(--muted))", fontWeight: 700, color: "hsl(var(--foreground))", borderBottom: "2px solid hsl(var(--border))" };
+            const nodeFree = nodes.map(({ node }) => {
+              let usedCpu = 0, usedMem = 0;
+              for (const u of node.users) { usedCpu += u.cpus; usedMem += u.mem_alloc_gb; }
+              const freeCpu = node.cpus_total - usedCpu;
+              const freeMem = node.mem_total_gb - usedMem;
+              return { cpu: freeCpu, mem: Math.round(freeMem), cpuPct: (freeCpu / node.cpus_total) * 100, memPct: (freeMem / node.mem_total_gb) * 100 };
+            });
+            const grandFreeCpu = nodeFree.reduce((s, n) => s + n.cpu, 0);
+            const grandFreeMem = nodeFree.reduce((s, n) => s + n.mem, 0);
+            const grandFreeCpuPct = totalCpus > 0 ? (grandFreeCpu / totalCpus * 100) : 0;
+            const grandFreeMemPct = totalMem > 0 ? (grandFreeMem / totalMem * 100) : 0;
+            return (
+              <tr>
+                <td style={{ ...freeStyle, textAlign: "left" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 2, background: "#9ca3af", flexShrink: 0, opacity: 0.4 }} />
+                    <span style={{ fontWeight: 700, fontSize: 11 }}>Free</span>
+                  </div>
+                </td>
+                {nodeFree.map((nf, i) => (
+                  <React.Fragment key={nodes[i].id}>
+                    <td style={{ ...freeStyle, borderLeft: "2px solid hsl(var(--border))" }}>{nf.cpu}</td>
+                    <td style={{ ...freeStyle, color: getPctColor(100 - nf.cpuPct) }}>{nf.cpuPct.toFixed(1)}%</td>
+                    <td style={freeStyle}>{nf.mem}G</td>
+                    <td style={{ ...freeStyle, color: getPctColor(100 - nf.memPct) }}>{nf.memPct.toFixed(1)}%</td>
+                  </React.Fragment>
+                ))}
+                <td style={{ ...freeStyle, borderLeft: "2px solid hsl(var(--border))", background: "hsl(var(--muted) / 0.7)" }}>{grandFreeCpu}</td>
+                <td style={{ ...freeStyle, background: "hsl(var(--muted) / 0.7)", color: getPctColor(100 - grandFreeCpuPct) }}>{grandFreeCpuPct.toFixed(1)}%</td>
+                <td style={{ ...freeStyle, background: "hsl(var(--muted) / 0.7)" }}>{grandFreeMem}G</td>
+                <td style={{ ...freeStyle, background: "hsl(var(--muted) / 0.7)", color: getPctColor(100 - grandFreeMemPct) }}>{grandFreeMemPct.toFixed(1)}%</td>
+              </tr>
+            );
+          })()}
+
           {/* Active users section */}
           {activeUsers.map(user => renderUserRow(user, true))}
 
@@ -1232,6 +1313,8 @@ export function ComputingDashboard() {
     setError(null);
     try {
       const data = await getComputingReport();
+      // Fix per-node user memory: backend aggregates with last_mem instead of sum
+      fixNodeUserMemory(data);
       setReport(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load report");
