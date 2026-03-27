@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class RecursiveSizeComputerV3:
-    def __init__(self, host: str = "localhost", port: int = 9000, database: str = "filesystem"):
+    def __init__(self, host: str = "localhost", port: int = 9000, database: str = "filesystem", password: str = ""):
         self.host = host
         self.port = port
         self.database = database
@@ -45,6 +45,7 @@ class RecursiveSizeComputerV3:
             host=host,
             port=port,
             database=database,
+            password=password,
             settings={
                 "max_threads": 8,
                 "max_execution_time": 1800,      # 30 min (for full snapshot)
@@ -354,13 +355,14 @@ def main():
     parser.add_argument("--host", default=os.getenv('CLICKHOUSE_HOST', 'localhost'), help="ClickHouse host")
     parser.add_argument("--port", type=int, default=int(os.getenv('CLICKHOUSE_PORT', '9000')), help="ClickHouse port")
     parser.add_argument("--db", default=os.getenv('CLICKHOUSE_DATABASE', 'filesystem'), help="ClickHouse database")
+    parser.add_argument("--password", default=os.getenv('CLICKHOUSE_PASSWORD', ''), help="ClickHouse password")
 
     args = parser.parse_args()
 
     if not args.all and not args.snapshot_date:
         parser.error("Provide snapshot_date or use --all")
 
-    comp = RecursiveSizeComputerV3(host=args.host, port=args.port, database=args.db)
+    comp = RecursiveSizeComputerV3(host=args.host, port=args.port, database=args.db, password=args.password)
 
     try:
         if args.all:
