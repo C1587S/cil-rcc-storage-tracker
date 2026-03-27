@@ -8,7 +8,7 @@ import { DocsPage } from "@/components/docs-page";
 import { ComputingDashboard } from "@/components/computing-dashboard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LoginGate, LogoutButton } from "@/components/login-gate";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
 
@@ -34,8 +34,31 @@ const TAB_GROUPS = [
 
 type TabId = typeof TAB_GROUPS[number]["tabs"][number]["id"];
 
+const ALL_TAB_IDS = TAB_GROUPS.flatMap(g => g.tabs.map(t => t.id)) as TabId[];
+const DEFAULT_TAB: TabId = "docs";
+
+function getTabFromHash(): TabId {
+  if (typeof window === "undefined") return DEFAULT_TAB;
+  const hash = window.location.hash.replace("#", "");
+  return ALL_TAB_IDS.includes(hash as TabId) ? (hash as TabId) : DEFAULT_TAB;
+}
+
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<TabId>("docs");
+  const [activeTab, setActiveTab] = useState<TabId>(DEFAULT_TAB);
+
+  // Sync tab from hash on mount and hash changes
+  useEffect(() => {
+    setActiveTab(getTabFromHash());
+    const onHashChange = () => setActiveTab(getTabFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  // Update hash when tab changes
+  const changeTab = useCallback((tab: TabId) => {
+    setActiveTab(tab);
+    window.history.replaceState(null, "", `#${tab}`);
+  }, []);
   const isVoronoiFullscreen = useAppStore(state => state.isVoronoiFullscreen);
   const [logoSpinning, setLogoSpinning] = useState(false);
   const logoRef = useRef<HTMLImageElement>(null);
@@ -97,7 +120,7 @@ export default function Home() {
                       {group.tabs.map(tab => (
                         <button
                           key={tab.id}
-                          onClick={() => setActiveTab(tab.id)}
+                          onClick={() => changeTab(tab.id)}
                           className={cn(
                             "relative px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-medium tracking-wide transition-colors rounded whitespace-nowrap",
                             "focus:outline-none",
@@ -142,7 +165,7 @@ export default function Home() {
         </div>
 
         <div className={cn("space-y-6", containerClass, activeTab !== "docs" && "hidden")}>
-          <DocsPage onNavigateToTab={(tabId) => setActiveTab(tabId as TabId)} />
+          <DocsPage onNavigateToTab={(tabId) => changeTab(tabId as TabId)} />
         </div>
       </div>
 
