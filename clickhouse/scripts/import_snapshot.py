@@ -46,9 +46,11 @@ class SnapshotImporter:
         if clickhouse_port is None:
             clickhouse_port = int(os.getenv('CLICKHOUSE_PORT', '9000'))
 
+        clickhouse_password = os.getenv('CLICKHOUSE_PASSWORD', '')
         self.client = Client(
             host=clickhouse_host,
             port=clickhouse_port,
+            password=clickhouse_password,
             settings={
                 'max_threads': 8,
                 'max_insert_threads': 4,
@@ -104,12 +106,28 @@ class SnapshotImporter:
         # Import each Parquet file
         total_rows = 0
         total_size = 0
+        skipped_files = []
 
         for parquet_file in parquet_files:
             logger.info(f"Processing {parquet_file.name}...")
 
             file_start = time.time()
-            rows, size = self._import_parquet_file(parquet_file, snapshot_date)
+            try:
+                rows, size = self._import_parquet_file(parquet_file, snapshot_date)
+            except (pl.exceptions.ComputeError, pl.exceptions.SchemaError,
+                    OSError, Exception) as e:
+                # Check if this is a parquet/data read error vs something else
+                if isinstance(e, (pl.exceptions.ComputeError, pl.exceptions.SchemaError, OSError)):
+                    logger.warning(f"  Skipping corrupted file {parquet_file.name}: {e}")
+                    skipped_files.append(parquet_file.name)
+                    continue
+                # For other exceptions, check if it's a pyarrow error
+                error_module = type(e).__module__ or ''
+                if 'pyarrow' in error_module or 'ArrowInvalid' in type(e).__name__:
+                    logger.warning(f"  Skipping corrupted file {parquet_file.name}: {e}")
+                    skipped_files.append(parquet_file.name)
+                    continue
+                raise
 
             total_rows += rows
             total_size += size
@@ -119,6 +137,9 @@ class SnapshotImporter:
                 f"  Imported {rows:,} rows ({size / 1024 / 1024:.1f} MB) "
                 f"in {duration:.1f}s ({rows / duration:.0f} rows/s)"
             )
+
+        if skipped_files:
+            logger.warning(f"Skipped {len(skipped_files)} corrupted file(s): {', '.join(skipped_files)}")
 
         # Update snapshot metadata
         self._update_snapshot_metadata(snapshot_date)
@@ -131,7 +152,8 @@ class SnapshotImporter:
             'total_size_mb': total_size / 1024 / 1024,
             'total_duration_seconds': total_duration,
             'rows_per_second': total_rows / total_duration,
-            'files_processed': len(parquet_files),
+            'files_processed': len(parquet_files) - len(skipped_files),
+            'files_skipped': len(skipped_files),
         }
 
         logger.info("=" * 60)

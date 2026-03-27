@@ -10,6 +10,13 @@ set -e
 
 SCANS_DIR="./cil_scans"
 
+# Load ClickHouse password from .env
+if [ -f ".env" ]; then
+  CH_PASS=$(grep '^CLICKHOUSE_PASSWORD=' ".env" | cut -d= -f2-)
+fi
+CH_PASS="${CH_PASS:-}"
+CH_CLIENT="clickhouse-client --password ${CH_PASS}"
+
 # Check if Docker is running
 if ! docker compose ps clickhouse 2>/dev/null | grep -q "Up\|running"; then
     echo "Error: Docker Compose stack is not running"
@@ -120,7 +127,7 @@ case "${1:-all}" in
 
             echo ""
             echo "Optimizing materialized views (deduplication)..."
-            docker compose exec clickhouse clickhouse-client --query "OPTIMIZE TABLE filesystem.directory_hierarchy FINAL"
+            docker compose exec clickhouse ${CH_CLIENT} --query "OPTIMIZE TABLE filesystem.directory_hierarchy FINAL"
 
             echo ""
             echo "✓ Completed $SNAPSHOT_DATE"
