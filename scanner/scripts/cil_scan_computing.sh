@@ -471,22 +471,27 @@ build_partition_json() {
                 nu_user=$(echo "$uline" | awk '{print $1}')
                 nu_jobs=$(echo "$uline" | awk '{print $2}')
                 nu_cpus=$(echo "$uline" | awk '{print $3}')
-                nu_mem=$(echo "$uline" | awk '{print $4}')
+                nu_mem_gb=$(echo "$uline" | awk '{print $4}')
                 nu_elapsed=$(echo "$uline" | awk '{print $5}')
                 [[ -z "$nu_user" ]] && continue
-                local nu_mem_gb
-                nu_mem_gb=$(mem_to_gb "$nu_mem")
                 [[ "$first_nu" -eq 0 ]] && node_users_json+=","
                 node_users_json+="{\"user\":$(json_str "$nu_user"),\"jobs\":$nu_jobs,\"cpus\":$nu_cpus,\"mem_alloc_gb\":$nu_mem_gb,\"elapsed\":$(json_str "$nu_elapsed")}"
                 first_nu=0
             done < <(echo "$sess_raw" | awk -F'|' -v nd="$node" '
+                function mem2gb(m) {
+                    if (m ~ /[Gg]$/) { gsub(/[Gg]$/,"",m); return m+0 }
+                    if (m ~ /[Mm]$/) { gsub(/[Mm]$/,"",m); return m/1024 }
+                    if (m ~ /[Tt]$/) { gsub(/[Tt]$/,"",m); return m*1024 }
+                    if (m ~ /^[0-9]+$/) { return m/1024 }
+                    return 0
+                }
                 $10 ~ nd && $4 == "RUNNING" {
                     user=$2; cpus=$5+0; mem=$6; elapsed=$7
-                    jobs[user]++; sum_cpus[user]+=cpus; last_mem[user]=mem
+                    jobs[user]++; sum_cpus[user]+=cpus; sum_mem_gb[user]+=mem2gb(mem)
                     if (elapsed > max_elapsed[user]) max_elapsed[user]=elapsed
                 }
                 END {
-                    for (u in jobs) print u, jobs[u], sum_cpus[u], last_mem[u], max_elapsed[u]
+                    for (u in jobs) printf "%s %d %d %.0f %s\n", u, jobs[u], sum_cpus[u], sum_mem_gb[u], max_elapsed[u]
                 }')
         fi
         node_users_json+="]"
