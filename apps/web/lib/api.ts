@@ -6,6 +6,7 @@ import type {
   QueryResponse,
   NLToSQLResponse,
   ComputingReport,
+  ProjectionReport,
   FeedbackEntry,
 } from "./types";
 
@@ -154,6 +155,10 @@ export async function validateUser(username: string): Promise<{ valid: boolean; 
 
 export async function getComputingReport(): Promise<ComputingReport> {
   return apiRequest<ComputingReport>("/api/computing/latest");
+}
+
+export async function getProjectionReport(): Promise<ProjectionReport> {
+  return apiRequest<ProjectionReport>("/api/projections/latest");
 }
 
 export async function getFeedback(): Promise<FeedbackEntry[]> {

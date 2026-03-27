@@ -189,6 +189,7 @@ function ProgressBar({ value, className }: { value: number; className?: string }
         className="h-full rounded-full transition-all"
         style={{ width: `${clamped}%`, backgroundColor: getPctBarBg(value) }}
       />
+git add clickhouse/scripts/import_snapshot.py clickhouse/requirements.txt scripts/docker-import.sh && git commit -m "Skip corrupted parquet files during import instead of crashing"
     </div>
   );
 }

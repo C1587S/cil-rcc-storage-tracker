@@ -6,6 +6,7 @@ import { HierarchicalVoronoiView } from "@/components/hierarchical-voronoi-view"
 import { SearchConsole } from "@/components/search-console";
 import { DocsPage } from "@/components/docs-page";
 import { ComputingDashboard } from "@/components/computing-dashboard";
+import { ProjectionsDashboard } from "@/components/projections-dashboard";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { LoginGate, LogoutButton } from "@/components/login-gate";
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -19,7 +20,10 @@ const TAB_GROUPS = [
   {
     label: "Computing",
     color: "#5e81ac",
-    tabs: [{ id: "computing", label: "Computing" }] as const,
+    tabs: [
+      { id: "computing", label: "Computing" },
+      { id: "projections", label: "Projections" },
+    ] as const,
   },
   {
     label: "Storage",
@@ -162,6 +166,10 @@ export default function Home() {
 
         <div className={cn("space-y-6", containerClass, activeTab !== "computing" && "hidden")}>
           <ComputingDashboard />
+        </div>
+
+        <div className={cn("space-y-6", containerClass, activeTab !== "projections" && "hidden")}>
+          <ProjectionsDashboard />
         </div>
 
         <div className={cn("space-y-6", containerClass, activeTab !== "docs" && "hidden")}>

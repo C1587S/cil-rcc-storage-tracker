@@ -76,6 +76,94 @@ export interface FeedbackEntry {
   replies: FeedbackEntry[];
 }
 
+// Projections monitoring types (pi-mgreenst)
+
+export interface ProjectionReport {
+  meta: {
+    timestamp: string;
+    account: string;
+    user_filter: string;
+    output_root: string;
+    scan_duration_sec: number;
+    version: string;
+    history_hours: number;
+  };
+  summary: {
+    total_running: number;
+    total_pending: number;
+    total_cpus: number;
+    total_mem_gb: number;
+    partitions_in_use: string[];
+    longest_elapsed: string;
+    total_nc4_files: number;
+    total_output_size: string;
+    total_failed_recent: number;
+    total_completed_recent: number;
+  };
+  partitions: {
+    name: string;
+    nodes: { total: number; idle: number; mixed: number; allocated: number; down: number };
+    cpus: { total: number; allocated: number; free: number; pct: number };
+    mem_gb: { total: number; used: number; free: number; pct: number };
+  }[];
+  users: {
+    user: string;
+    running: number;
+    pending: number;
+    cpus: number;
+    mem_gb: number;
+    longest_elapsed: string;
+    scenarios: string[];
+  }[];
+  scenarios: ProjectionScenario[];
+  job_history: {
+    period_hours: number;
+    failed: ProjectionJobHistoryEntry[];
+    recently_completed: ProjectionJobHistoryEntry[];
+  };
+}
+
+export interface ProjectionScenario {
+  run_type: string;
+  scenario: string;
+  jobs: { running: number; pending: number; failed_recent: number };
+  progress: { completed: number; expected: number; remaining: number; pct: number; failed_gcms: number };
+  timing: {
+    first_completed: string | null;
+    last_completed: string | null;
+    rate_per_hour: number | null;
+    eta_seconds: number | null;
+    eta_display: string;
+  };
+  gcms: ProjectionGCM[];
+}
+
+export interface ProjectionGCM {
+  gcm: string;
+  status: "completed" | "in_progress" | "failed" | "not_started";
+  completed_at: string | null;
+  files: { name: string; size_mb: number; modified: number }[];
+  file_count: number;
+  total_size_mb: number;
+}
+
+export interface ProjectionJobHistoryEntry {
+  job_id: string;
+  name: string;
+  user: string;
+  state: string;
+  exit_code: string;
+  elapsed: string;
+  start: string;
+  end: string;
+  partition: string;
+  cpus: number;
+  max_rss: string;
+  node: string;
+  run_type: string;
+  scenario: string;
+}
+
 // Computing monitoring types
 
 export interface ComputingReportMeta {

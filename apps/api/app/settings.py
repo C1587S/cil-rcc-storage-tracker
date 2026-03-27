@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Computing monitoring
     computing_report_url: str = "https://users.rcc.uchicago.edu/~cadavidsanchez/cil_scans/quotas/latest.json"
 
+    # Projections monitoring (pi-mgreenst)
+    projections_report_url: str = "https://users.rcc.uchicago.edu/~cadavidsanchez/cil_scans/projections/latest.json"
+
     # Additional allowed users (non-RCC members, comma-separated usernames)
     allowed_users: str = ""
 
