@@ -1,10 +1,11 @@
 #!/bin/bash
 # =============================================================================
-# pi-mgreenst_scan_computing.sh — Projection Run Monitor (v2.0.0)
+# pi-mgreenst_scan_computing.sh — Projection Run Monitor (v3.0.0)
 #
 # GCM-level granularity for dashboard visualization. Produces a JSON with
-# per-scenario, per-GCM status (completed/in_progress/not_started),
-# file inventories, timing estimates, partition availability, and user breakdown.
+# per-scenario, per-GCM status (completed/in_progress/failed/not_started),
+# file inventories, timing estimates, partition availability, user breakdown,
+# and a job history log (failed, timed-out, and recently completed jobs).
 #
 # Usage:
 #   bash pi-mgreenst_scan_computing.sh              # terminal
@@ -14,13 +15,14 @@
 # =============================================================================
 set -o pipefail
 
-MONITOR_VERSION="2.0.0"
+MONITOR_VERSION="3.0.0"
 ACCOUNT="pi-mgreenst"
 USER_FILTER=""
 OUTPUT_MODE="terminal"
 OUTDIR=""
 OUTPUT_ROOT="/project/cil/gcp/outputs/mortality_new-socioeconomics/impacts-darwin"
 SCAN_PARTITIONS="caslake,amd,amd-hm"
+HISTORY_HOURS=24
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -30,6 +32,7 @@ while [[ $# -gt 0 ]]; do
         --json)           OUTPUT_MODE="json";    shift ;;
         --outdir)         OUTDIR="$2"; OUTPUT_MODE="json"; shift 2 ;;
         --partitions)     SCAN_PARTITIONS="$2";  shift 2 ;;
+        --history-hours)  HISTORY_HOURS="$2";    shift 2 ;;
         *)                shift ;;
     esac
 done
@@ -46,14 +49,26 @@ for part in $(echo "$SCAN_PARTITIONS" | tr ',' ' '); do
     sinfo -p "$part" -N -h -o "%n|%T|%C|%e|%m" 2>/dev/null >> "$TMPDIR_MON/partinfo_${part}"
 done
 
-# 2. SLURM jobs
+# 2. SLURM active jobs
 if [[ -n "$USER_FILTER" ]]; then
     squeue -u "$USER_FILTER" -h -o "%i|%u|%j|%T|%P|%R|%C|%m|%M|%l|%L|%N" 2>/dev/null > "$TMPDIR_MON/squeue_raw"
 else
     squeue -A "$ACCOUNT" -h -o "%i|%u|%j|%T|%P|%R|%C|%m|%M|%l|%L|%N" 2>/dev/null > "$TMPDIR_MON/squeue_raw"
 fi
 
-# 3. Output file inventory with timestamps and sizes
+# 3. Job history from sacct (last N hours — captures failures, timeouts, OOM, completions)
+SACCT_START=$(date -d "${HISTORY_HOURS} hours ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -v-${HISTORY_HOURS}H +%Y-%m-%dT%H:%M:%S)
+if [[ -n "$USER_FILTER" ]]; then
+    sacct -u "$USER_FILTER" -S "$SACCT_START" --noheader --parsable2 \
+        -o JobID,JobName,User,State,ExitCode,Elapsed,Start,End,Partition,AllocCPUS,MaxRSS,NodeList \
+        2>/dev/null > "$TMPDIR_MON/sacct_raw"
+else
+    sacct -A "$ACCOUNT" -S "$SACCT_START" --noheader --parsable2 \
+        -o JobID,JobName,User,State,ExitCode,Elapsed,Start,End,Partition,AllocCPUS,MaxRSS,NodeList \
+        2>/dev/null > "$TMPDIR_MON/sacct_raw"
+fi
+
+# 4. Output file inventory with timestamps and sizes
 for rtype in median montecarlo single; do
     base="${OUTPUT_ROOT}/${rtype}"
     [[ ! -d "$base" ]] && continue
@@ -66,7 +81,7 @@ done
 # =========================================================================
 # Python does the heavy lifting: parse, structure, output
 # =========================================================================
-python3 << 'PYEOF' - "$TMPDIR_MON" "$OUTPUT_ROOT" "$SCAN_PARTITIONS" "$ACCOUNT" "$USER_FILTER" "$OUTPUT_MODE" "$OUTDIR" "$MONITOR_VERSION"
+python3 << 'PYEOF' - "$TMPDIR_MON" "$OUTPUT_ROOT" "$SCAN_PARTITIONS" "$ACCOUNT" "$USER_FILTER" "$OUTPUT_MODE" "$OUTDIR" "$MONITOR_VERSION" "$HISTORY_HOURS"
 
 import sys, os, json, re, glob
 from datetime import datetime, timezone
@@ -80,6 +95,7 @@ user_filter = sys.argv[5] or "all"
 output_mode = sys.argv[6]
 outdir = sys.argv[7]
 version = sys.argv[8]
+history_hours = int(sys.argv[9]) if sys.argv[9].isdigit() else 24
 
 ts_start = datetime.now()
 
@@ -245,6 +261,66 @@ if os.path.exists(squeue_file):
             u["scenarios"].add(key)
 
 # =========================================================================
+# 2b. Parse job history from sacct (failures, completions, timeouts)
+# =========================================================================
+FAILURE_STATES = {"FAILED", "TIMEOUT", "OUT_OF_MEMORY", "CANCELLED", "NODE_FAIL", "PREEMPTED"}
+SUCCESS_STATES = {"COMPLETED"}
+
+job_history = []       # all finished jobs (last N hours)
+failed_jobs = []       # only failures
+completed_jobs = []    # only successes
+failed_scenarios = defaultdict(int)  # scenario -> failure count
+
+sacct_file = os.path.join(tmpdir, "sacct_raw")
+if os.path.exists(sacct_file):
+    with open(sacct_file) as f:
+        for line in f:
+            fields = line.strip().split("|")
+            if len(fields) < 12:
+                continue
+            jobid, name, user, state, exitcode, elapsed, start, end, partition, cpus, maxrss, nodelist = fields[:12]
+
+            # Skip sub-steps (batch, extern) — only keep main job entries
+            if "." in jobid:
+                continue
+
+            # Normalize state (strip trailing qualifiers like "CANCELLED by 12345")
+            base_state = state.split()[0] if state else ""
+
+            run_type, scenario = classify_job(name)
+            key = f"{run_type}/{scenario}"
+
+            entry = {
+                "job_id": jobid,
+                "name": name,
+                "user": user,
+                "state": base_state,
+                "exit_code": exitcode,
+                "elapsed": elapsed,
+                "start": start,
+                "end": end,
+                "partition": partition,
+                "cpus": int(cpus) if cpus.isdigit() else 0,
+                "max_rss": maxrss,
+                "node": nodelist,
+                "run_type": run_type,
+                "scenario": scenario
+            }
+
+            if base_state in FAILURE_STATES:
+                failed_jobs.append(entry)
+                failed_scenarios[key] += 1
+            elif base_state in SUCCESS_STATES:
+                completed_jobs.append(entry)
+
+            if base_state in FAILURE_STATES | SUCCESS_STATES:
+                job_history.append(entry)
+
+# Sort by end time (most recent first)
+failed_jobs.sort(key=lambda j: j["end"], reverse=True)
+completed_jobs.sort(key=lambda j: j["end"], reverse=True)
+
+# =========================================================================
 # 3. Parse file inventory and build GCM-level data
 # =========================================================================
 # Structure: {run_type: {scenario: {gcm: {files: [...], completed_at: epoch}}}}
@@ -322,6 +398,8 @@ for key in sorted(all_scenario_keys):
     gcm_grid = []
     has_running = jobs_by_scenario.get(key, {}).get("running", 0) > 0
 
+    scenario_failures = failed_scenarios.get(key, 0)
+
     for gcm_name in sorted(gcm_map.keys()):
         gdata = gcm_map[gcm_name]
         is_complete = gdata["completed_at"] is not None
@@ -333,7 +411,18 @@ for key in sorted(all_scenario_keys):
             except:
                 pass
 
-        status = "completed" if is_complete else ("in_progress" if has_running else "not_started")
+        # Detect partial/failed: has output files but no combined.nc4 and no running jobs
+        has_files = len(gdata["files"]) > 0
+        is_partial = has_files and not is_complete and not has_running
+
+        if is_complete:
+            status = "completed"
+        elif has_running:
+            status = "in_progress"
+        elif is_partial:
+            status = "failed"  # has output but no combined.nc4 and nothing running
+        else:
+            status = "not_started"
 
         gcm_grid.append({
             "gcm": gcm_name,
@@ -373,15 +462,23 @@ for key in sorted(all_scenario_keys):
     pending_jobs = jobs_by_scenario.get(key, {}).get("pending", 0)
     pct = round(completed_count * 100 / expected, 1) if expected > 0 else 0
 
+    # Count statuses from GCM grid
+    failed_gcms = [g for g in gcm_grid if g["status"] == "failed"]
+
     scenarios_out.append({
         "run_type": run_type,
         "scenario": scenario,
-        "jobs": {"running": running_jobs, "pending": pending_jobs},
+        "jobs": {
+            "running": running_jobs,
+            "pending": pending_jobs,
+            "failed_recent": scenario_failures
+        },
         "progress": {
             "completed": completed_count,
             "expected": expected,
             "remaining": remaining,
-            "pct": pct
+            "pct": pct,
+            "failed_gcms": len(failed_gcms)
         },
         "timing": {
             "first_completed": first_completed,
@@ -436,7 +533,8 @@ report = {
         "user_filter": user_filter,
         "output_root": output_root,
         "scan_duration_sec": scan_duration,
-        "version": version
+        "version": version,
+        "history_hours": history_hours
     },
     "summary": {
         "total_running": total_running,
@@ -446,11 +544,18 @@ report = {
         "partitions_in_use": sorted(partitions_used),
         "longest_elapsed": longest_elapsed or "n/a",
         "total_nc4_files": total_nc4,
-        "total_output_size": total_size_display
+        "total_output_size": total_size_display,
+        "total_failed_recent": len(failed_jobs),
+        "total_completed_recent": len(completed_jobs)
     },
     "partitions": partitions,
     "users": users_out,
-    "scenarios": scenarios_out
+    "scenarios": scenarios_out,
+    "job_history": {
+        "period_hours": history_hours,
+        "failed": failed_jobs[:50],
+        "recently_completed": completed_jobs[:50]
+    }
 }
 
 # =========================================================================
@@ -523,9 +628,11 @@ for s in scenarios_out:
     t = s["timing"]
     print(f"\n  {B}{WHT}{s['run_type']} / {s['scenario']}{R}")
     print(f"  {pbar(p['completed'], p['expected'])}")
+    fail_str = f"  {RED}Failed GCMs: {p['failed_gcms']}{R}" if p["failed_gcms"] > 0 else ""
+    job_fail_str = f"  {RED}Job failures (24h): {s['jobs']['failed_recent']}{R}" if s["jobs"]["failed_recent"] > 0 else ""
     print(f"  {GRN}Done: {p['completed']}{R}  {BLU}Running: {s['jobs']['running']}{R}  "
           f"{YEL}Pending: {s['jobs']['pending']}{R}  Remaining: {p['remaining']}  "
-          f"{DIM}Expected: {p['expected']}{R}")
+          f"{DIM}Expected: {p['expected']}{R}{fail_str}{job_fail_str}")
     if t["rate_per_hour"] is not None:
         print(f"  Rate: {WHT}{t['rate_per_hour']}/hr{R}   ETA: {WHT}{t['eta_display']}{R}")
     elif p["completed"] > 0:
@@ -534,14 +641,35 @@ for s in scenarios_out:
     # GCM grid summary
     if s["gcms"]:
         done = [g["gcm"] for g in s["gcms"] if g["status"] == "completed"]
-        prog = [g["gcm"] for g in s["gcms"] if g["status"] == "in_progress"]
+        fail = [g["gcm"] for g in s["gcms"] if g["status"] == "failed"]
         if done:
-            print(f"  {DIM}Completed GCMs: {', '.join(sorted(done))}{R}")
+            print(f"  {DIM}Completed: {', '.join(sorted(done))}{R}")
+        if fail:
+            print(f"  {RED}Partial/failed: {', '.join(sorted(fail))}{R}")
+
+# Job history
+if failed_jobs:
+    print(f"\n{B}{RED}FAILED JOBS (last {history_hours}h){R}")
+    print(f"{DIM}----------------------------------------------------------------------{R}")
+    print(f"  {B}{'JobID':<12} {'Name':<30} {'User':<14} {'State':<12} {'Exit':<8} {'Elapsed':<10}{R}")
+    for j in failed_jobs[:15]:
+        print(f"  {j['job_id']:<12} {j['name'][:29]:<30} {j['user']:<14} "
+              f"{RED}{j['state']:<12}{R} {j['exit_code']:<8} {j['elapsed']:<10}")
+
+if completed_jobs:
+    print(f"\n{B}{GRN}RECENTLY COMPLETED (last {history_hours}h){R}")
+    print(f"{DIM}----------------------------------------------------------------------{R}")
+    print(f"  {B}{'JobID':<12} {'Name':<30} {'User':<14} {'Elapsed':<10} {'End':<20}{R}")
+    for j in completed_jobs[:10]:
+        print(f"  {j['job_id']:<12} {j['name'][:29]:<30} {j['user']:<14} "
+              f"{j['elapsed']:<10} {DIM}{j['end']}{R}")
 
 # Output
 print(f"\n{B}{CYN}OUTPUT{R}")
 print(f"{DIM}----------------------------------------------------------------------{R}")
 print(f"  NC4 files: {WHT}{total_nc4}{R}   Size: {WHT}{total_size_display}{R}")
+print(f"  Failed (24h): {RED if failed_jobs else DIM}{len(failed_jobs)}{R}   "
+      f"Completed (24h): {GRN}{len(completed_jobs)}{R}")
 
 print(f"\n{DIM}{ts_start.strftime('%Y-%m-%d %H:%M:%S')}   Account: {account}{R}")
 print()
