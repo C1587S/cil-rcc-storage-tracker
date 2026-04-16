@@ -101,14 +101,14 @@ for gi, group in enumerate(groups, 1):
         try:
             result = subprocess.run(
                 [hash_cmd, path],
-                capture_output=True, text=True, timeout=300
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300
             )
             if result.returncode == 0:
-                h = result.stdout.strip().split()[0]
+                h = result.stdout.decode().strip().split()[0]
                 hashes[path] = h
                 total_files_hashed += 1
             else:
-                errors.append(f"  HASH ERROR: {path}: {result.stderr.strip()}")
+                errors.append("  HASH ERROR: {}: {}".format(path, result.stderr.decode().strip()))
         except subprocess.TimeoutExpired:
             errors.append(f"  TIMEOUT: {path}")
         except Exception as e:
@@ -119,6 +119,21 @@ for gi, group in enumerate(groups, 1):
             print(f"  {WARN}{e}{R}")
         if len(errors) > 5:
             print(f"  {WARN}  ... and {len(errors) - 5} more errors{R}")
+
+    # Abort if too many files failed
+    attempted = len(paths) - sum(1 for e in errors if "NOT FOUND" in e)
+    if attempted > 0 and len(hashes) == 0:
+        print("  {}FATAL: all {} files failed to hash. Aborting.{}".format(WARN, attempted, R))
+        print("  Check Python version (need 3.7+) and hash tool availability.")
+        if errors:
+            print("  First error: {}".format(errors[0]))
+        sys.exit(1)
+    if len(paths) > 0 and len(hashes) < len(paths) * 0.5:
+        print("  {}WARNING: {}/{} files failed to hash (>50%). Results unreliable.{}".format(
+            WARN, len(paths) - len(hashes), len(paths), R))
+        group_failed = True
+    else:
+        group_failed = False
 
     # Analyze hashes
     unique_hashes = set(hashes.values())
@@ -180,6 +195,11 @@ print(f"{B}{'=' * 60}{R}")
 print(f"{B}SUMMARY{R}")
 print(f"{'=' * 60}")
 print()
+
+if total_files_hashed == 0:
+    print("  {}FATAL: zero files were successfully hashed. Cannot produce results.{}".format(WARN, R))
+    print("  Check: Python version, hash tool, file accessibility.")
+    sys.exit(1)
 
 confirmed = sum(1 for r in results if r["status"] == "CONFIRMED")
 mixed = sum(1 for r in results if r["status"] == "MIXED")
