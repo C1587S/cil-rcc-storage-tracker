@@ -6,10 +6,6 @@ This is an initial version and will likely evolve as we start using it. Since it
 
 ---
 
-## What's in the dashboard
-
-The dashboard has four main sections. Here's a quick overview of what each one does and when you'd use it.
-
 ### Computing Panel
 
 A quick way to check what is happening on the cluster without SSHing in. It shows CPU and RAM usage on the partitions we use on Midway2 and Midway3 (including our private partition on Midway3), active Slurm jobs, and how close we are to our storage and service unit quotas.
@@ -25,8 +21,6 @@ The main tool for searching and analyzing the filesystem data. You can write SQL
 This is the go-to for things like: finding files that match a pattern, compiling usage reports, identifying large or stale files that could be moved to cold storage or removed. You can export results as CSV or Markdown to share with the team. If you already know what you're looking for, this is the fastest path.
 
 More details in [Query Console](query-console.mdx) | [Open Query Console](tab:query)
-
-> **Heads up:** Both the Tree Explorer and the Voronoi Treemap compute their data on the fly by querying the database. Since the default directory contains millions of entries, the initial load can take anywhere from a few seconds to a minute. After that, results are cached and navigation is fast. This will be improved by precomputing recursive sizes during import.
 
 ### Tree Explorer
 
@@ -92,21 +86,13 @@ This runs automatically three times a day (5 AM, noon, 9 PM) via cron.
 
 ### Step 4. Import into the database
 
-Another script (`update-snapshot.sh`) detects when new data arrives and imports it into ClickHouse. ClickHouse is a columnar database built for fast analytics. It can query 72 million rows in under 100 milliseconds.
+Each daily scan produces a snapshot: a complete picture of the filesystem on that date. You pick which snapshot to query from the dropdown at the top of the dashboard. The data is stored in a database that you can query through the Query Console. For users who are not familiar with query languages, a local AI model can assist in designing queries from plain English -- no data leaves the server.
 
-Each import creates a "snapshot": a complete picture of the filesystem on that day. Old snapshots are deleted after a successful import (unless you pass `--keep-old`).
+Old snapshots are deleted after a successful import (unless you pass `--keep-old`).
 
 ### Step 5. Serve the data
 
-A FastAPI backend sits in front of ClickHouse and exposes the data through a REST API. It handles:
-
-- Listing available snapshots
-- Browsing the directory tree
-- Searching files by name
-- Running SQL queries (with safety guardrails)
-- Translating plain English questions into SQL
-
-All queries are read-only. The backend enforces SELECT-only, requires a snapshot filter, and caps results at 8000 rows.
+A backend exposes the data through an API that the dashboard consumes. All queries are read-only, capped at 8000 rows.
 
 ### Step 6. Display in the dashboard
 
