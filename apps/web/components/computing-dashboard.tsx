@@ -1479,10 +1479,15 @@ export function ComputingDashboard() {
         <button
           onClick={() => fetchReport(true)}
           disabled={refreshing}
-          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+          className={cn(
+            "inline-flex items-center gap-1.5 text-xs transition-colors",
+            refreshing
+              ? "text-primary"
+              : "text-muted-foreground hover:text-foreground"
+          )}
         >
           <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
-          Refresh
+          {refreshing ? "Updating..." : "Refresh"}
         </button>
       </div>
 

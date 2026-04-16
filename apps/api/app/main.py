@@ -40,6 +40,16 @@ app.include_router(auth.router)
 app.include_router(feedback.router)
 
 
+# Prefetch external reports on startup so first page load is instant
+@app.on_event("startup")
+async def _prefetch_reports():
+    import asyncio
+    from app.routers.computing import _fetch_report as fetch_computing
+    from app.routers.projections import _fetch_report as fetch_projections
+    asyncio.get_event_loop().run_in_executor(None, fetch_computing)
+    asyncio.get_event_loop().run_in_executor(None, fetch_projections)
+
+
 @app.get("/")
 async def root():
     """Root endpoint - API info."""

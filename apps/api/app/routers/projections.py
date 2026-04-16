@@ -3,6 +3,7 @@ import json
 import time
 import urllib.request
 import ssl
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from app.settings import get_settings
@@ -12,6 +13,23 @@ router = APIRouter(prefix="/api/projections", tags=["projections"])
 # In-memory cache for the live report
 _cache: dict = {"data": None, "ts": 0}
 _CACHE_TTL = 300  # 5 minutes
+_DISK_CACHE = Path("/tmp/projections_latest.json")
+
+
+def _save_to_disk(data: dict) -> None:
+    try:
+        _DISK_CACHE.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
+def _load_from_disk() -> dict | None:
+    try:
+        if _DISK_CACHE.exists():
+            return json.loads(_DISK_CACHE.read_text())
+    except Exception:
+        pass
+    return None
 
 
 def _fetch_report() -> dict | None:
@@ -23,7 +41,7 @@ def _fetch_report() -> dict | None:
     settings = get_settings()
     url = settings.projections_report_url
     if not url:
-        return None
+        return _cache["data"] or _load_from_disk()
 
     try:
         ctx = ssl.create_default_context()
@@ -34,12 +52,12 @@ def _fetch_report() -> dict | None:
             data = json.loads(resp.read().decode())
         _cache["data"] = data
         _cache["ts"] = now
+        _save_to_disk(data)
         return data
     except Exception:
-        # Return stale cache if available
         if _cache["data"]:
             return _cache["data"]
-        return None
+        return _load_from_disk()
 
 
 @router.get("/latest")

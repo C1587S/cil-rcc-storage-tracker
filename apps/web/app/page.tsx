@@ -22,7 +22,7 @@ const TAB_GROUPS = [
     color: "#5e81ac",
     tabs: [
       { id: "computing", label: "Computing" },
-      { id: "projections", label: "Projections" },
+      // { id: "projections", label: "Projections" },
     ] as const,
   },
   {

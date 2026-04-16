@@ -1,9 +1,12 @@
 """Computing monitoring API — live data proxy + historical ingestion."""
 import json
 import time
+import os
+import threading
 import urllib.request
 import ssl
 from datetime import date
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from app.settings import get_settings
@@ -13,6 +16,25 @@ router = APIRouter(prefix="/api/computing", tags=["computing"])
 # In-memory cache for the live report
 _cache: dict = {"data": None, "ts": 0}
 _CACHE_TTL = 300  # 5 minutes
+_DISK_CACHE = Path("/tmp/computing_latest.json")
+
+
+def _save_to_disk(data: dict) -> None:
+    """Persist latest report to disk so it survives restarts."""
+    try:
+        _DISK_CACHE.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
+def _load_from_disk() -> dict | None:
+    """Load last known report from disk for instant first response."""
+    try:
+        if _DISK_CACHE.exists():
+            return json.loads(_DISK_CACHE.read_text())
+    except Exception:
+        pass
+    return None
 
 
 def _backfill_quotas(data: dict) -> None:
@@ -62,7 +84,8 @@ def _backfill_quotas(data: dict) -> None:
 
 
 def _fetch_report() -> dict | None:
-    """Fetch latest report from RCC, with caching."""
+    """Fetch latest report from RCC, with caching.
+    Falls back to: memory cache -> disk cache -> None."""
     now = time.time()
     if _cache["data"] and (now - _cache["ts"]) < _CACHE_TTL:
         return _cache["data"]
@@ -70,7 +93,7 @@ def _fetch_report() -> dict | None:
     settings = get_settings()
     url = settings.computing_report_url
     if not url:
-        return None
+        return _cache["data"] or _load_from_disk()
 
     try:
         ctx = ssl.create_default_context()
@@ -82,12 +105,13 @@ def _fetch_report() -> dict | None:
         _backfill_quotas(data)
         _cache["data"] = data
         _cache["ts"] = now
+        _save_to_disk(data)
         return data
     except Exception:
-        # Return stale cache if available
+        # Return stale memory cache or disk cache
         if _cache["data"]:
             return _cache["data"]
-        return None
+        return _load_from_disk()
 
 
 def _get_write_client():
