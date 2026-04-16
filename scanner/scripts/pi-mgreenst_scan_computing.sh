@@ -573,10 +573,17 @@ if output_mode == "json":
         print(json.dumps(report, indent=2))
     sys.exit(0)
 
-# Terminal output
+# Terminal output — neutral palette (no red/green political colors)
 R = "\033[0m"; B = "\033[1m"; DIM = "\033[2m"
-RED = "\033[0;31m"; GRN = "\033[0;32m"; YEL = "\033[1;33m"
-BLU = "\033[0;34m"; CYN = "\033[0;36m"; WHT = "\033[1;37m"; PUR = "\033[0;35m"
+WHT = "\033[1;37m"; CYN = "\033[0;36m"; BLU = "\033[0;34m"
+MAG = "\033[0;35m"; ORG = "\033[38;5;208m"; SKY = "\033[38;5;75m"
+WARN = "\033[38;5;203m"  # soft coral for warnings/failures
+
+# Status markers: * done, ~ running, x failed, . pending
+S_DONE = f"{CYN}*{R}"
+S_RUN  = f"{SKY}~{R}"
+S_FAIL = f"{WARN}x{R}"
+S_PEND = f"{DIM}.{R}"
 
 def pbar(cur, tot, width=25):
     if tot <= 0:
@@ -584,8 +591,8 @@ def pbar(cur, tot, width=25):
     pct = cur * 100 // tot
     fill = cur * width // tot
     empty = width - fill
-    c = RED if pct == 0 else (YEL if pct < 50 else (CYN if pct < 90 else GRN))
-    bar = c + "#" * fill + DIM + "-" * empty + R
+    c = DIM if pct == 0 else (ORG if pct < 50 else (SKY if pct < 90 else CYN))
+    bar = c + "=" * fill + DIM + "-" * empty + R
     return f"[{bar}] {c}{pct:3d}%{R} ({cur}/{tot})"
 
 print()
@@ -593,9 +600,11 @@ print(f"{B}{BLU}Projection Monitor{R}  {DIM}(v{version}){R}")
 print(f"  Account: {CYN}{account}{R}   User: {CYN}{user_filter}{R}")
 print(f"  Output:  {DIM}{output_root}{R}")
 print(f"  {DIM}{ts_start.strftime('%Y-%m-%d %H:%M:%S')}   scan took {scan_duration}s{R}")
+print()
+print(f"  {DIM}Legend:  {S_DONE} done   {S_RUN} running   {S_FAIL} failed   {S_PEND} pending{R}")
 
 # Partitions
-print(f"\n{B}{PUR}PARTITIONS{R}")
+print(f"\n{B}{MAG}PARTITIONS{R}")
 print(f"{DIM}----------------------------------------------------------------------{R}")
 print(f"  {B}{'Partition':<12} {'Nodes':>6} {'Idle':>6} {'Mixed':>6} {'Down':>6} {'CPU%':>6} {'Mem%':>6}{R}")
 for p in partitions:
@@ -606,7 +615,7 @@ for p in partitions:
 # Jobs
 print(f"\n{B}{CYN}JOBS{R}")
 print(f"{DIM}----------------------------------------------------------------------{R}")
-print(f"  Running: {GRN}{total_running}{R}   Pending: {YEL}{total_pending}{R}   "
+print(f"  Running: {SKY}{total_running}{R}   Pending: {ORG}{total_pending}{R}   "
       f"CPUs: {WHT}{total_cpus}{R}   Mem: {WHT}{total_mem_gb}GB{R}")
 if longest_elapsed:
     print(f"  Longest running: {WHT}{longest_elapsed}{R}")
@@ -628,36 +637,49 @@ for s in scenarios_out:
     t = s["timing"]
     print(f"\n  {B}{WHT}{s['run_type']} / {s['scenario']}{R}")
     print(f"  {pbar(p['completed'], p['expected'])}")
-    fail_str = f"  {RED}Failed GCMs: {p['failed_gcms']}{R}" if p["failed_gcms"] > 0 else ""
-    job_fail_str = f"  {RED}Job failures (24h): {s['jobs']['failed_recent']}{R}" if s["jobs"]["failed_recent"] > 0 else ""
-    print(f"  {GRN}Done: {p['completed']}{R}  {BLU}Running: {s['jobs']['running']}{R}  "
-          f"{YEL}Pending: {s['jobs']['pending']}{R}  Remaining: {p['remaining']}  "
-          f"{DIM}Expected: {p['expected']}{R}{fail_str}{job_fail_str}")
+    parts = []
+    parts.append(f"Done: {CYN}{p['completed']}{R}")
+    parts.append(f"Running: {SKY}{s['jobs']['running']}{R}")
+    parts.append(f"Pending: {ORG}{s['jobs']['pending']}{R}")
+    parts.append(f"Remaining: {p['remaining']}")
+    parts.append(f"{DIM}Expected: {p['expected']}{R}")
+    if p["failed_gcms"] > 0:
+        parts.append(f"{WARN}Failed: {p['failed_gcms']}{R}")
+    if s["jobs"]["failed_recent"] > 0:
+        parts.append(f"{WARN}Job failures (24h): {s['jobs']['failed_recent']}{R}")
+    print(f"  {'  '.join(parts)}")
     if t["rate_per_hour"] is not None:
         print(f"  Rate: {WHT}{t['rate_per_hour']}/hr{R}   ETA: {WHT}{t['eta_display']}{R}")
     elif p["completed"] > 0:
         print(f"  {DIM}Rate: estimating (need 2+ completions){R}")
 
-    # GCM grid summary
+    # GCM grid — compact visual using status markers
     if s["gcms"]:
+        grid_chars = []
+        for g in sorted(s["gcms"], key=lambda g: g["gcm"]):
+            if g["status"] == "completed":   grid_chars.append(S_DONE)
+            elif g["status"] == "in_progress": grid_chars.append(S_RUN)
+            elif g["status"] == "failed":    grid_chars.append(S_FAIL)
+            else:                            grid_chars.append(S_PEND)
+        print(f"  GCMs: {''.join(grid_chars)}")
         done = [g["gcm"] for g in s["gcms"] if g["status"] == "completed"]
         fail = [g["gcm"] for g in s["gcms"] if g["status"] == "failed"]
         if done:
-            print(f"  {DIM}Completed: {', '.join(sorted(done))}{R}")
+            print(f"  {DIM}  done: {', '.join(sorted(done))}{R}")
         if fail:
-            print(f"  {RED}Partial/failed: {', '.join(sorted(fail))}{R}")
+            print(f"  {WARN}  failed: {', '.join(sorted(fail))}{R}")
 
 # Job history
 if failed_jobs:
-    print(f"\n{B}{RED}FAILED JOBS (last {history_hours}h){R}")
+    print(f"\n{B}{WARN}FAILED JOBS (last {history_hours}h){R}")
     print(f"{DIM}----------------------------------------------------------------------{R}")
     print(f"  {B}{'JobID':<12} {'Name':<30} {'User':<14} {'State':<12} {'Exit':<8} {'Elapsed':<10}{R}")
     for j in failed_jobs[:15]:
         print(f"  {j['job_id']:<12} {j['name'][:29]:<30} {j['user']:<14} "
-              f"{RED}{j['state']:<12}{R} {j['exit_code']:<8} {j['elapsed']:<10}")
+              f"{WARN}{j['state']:<12}{R} {j['exit_code']:<8} {j['elapsed']:<10}")
 
 if completed_jobs:
-    print(f"\n{B}{GRN}RECENTLY COMPLETED (last {history_hours}h){R}")
+    print(f"\n{B}{CYN}RECENTLY COMPLETED (last {history_hours}h){R}")
     print(f"{DIM}----------------------------------------------------------------------{R}")
     print(f"  {B}{'JobID':<12} {'Name':<30} {'User':<14} {'Elapsed':<10} {'End':<20}{R}")
     for j in completed_jobs[:10]:
@@ -668,8 +690,8 @@ if completed_jobs:
 print(f"\n{B}{CYN}OUTPUT{R}")
 print(f"{DIM}----------------------------------------------------------------------{R}")
 print(f"  NC4 files: {WHT}{total_nc4}{R}   Size: {WHT}{total_size_display}{R}")
-print(f"  Failed (24h): {RED if failed_jobs else DIM}{len(failed_jobs)}{R}   "
-      f"Completed (24h): {GRN}{len(completed_jobs)}{R}")
+print(f"  Failed (24h): {WARN if failed_jobs else DIM}{len(failed_jobs)}{R}   "
+      f"Completed (24h): {CYN}{len(completed_jobs)}{R}")
 
 print(f"\n{DIM}{ts_start.strftime('%Y-%m-%d %H:%M:%S')}   Account: {account}{R}")
 print()
