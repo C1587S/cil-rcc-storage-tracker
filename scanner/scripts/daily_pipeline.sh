@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1
 #SBATCH --mem=4G
-#SBATCH --time=2:00:00
+#SBATCH --time=12:00:00
 #SBATCH -o ./slurm_out/pipeline_%j.out
 #SBATCH -e ./slurm_out/pipeline_%j.err
 # Daily scan orchestrator - runs on Midway3 at 2am
