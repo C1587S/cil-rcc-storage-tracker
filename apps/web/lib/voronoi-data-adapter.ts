@@ -127,7 +127,7 @@ export async function buildVoronoiTree(
   };
 
   // DEBUG: Log on-the-fly root structure for comparison
-  console.log('🔍 [buildVoronoiTree] ON-THE-FLY ROOT STRUCTURE:', {
+  console.log('[buildVoronoiTree] ON-THE-FLY ROOT STRUCTURE:', {
     path: path,
     totalChildren: allChildren.length,
     directoryChildren: children.length,

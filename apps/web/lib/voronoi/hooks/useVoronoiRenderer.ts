@@ -15,8 +15,8 @@ export interface UseVoronoiRendererOptions {
   isFetching: boolean
   highlightColor: string
   theme: 'dark' | 'light'
-  // 🔥 NUEVO: Trigger explícito para forzar re-render desde el padre
-  // Esto es vital para sincronizar con transiciones de Portals/Tabs
+  // Explicit trigger to force a re-render from the parent.
+  // Needed to stay in sync with Portal/Tab transitions.
   layoutTrigger?: number
 
   svgRef: React.RefObject<SVGSVGElement>
@@ -53,7 +53,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
     isFetching,
     highlightColor,
     theme,
-    layoutTrigger = 0, // Default a 0
+    layoutTrigger = 0,
     svgRef,
     containerRef,
     tooltipRef,
@@ -97,8 +97,8 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
     }
   })
 
-  // 2. DIMENSION OBSERVING (Interno del Hook)
-  // Mantiene sincronizado el estado interno de dimensiones con el DOM real.
+  // 2. DIMENSION OBSERVING
+  // Keeps internal dimension state in sync with the real DOM.
   useEffect(() => {
     if (!containerRef.current) return
 
@@ -113,7 +113,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
       cancelAnimationFrame(animationFrameId);
       animationFrameId = requestAnimationFrame(() => {
         setContainerDimensions(prev => {
-          // Solo actualizamos si el cambio es significativo (> 1px) para evitar loops
+          // Only update on significant changes (> 1px) to avoid loops
           if (Math.abs(prev.width - width) > 1 || Math.abs(prev.height - height) > 1) {
             return { width, height }
           }
@@ -128,7 +128,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
       resizeObserver.disconnect()
       cancelAnimationFrame(animationFrameId)
     }
-  }, [containerRef, isExpanded, isFullscreen]) // Re-conectar si cambia el modo de vista
+  }, [containerRef, isExpanded, isFullscreen]) // Reconnect when the view mode changes
 
   // 3. MAIN RENDER EFFECT
   // This is the brain that decides when to render
@@ -201,14 +201,14 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
       }
     }
   }, [
-    // Dependencias Críticas
+    // Critical dependencies
     data,
     effectivePath,
-    layoutTrigger, // <--- AL CAMBIAR ESTO, FORZAMOS RENDER INMEDIATO
+    layoutTrigger, // Changing this forces an immediate render
     highlightColor, // Re-render when highlight color changes
     theme, // Re-render when theme changes
 
-    // Dimensiones detectadas por el Observer
+    // Dimensions detected by the observer
     containerDimensions.width,
     containerDimensions.height,
 

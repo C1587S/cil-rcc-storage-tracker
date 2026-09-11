@@ -27,7 +27,7 @@ export default function DevPage() {
           <h1 className="text-3xl font-bold text-primary mb-2">CIL-rcc-tracker (Dev Mode - On-The-Fly)</h1>
           <p className="text-muted-foreground">Filesystem snapshot explorer with on-the-fly voronoi computation</p>
           <div className="mt-2 p-2 bg-yellow-900/20 border border-yellow-600 rounded text-sm text-yellow-400">
-            🔬 Dev Mode: Using legacy on-the-fly voronoi computation (buildVoronoiTree)
+            Dev Mode: Using legacy on-the-fly voronoi computation (buildVoronoiTree)
           </div>
         </header>
 

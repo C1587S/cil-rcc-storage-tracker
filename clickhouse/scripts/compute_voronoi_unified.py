@@ -247,7 +247,7 @@ class VoronoiComputer:
             "id": root_id,
             "name": self.root_path.split("/")[-1] or "root",
             "path": self.root_path,
-            "size": 0, # Se calculará sumando
+            "size": 0,  # Computed by summing children
             "is_directory": True,
             "depth": 0,  # Root always has depth 0
             "file_count": root_file_count,
@@ -263,11 +263,11 @@ class VoronoiComputer:
             path, name, size, is_directory, recursive_file_count = row
             nodes_processed += 1
 
-            # 1. Stack Management: Cerrar nodos terminados y SUMAR tamaños
+            # 1. Stack management: close finished nodes and roll up sizes
             while stack and not path.startswith(stack[-1][0] + "/"):
                 _, finished_node = stack.pop()
 
-                # BUBBLE UP SIZE: Sumar al padre
+                # Bubble size up to the parent
                 if stack:
                     parent_path, parent_node = stack[-1]
                     parent_node['size'] += finished_node['size']
@@ -290,7 +290,7 @@ class VoronoiComputer:
             if is_directory:
                 new_node = {
                     "id": node_id, "name": name, "path": path,
-                    "size": 0, # Inicia en 0, sumará hijos y archivos
+                    "size": 0,  # Starts at 0, accumulates children and files
                     "is_directory": True, "depth": depth, "file_count": recursive_file_count,
                     "children_ids": [], "files": [],
                     "parent_id": parent_node["id"]  # Track parent
@@ -298,12 +298,12 @@ class VoronoiComputer:
                 parent_node["children_ids"].append(node_id)
                 stack.append((path, new_node))
             else:
-                # Archivo
+                # File
                 parent_node["files"].append({
                     "name": name, "path": path, "size": size
                 })
                 # Don't manually increment - using pre-calculated recursive_file_count
-                parent_node["size"] += size # Sumar tamaño al directorio actual
+                parent_node["size"] += size  # Add size to the current directory
 
         client.disconnect()
 

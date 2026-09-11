@@ -299,11 +299,11 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           "relative border rounded-lg overflow-hidden",
           theme === 'dark' ? 'border-border bg-[#1e1e1e]' : 'border-border bg-card',
           isLocked && "pointer-events-none",
-          // En fullscreen, flex-1 toma todo el espacio disponible verticalmente
+          // In fullscreen, flex-1 takes all available vertical space
           isFullscreen ? "flex-1" : ""
         )}
         style={{
-          // Altura fija en modo normal, auto en fullscreen para que flex-1 funcione
+          // Fixed height in normal mode, auto in fullscreen so flex-1 works
           height: isFullscreen ? 'auto' : undefined,
           minHeight: isFullscreen ? '0' : '300px'
         }}

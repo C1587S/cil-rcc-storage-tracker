@@ -201,9 +201,9 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
       const cacheComplete = checkCacheComplete(node, 0)
 
       if (cacheComplete) {
-        console.log('[expandToPreviewDepth] ✅ CACHE HIT - all nodes already loaded, skipping fetch')
+        console.log('[expandToPreviewDepth] CACHE HIT - all nodes already loaded, skipping fetch')
       } else {
-        console.log('[expandToPreviewDepth] ⚠️ CACHE MISS - fetching missing nodes')
+        console.log('[expandToPreviewDepth] CACHE MISS - fetching missing nodes')
       }
 
       // OPTIMIZED: Fetch entire subtree in ONE request (only if cache incomplete)
@@ -345,7 +345,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
 
         // DEBUG: Extra logging for root level
         if (currentDepth === 0) {
-          console.log('🔍 [buildTree] ROOT LEVEL TREE STRUCTURE:', {
+          console.log('[buildTree] ROOT LEVEL TREE STRUCTURE:', {
             path: currentNode.path,
             totalChildren: allChildren.length,
             directoryChildren: directoryChildren.length,

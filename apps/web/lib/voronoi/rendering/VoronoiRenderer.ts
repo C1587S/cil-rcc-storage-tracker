@@ -61,25 +61,25 @@ export class VoronoiRenderer {
   private renderInternal(data: VoronoiNode, effectivePath: string, width: number, height: number): void {
     const { svgRef, voronoiCacheRef, zoomRef, isFullscreen } = this.options
 
-    // 1. SAFETY CHECK: Abortar si no hay dimensiones válidas.
-    // Esto es crucial para evitar el "letterboxing" negro o errores de cálculo.
+    // 1. SAFETY CHECK: Abort without valid dimensions.
+    // Prevents black letterboxing and layout math errors.
     if (!svgRef.current || !voronoiCacheRef.current || width === 0 || height === 0) return
 
     const svg = d3.select(svgRef.current)
 
-    // 🔥 LIMPIEZA NUCLEAR: Resetear todo estado previo de D3
+    // Full reset of any previous D3 state
     svg.selectAll('*').remove()
     svg.attr('viewBox', null)
-    
-    // TRUCO CRÍTICO: Eliminar la propiedad interna __zoom de D3 del nodo DOM.
-    // Si no se hace esto, al cambiar el tamaño del contenedor, el zoom antiguo se aplica
-    // al nuevo tamaño, causando que el gráfico se vea desplazado o gigante.
+
+    // Remove D3's internal __zoom property from the DOM node.
+    // Otherwise, when the container is resized, the old zoom transform is applied
+    // to the new size, leaving the chart shifted or oversized.
     if ((svgRef.current as any).__zoom) {
         delete (svgRef.current as any).__zoom;
     }
 
-    // 2. FORZAR ESTILOS CSS
-    // Aseguramos que el SVG ocupe exactamente el espacio disponible
+    // 2. FORCE CSS STYLES
+    // Make the SVG fill exactly the available space
     const { theme } = this.options
     const backgroundColor = theme === 'dark' ? '#0a0e14' : '#eceff4'
 
@@ -87,25 +87,25 @@ export class VoronoiRenderer {
        .attr('height', height)
        .style('width', '100%')
        .style('height', '100%')
-       .style('display', 'block') // Evita el "gap" inferior de los elementos inline
+       .style('display', 'block') // Avoids the bottom gap of inline elements
        .style('background', backgroundColor)
 
     const defs = svg.append('defs')
-    
-    // Crear el grupo raíz
+
+    // Root group
     const gRoot = svg.append('g').attr('id', 'voronoi-root')
-    
-    // Resetear transformación explícitamente
+
+    // Explicitly reset the transform
     gRoot.attr('transform', 'translate(0,0) scale(1)')
 
-    // Crear capas (Orden de apilamiento importa - labels deben estar encima de interaction para permitir hover)
+    // Layers (stacking order matters - labels must sit above interaction to allow hover)
     const gBackgrounds = gRoot.append('g').attr('class', 'layer-backgrounds')
     const gPreview = gRoot.append('g').attr('class', 'layer-preview')
     const gBubbles = gRoot.append('g').attr('class', 'layer-bubbles')
     const gInteraction = gRoot.append('g').attr('class', 'layer-interaction')
     const gLabels = gRoot.append('g').attr('class', 'layer-labels')
 
-    // Configurar comportamiento de Zoom
+    // Configure zoom behavior
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([1, 10])
       .translateExtent([[0, 0], [width, height]])
@@ -115,7 +115,7 @@ export class VoronoiRenderer {
       })
 
     svg.call(zoom)
-    // Reiniciar el zoom a la identidad (0,0 scale 1) en cada render limpio
+    // Reset zoom to identity (0,0 scale 1) on every clean render
     svg.call(zoom.transform, d3.zoomIdentity)
 
     zoomRef.current = zoom
