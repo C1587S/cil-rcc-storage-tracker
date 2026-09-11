@@ -6,15 +6,16 @@
 #SBATCH --ntasks=1
 #SBATCH --mem-per-cpu=4G
 #SBATCH --time=24:00:00
-#SBATCH --array=0-6
+#SBATCH --array=0-7
 #SBATCH -o ./slurm_out/scan_%a.out
 #SBATCH -e ./slurm_out/scan_%a.err
 
 ################################################################################
-# Parallel Scanner for /project/cil directories
+# Parallel Scanner for CIL storage
 #
-# This script scans each top-level directory in /project/cil in parallel using
-# Slurm job arrays. Each directory gets its own job for maximum parallelism.
+# Scans each storage area in parallel using Slurm job arrays.
+# Each target gets its own job for maximum parallelism.
+# Covers /project/cil (Capacity tier) and /cds3/cil (Cost-Effective tier).
 #
 # Usage:
 #   1. mkdir -p slurm_out
@@ -25,8 +26,9 @@
 #   # Or specific jobs: sbatch --array=2,5 scanner/scripts/scan_cil_parallel.sh
 ################################################################################
 
-# Define directories to scan (must match --array=0-6 above)
-DIRS=(
+# Scan targets (must match --array=0-7 above).
+# NAMES[i] becomes the output file prefix; PATHS[i] is the directory scanned.
+NAMES=(
     "battuta-shares-S3-archive"
     "battuta_shares"
     "gcp"
@@ -34,23 +36,34 @@ DIRS=(
     "kupe_shares"
     "norgay"
     "sacagawea_shares"
+    "cds3"
+)
+PATHS=(
+    "/project/cil/battuta-shares-S3-archive"
+    "/project/cil/battuta_shares"
+    "/project/cil/gcp"
+    "/project/cil/home_dirs"
+    "/project/cil/kupe_shares"
+    "/project/cil/norgay"
+    "/project/cil/sacagawea_shares"
+    "/cds3/cil"
 )
 
 # Configuration
-BASE_PATH="/project/cil"
 OUTPUT_DIR="/scratch/midway3/${USER}/cil_scans"
 DATE=$(date +%Y-%m-%d)
 SCANNER_BIN="./scanner/target/release/storage-scanner"
 
-# Get directory for this array task
-DIR=${DIRS[$SLURM_ARRAY_TASK_ID]}
+# Get target for this array task
+DIR=${NAMES[$SLURM_ARRAY_TASK_ID]}
+SCAN_PATH=${PATHS[$SLURM_ARRAY_TASK_ID]}
 
 echo "================================================"
 echo "CIL Storage Scanner - Parallel Scan"
 echo "================================================"
-echo "Array Task ID: ${SLURM_ARRAY_TASK_ID} / ${#DIRS[@]}"
-echo "Directory: ${DIR}"
-echo "Full Path: ${BASE_PATH}/${DIR}"
+echo "Array Task ID: ${SLURM_ARRAY_TASK_ID} / ${#NAMES[@]}"
+echo "Target: ${DIR}"
+echo "Full Path: ${SCAN_PATH}"
 echo "Output Dir: ${OUTPUT_DIR}"
 echo "Node: $(hostname)"
 echo "CPUs: ${SLURM_CPUS_PER_TASK}"
@@ -72,7 +85,7 @@ mkdir -p ${OUTPUT_DIR}
 # Run scanner with resume capability
 echo "Starting scan..."
 ${SCANNER_BIN} scan \
-    --path "${BASE_PATH}/${DIR}" \
+    --path "${SCAN_PATH}" \
     --output "${OUTPUT_DIR}/${DIR}_${DATE}.parquet" \
     --threads ${SLURM_CPUS_PER_TASK} \
     --batch-size 50000 \
