@@ -1,5 +1,6 @@
-"""LLM service for natural language to SQL translation (Groq / llama-3.3-70b)."""
+"""LLM service for natural language to SQL translation (Groq)."""
 import json
+import os
 import re
 import urllib.request
 import urllib.error
@@ -7,7 +8,8 @@ import urllib.error
 from app.settings import get_settings
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+# Overridable via env; default is the strongest general model currently on Groq
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 
 SYSTEM_PROMPT = """You are a ClickHouse SQL query generator for a filesystem snapshot database.
 
