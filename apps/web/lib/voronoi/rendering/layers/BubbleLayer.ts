@@ -22,6 +22,13 @@ export interface BubbleLayerOptions {
   theme: 'dark' | 'light'
 }
 
+// Rendering caps: beyond these, extra bubbles are visually sub-pixel noise
+// but still cost physics and DOM updates every animation frame.
+const MAX_BUBBLES_PER_PARTITION = 400
+// Pairwise forces (clustering, size gravity) are O(n^2) per tick; only enable
+// them for small scenes where their visual effect is actually noticeable.
+const PAIRWISE_FORCES_MAX_NODES = 250
+
 export class BubbleLayer {
   private gBubbles: d3.Selection<SVGGElement, unknown, null, undefined>
   private tooltipRef: React.RefObject<HTMLDivElement>
@@ -59,7 +66,7 @@ export class BubbleLayer {
       const circles = packCirclesInPolygon(
         poly,
         node.originalFiles.map((f: any) => ({ node: f, value: f.size })),
-        1500  // Increased from 100 to ensure all files are rendered (up to 1500)
+        MAX_BUBBLES_PER_PARTITION
       )
 
       circles.forEach((c) => {
@@ -156,47 +163,64 @@ export class BubbleLayer {
   private createMultiPartitionSimulation(
     bubbleNodes: BubbleNode[]
   ): d3.Simulation<any, undefined> {
+    // Pre-compute centroids once (polygonCentroid inside a force runs every tick)
+    const centroidByPolygon = new Map<any, [number, number]>()
+    for (const b of bubbleNodes) {
+      if (!centroidByPolygon.has(b.polygon)) {
+        centroidByPolygon.set(b.polygon, d3.polygonCentroid(b.polygon))
+      }
+    }
+
+    // Index SVG circles by path once; the tick handler updates via O(1) lookups
+    const circleByPath = new Map<string, SVGCircleElement>()
+    this.gBubbles.selectAll<SVGCircleElement, any>('.file-bubble').each(function (datum: any) {
+      circleByPath.set(datum.node.path, this)
+    })
+
     const simulation = d3.forceSimulation(bubbleNodes)
-      // Collision force: STRONG prevention of overlap (optimized for performance)
+      // Collision force: strong prevention of overlap (quadtree-based, cheap)
       .force('collision', d3.forceCollide<BubbleNode>()
-        .radius(d => d.r + 2)  // Increased padding from 1.5 to 2
-        .strength(1.0)  // Maximum strength for no overlap
-        .iterations(1))  // OPTIMIZED: Reduced from 3 to 1 for faster performance
-      // Charge force: Create repulsion between bubbles (negative = repel)
-      .force('charge', d3.forceManyBody<BubbleNode>().strength(-10))  // Increased from -8
-      // Category clustering: Bubbles of same category attract each other (ENHANCED)
-      .force('category-cluster', this.createCategoryClusteringForce(bubbleNodes))
-      // Size-based gravity: Large bubbles attract smaller ones
-      .force('size-gravity', this.createSizeBasedGravityForce(bubbleNodes))
-      // Custom positioning force: Each bubble gravitates toward its partition centroid
-      .force('position', d3.forceX<BubbleNode>().x(d => d3.polygonCentroid(d.polygon)[0]).strength(0.02))  // Reduced from 0.03
-      .force('positionY', d3.forceY<BubbleNode>().y(d => d3.polygonCentroid(d.polygon)[1]).strength(0.02))  // Reduced from 0.03
-      .alphaDecay(0.05)  // OPTIMIZED: Increased from 0.03 for faster convergence
-      .on('tick', () => {
-        // Constrain each bubble to its partition polygon with ENHANCED border repulsion
-        bubbleNodes.forEach(b => {
-          const c = constrainToPolygon(b.x!, b.y!, b.polygon, b.r)
+        .radius(d => d.r + 2)
+        .strength(1.0)
+        .iterations(1))
+      // Charge force: repulsion between bubbles (Barnes-Hut, cheap)
+      .force('charge', d3.forceManyBody<BubbleNode>().strength(-10))
+      // Positioning: each bubble gravitates toward its partition centroid
+      .force('position', d3.forceX<BubbleNode>().x(d => centroidByPolygon.get(d.polygon)![0]).strength(0.02))
+      .force('positionY', d3.forceY<BubbleNode>().y(d => centroidByPolygon.get(d.polygon)![1]).strength(0.02))
+      .alphaDecay(0.05)
 
-          // Apply border repulsion: Push bubbles away from edges
-          const pushStrength = this.calculateBorderRepulsion(b.x!, b.y!, b.polygon, b.r)
-          if (pushStrength.fx !== 0 || pushStrength.fy !== 0) {
-            b.vx = (b.vx || 0) + pushStrength.fx
-            b.vy = (b.vy || 0) + pushStrength.fy
-          }
+    // The clustering and size-gravity forces are O(n^2) per tick.
+    // Only enable them for small scenes; on large ones they dominate render time
+    // while contributing nothing visible at bubble sizes of a few pixels.
+    if (bubbleNodes.length <= PAIRWISE_FORCES_MAX_NODES) {
+      simulation
+        .force('category-cluster', this.createCategoryClusteringForce(bubbleNodes))
+        .force('size-gravity', this.createSizeBasedGravityForce(bubbleNodes))
+    }
 
-          b.x = c[0]
-          b.y = c[1]
-        })
-        // Update SVG circle positions
-        this.gBubbles.selectAll<SVGCircleElement, any>('.file-bubble').each(function(datum: any) {
-          const bn = bubbleNodes.find(b => b.node.path === datum.node.path)
-          if (bn) {
-            d3.select(this)
-              .attr('cx', bn.x!)
-              .attr('cy', bn.y!)
-          }
-        })
+    simulation.on('tick', () => {
+      // Constrain each bubble to its partition polygon with border repulsion
+      bubbleNodes.forEach(b => {
+        const c = constrainToPolygon(b.x!, b.y!, b.polygon, b.r)
+
+        const pushStrength = this.calculateBorderRepulsion(b.x!, b.y!, b.polygon, b.r)
+        if (pushStrength.fx !== 0 || pushStrength.fy !== 0) {
+          b.vx = (b.vx || 0) + pushStrength.fx
+          b.vy = (b.vy || 0) + pushStrength.fy
+        }
+
+        b.x = c[0]
+        b.y = c[1]
+
+        // Update the SVG circle directly (O(1) per bubble)
+        const el = circleByPath.get(b.node.path)
+        if (el) {
+          el.setAttribute('cx', String(b.x))
+          el.setAttribute('cy', String(b.y))
+        }
       })
+    })
 
     return simulation
   }
