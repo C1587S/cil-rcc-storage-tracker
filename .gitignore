@@ -65,3 +65,5 @@ cil_scans.zip
 Thumbs.db
 .ipynb_checkpoints/
 logs/*.log
+cleanup/
+nohup.out
