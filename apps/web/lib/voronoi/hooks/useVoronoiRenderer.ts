@@ -18,6 +18,8 @@ export interface UseVoronoiRendererOptions {
   // Explicit trigger to force a re-render from the parent.
   // Needed to stay in sync with Portal/Tab transitions.
   layoutTrigger?: number
+  // Cell area weighting: bytes (default) or file count
+  weightMode?: 'size' | 'files'
 
   svgRef: React.RefObject<SVGSVGElement>
   containerRef: React.RefObject<HTMLDivElement>
@@ -54,6 +56,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
     highlightColor,
     theme,
     layoutTrigger = 0,
+    weightMode = 'size',
     svgRef,
     containerRef,
     tooltipRef,
@@ -175,6 +178,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
       isFullscreen,
       highlightColor,
       theme,
+      weightMode,
       parentSize,
       selectedPartition,
       getPartitionQuotaPercent: (s) => callbacksRef.current.getPartitionQuotaPercent(s),
@@ -205,6 +209,7 @@ export function useVoronoiRenderer(options: UseVoronoiRendererOptions): { isRend
     data,
     effectivePath,
     layoutTrigger, // Changing this forces an immediate render
+    weightMode, // Re-render when cell weighting changes
     highlightColor, // Re-render when highlight color changes
     theme, // Re-render when theme changes
 

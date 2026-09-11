@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { GridLoader } from '@/components/ui/grid-loader'
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -571,7 +572,7 @@ function UnifiedQueryMode({
       {/* Linting status */}
       {generatePhase === "linting" && (
         <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] text-primary/70 font-mono">
-          <div className="loader-morph" style={{ height: 12, borderWidth: 1.5 }} />
+          <GridLoader size={4} />
           <span className="snapshot-prompt">Adapting syntax to ClickHouse dialect...</span>
         </div>
       )}

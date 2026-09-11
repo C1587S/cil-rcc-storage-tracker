@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import type { DirectoryEntry } from "@/lib/types";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
-type SortMode = "name" | "size" | "modified";
+type SortMode = "name" | "size" | "modified" | "files";
 
 interface DiskUsageState {
   referencePath: string | null;
@@ -119,6 +119,9 @@ function sortEntries(entries: DirectoryEntry[], sortMode: SortMode): DirectoryEn
         const bTime = b.modified_time || 0;
         return bTime - aTime; 
       });
+      break;
+    case "files":
+      sorted.sort((a, b) => (b.file_count || 0) - (a.file_count || 0));
       break;
   }
   const folders = sorted.filter((e) => e.is_directory);
@@ -578,6 +581,10 @@ export function DiskUsageExplorerV2() {
         <label className="flex items-center gap-2 cursor-pointer">
           <input type="radio" checked={state.sortMode === "modified"} onChange={() => setState((prev) => ({ ...prev, sortMode: "modified" }))} className="w-3 h-3" />
           <span>Modified</span>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="radio" checked={state.sortMode === "files"} onChange={() => setState((prev) => ({ ...prev, sortMode: "files" }))} className="w-3 h-3" />
+          <span>File count</span>
         </label>
       </div>
 

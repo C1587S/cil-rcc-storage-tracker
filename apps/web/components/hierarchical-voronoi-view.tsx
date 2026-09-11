@@ -14,7 +14,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
-import { Maximize2, Minimize2, Focus, BarChart2, Play, RotateCcw } from 'lucide-react'
+import { Maximize2, Minimize2, Focus, BarChart2, Play, RotateCcw, HardDrive, Files } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
 import {
@@ -34,6 +34,7 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { useVoronoiData } from '@/lib/voronoi/hooks/useVoronoiData'
 import { useVoronoiDataOnTheFly } from '@/lib/voronoi/hooks/useVoronoiDataOnTheFly'
 import { loadPersistedLayouts, persistLayout } from '@/lib/voronoi/utils/persistent-cache'
+import { GridLoader } from '@/components/ui/grid-loader'
 import { useVoronoiNavigation } from '@/lib/voronoi/hooks/useVoronoiNavigation'
 import { useVoronoiSelection } from '@/lib/voronoi/hooks/useVoronoiSelection'
 import { useVoronoiZoom } from '@/lib/voronoi/hooks/useVoronoiZoom'
@@ -53,6 +54,8 @@ export interface HierarchicalVoronoiViewProps {
 export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVoronoiViewProps = {}) {
   const { selectedSnapshot, referencePath, highlightColor, theme } = useAppStore()
   const [hasRun, setHasRun] = useState(false)
+  // Cell area weighting: by bytes or by file count (spot many-small-files dirs)
+  const [weightMode, setWeightMode] = useState<'size' | 'files'>('size')
 
   // Reset gate when snapshot changes
   useEffect(() => {
@@ -208,6 +211,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
     isFetching,
     highlightColor,
     theme,
+    weightMode,
     svgRef,
     containerRef,
     tooltipRef,
@@ -427,23 +431,19 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
             {/* Single loading overlay: one animation, label reflects the phase */}
             {(() => {
               const busyLabel = isLocked
-                ? 'Computing visualization...'
+                ? 'Computing partition layout'
                 : isRendering
-                  ? 'Rendering...'
+                  ? 'Rendering'
                   : isTransitioning
-                    ? 'Navigating...'
+                    ? 'Navigating'
                     : null
               return (
                 <div className={cn(
                   "absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-300 ease-out",
-                  busyLabel ? "opacity-100 bg-background/40 backdrop-blur-[2px]" : "opacity-0 bg-transparent"
+                  busyLabel ? "opacity-100 bg-background/60" : "opacity-0 bg-transparent"
                 )}>
-                  <div className={cn(
-                    "bg-card border border-border px-5 py-3 rounded-lg flex items-center gap-3 shadow-md transition-transform duration-300",
-                    busyLabel ? "scale-100" : "scale-95"
-                  )}>
-                    <div className="loader-morph" />
-                    <div className="text-muted-foreground text-[10px]">{busyLabel || ''}</div>
+                  <div className="bg-card border border-border px-8 py-6 rounded-xl shadow-md">
+                    <GridLoader label={busyLabel || ''} />
                   </div>
                 </div>
               )
@@ -453,6 +453,40 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
 
         <div className="absolute bottom-3 right-3 flex gap-2">
           {isFullscreen && <ThemeToggle />}
+
+          {hasRun && (
+            <div className={cn(
+              "flex rounded-md border overflow-hidden",
+              theme === 'dark' ? 'bg-black/80 border-gray-700' : 'bg-white/90 border-gray-300'
+            )}>
+              <button
+                className={cn(
+                  "w-8 h-8 flex items-center justify-center transition-colors",
+                  weightMode === 'size'
+                    ? 'bg-primary/20 text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setWeightMode('size')}
+                disabled={isLocked}
+                title="Cell area by storage size"
+              >
+                <HardDrive className="w-4 h-4" />
+              </button>
+              <button
+                className={cn(
+                  "w-8 h-8 flex items-center justify-center transition-colors",
+                  weightMode === 'files'
+                    ? 'bg-primary/20 text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                onClick={() => setWeightMode('files')}
+                disabled={isLocked}
+                title="Cell area by file count"
+              >
+                <Files className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           {hasRun && (
             <Button

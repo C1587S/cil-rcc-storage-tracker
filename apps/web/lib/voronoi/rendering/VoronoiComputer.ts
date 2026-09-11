@@ -64,10 +64,12 @@ export class VoronoiComputer {
       const rest = sorted.slice(cap)
       dirs = sorted.slice(0, cap)
       const restSize = rest.reduce((acc, d) => acc + (d.size || 0), 0)
+      const restFiles = rest.reduce((acc, d) => acc + ((d as any).file_count || 0), 0)
       aggregated = {
         name: `+${rest.length} more`,
         path: `${n.path}/__aggregated__`,
         size: Math.max(restSize, 1),
+        file_count: restFiles,
         isDirectory: false,
         isSynthetic: true,
         depth: depth + 1,
@@ -176,9 +178,15 @@ export class VoronoiComputer {
     data: VoronoiNode,
     effectivePath: string,
     width: number,
-    height: number
+    height: number,
+    weightMode: 'size' | 'files' = 'size'
   ): ComputedVoronoiResult {
-    const cacheKey = effectivePath
+    // Layouts differ per weighting mode, so cache them separately
+    const cacheKey = `${effectivePath}::${weightMode}`
+    // Cell weight: bytes, or file count (to spot many-small-files directories)
+    const leafValue = (d: any) => weightMode === 'files'
+      ? Math.max(d.file_count || (d.originalFiles?.length ?? 0) || 1, 1)
+      : Math.max(d.size || 1, 1)
     const cached = this.cache.get(cacheKey)
 
     // Exact dimension matching: force recomputation if dimensions differ by > 1px
@@ -217,7 +225,7 @@ export class VoronoiComputer {
 
       const hierarchyData = cached!.hierarchyData
       hierarchy = d3.hierarchy(hierarchyData)
-        .sum(d => (!d.children || d.children.length === 0) ? Math.max(d.size || 1, 1) : 0)
+        .sum(d => (!d.children || d.children.length === 0) ? leafValue(d) : 0)
         .sort((a, b) => (b.value || 0) - (a.value || 0))
 
       this.restorePolygonsFromCache(hierarchy)
@@ -238,10 +246,7 @@ export class VoronoiComputer {
       }
 
       hierarchy = d3.hierarchy(hierarchyData)
-        .sum(d => {
-          const isLeaf = !d.children || d.children.length === 0
-          return isLeaf ? Math.max(d.size || 1, 1) : 0
-        })
+        .sum(d => (!d.children || d.children.length === 0) ? leafValue(d) : 0)
         .sort((a, b) => (b.value || 0) - (a.value || 0))
 
       // Define the clipping polygon to match the FULL container size

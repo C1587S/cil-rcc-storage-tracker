@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { Target, Folder, Files, FileText, HardDrive, BarChart3, Focus, Maximize2, ArrowUpDown, Search, ChevronDown, Flag, Copy, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { GridLoader } from '@/components/ui/grid-loader'
 import { formatBytes } from '@/lib/utils/formatters'
 import { getSizeSeverity, getFileCountSeverity, getQuotaTextColor } from '@/lib/voronoi/utils/colors'
 import { type PartitionInfo } from '@/lib/voronoi/utils/types'
@@ -428,7 +429,7 @@ export function VoronoiPartitionPanel({
           </div>
         ) : (
           <div className="flex items-center gap-3 text-muted-foreground py-4 justify-center">
-            <div className="loader-morph" />
+            <GridLoader size={6} />
             <span style={{ fontSize: `${11 * textScale}px` }}>Hover or right-click a partition to inspect</span>
           </div>
         )}

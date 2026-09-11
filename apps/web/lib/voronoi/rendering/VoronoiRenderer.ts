@@ -26,6 +26,7 @@ export interface VoronoiRendererOptions {
   setHoveredPartition: (info: PartitionInfo | null) => void
   handleInspect: (info: PartitionInfo) => void
   performDrillDown: (path: string) => void
+  weightMode?: 'size' | 'files'
   onRenderComplete?: () => void
 }
 
@@ -126,7 +127,8 @@ export class VoronoiRenderer {
       data,
       effectivePath,
       width,
-      height
+      height,
+      this.options.weightMode || 'size'
     )
 
     this.createClipPaths(defs, allNodes)
