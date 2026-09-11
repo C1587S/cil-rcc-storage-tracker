@@ -39,7 +39,9 @@ export class LabelLayer {
       const bounds = getPolygonBounds(poly)
       if (bounds.width > 30 && bounds.height > 20) {
         const centroid = d3.polygonCentroid(poly)
-        const fullName = node.isSynthetic ? `${node.file_count} files` : node.name
+        const fullName = node.isSynthetic
+          ? (node.file_count != null ? `${node.file_count} files` : node.name)
+          : node.name
         const isTruncated = !node.isSynthetic && node.name.length > 20
         const displayName = isTruncated ? node.name.slice(0, 17) + '...' : fullName
         const fontSize = Math.min(maxFontSize, Math.max(7, bounds.width / displayName.length * 1.2 * fontSizeScale))

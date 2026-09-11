@@ -15,6 +15,12 @@ export interface ComputedVoronoiResult {
   previewNodes: d3.HierarchyNode<any>[]
 }
 
+// Cell-count caps per hierarchy level. Directories beyond the cap are merged
+// into one synthetic "+N more" cell: the treemap solver cost grows with cell
+// count, and cells past these caps are sub-pixel slivers anyway.
+const MAX_CELLS_TOP = 80      // depth 0: direct children of the current root
+const MAX_CELLS_PREVIEW = 30  // depth 1: preview cells inside each partition
+
 /**
  * Computes voronoi treemap layout with caching support.
  * Separates directories and files into hierarchical structure.
@@ -28,7 +34,7 @@ export class VoronoiComputer {
 
   /**
    * Prepares hierarchy by separating directories and files.
-   * Groups files into synthetic "__files__" nodes.
+   * Groups files into synthetic "__files__" nodes and caps children per level.
    */
   private prepareHierarchy(n: VoronoiNode, depth: number = 0): any {
     const uniqueId = `node-${Math.random().toString(36).substr(2, 9)}`
@@ -44,13 +50,37 @@ export class VoronoiComputer {
     }
 
     // Separate directories and files
-    const dirs = (n.children || []).filter(c => c.isDirectory)
+    let dirs = (n.children || []).filter(c => c.isDirectory)
     const filesFromChildren = (n.children || []).filter(c => !c.isDirectory)
-    const filesFromOriginal = n.originalFiles || [] 
-    const allFiles = [...filesFromChildren, ...filesFromOriginal] 
+    const filesFromOriginal = n.originalFiles || []
+    const allFiles = [...filesFromChildren, ...filesFromOriginal]
+
+    // Cap directory count per level: keep the largest, merge the rest into
+    // one aggregate cell so total size stays truthful.
+    const cap = depth === 0 ? MAX_CELLS_TOP : MAX_CELLS_PREVIEW
+    let aggregated: any = null
+    if (dirs.length > cap) {
+      const sorted = [...dirs].sort((a, b) => (b.size || 0) - (a.size || 0))
+      const rest = sorted.slice(cap)
+      dirs = sorted.slice(0, cap)
+      const restSize = rest.reduce((acc, d) => acc + (d.size || 0), 0)
+      aggregated = {
+        name: `+${rest.length} more`,
+        path: `${n.path}/__aggregated__`,
+        size: Math.max(restSize, 1),
+        isDirectory: false,
+        isSynthetic: true,
+        depth: depth + 1,
+        hierarchyDepth: depth + 1,
+        uniqueId: `agg-${Math.random().toString(36).substr(2, 9)}`
+      }
+    }
 
     // Recursively process directory children
     const children = dirs.map(d => this.prepareHierarchy(d, depth + 1))
+    if (aggregated) {
+      children.push(aggregated)
+    }
 
     // Create synthetic __files__ node if there are any files
     if (allFiles.length > 0) {
@@ -180,9 +210,14 @@ export class VoronoiComputer {
         [padding, height - padding]
       ]
 
+      // Fewer solver iterations for large scenes: with hundreds of cells the
+      // layout converges visually long before the iteration cap is reached.
+      const cellCount = hierarchy.descendants().length
+      const iterations = cellCount > 500 ? 25 : 40
+
       const treemap = voronoiTreemap()
         .clip(clip)
-        .maxIterationCount(40) // Good balance for performance/quality
+        .maxIterationCount(iterations)
         .convergenceRatio(0.15)
 
       this.applyVoronoi(hierarchy, clip, 0, treemap)
