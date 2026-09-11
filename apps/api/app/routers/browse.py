@@ -1,14 +1,18 @@
 """Browse API endpoints for directory navigation."""
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from datetime import date
 from app.db import execute_query
+from app.cache import LRUCache
 from app.models import BrowseResponse, DirectoryEntry
 
 router = APIRouter(prefix="/api/browse", tags=["browse"])
 
+_cache = LRUCache(maxsize=2048)
+
 
 @router.get("", response_model=BrowseResponse)
 async def browse_folders(
+    response: Response,
     snapshot_date: date = Query(..., description="Snapshot date"),
     parent_path: str = Query("/", description="Parent directory path"),
     limit: int = Query(1000, ge=1, le=8000, description="Maximum number of folders to return"),
@@ -30,8 +34,16 @@ async def browse_folders(
     if parent_path != "/" and parent_path.endswith("/"):
         parent_path = parent_path.rstrip("/")
 
-    # Query using directory_hierarchy with directory_recursive_sizes for true recursive totals
-    # directory_recursive_sizes contains actual recursive subtree sizes (materialized)
+    # Snapshot data is immutable: serve from cache when possible
+    response.headers["Cache-Control"] = "public, max-age=21600"
+    cache_key = (snapshot_date.isoformat(), parent_path, limit)
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    # Query directory_hierarchy joined with directory_recursive_sizes for true
+    # recursive totals. The join side is pre-filtered to only this directory's
+    # children so the join hash table stays tiny instead of covering the table.
     query = """
     SELECT
         h.child_path AS path,
@@ -45,9 +57,18 @@ async def browse_folders(
         COALESCE(rs.direct_file_count, 0) AS file_count,
         COALESCE(rs.recursive_dir_count, 0) AS dir_count
     FROM filesystem.directory_hierarchy AS h
-    LEFT JOIN filesystem.directory_recursive_sizes AS rs
-        ON rs.snapshot_date = h.snapshot_date
-        AND rs.path = h.child_path
+    LEFT JOIN (
+        SELECT path, recursive_size_bytes, direct_size_bytes,
+               direct_file_count, recursive_dir_count
+        FROM filesystem.directory_recursive_sizes
+        WHERE snapshot_date = %(snapshot_date)s
+          AND path IN (
+              SELECT child_path FROM filesystem.directory_hierarchy
+              WHERE snapshot_date = %(snapshot_date)s
+                AND parent_path = %(parent_path)s
+                AND is_directory = 1
+          )
+    ) AS rs ON rs.path = h.child_path
     WHERE h.snapshot_date = %(snapshot_date)s
       AND h.parent_path = %(parent_path)s
       AND h.is_directory = 1
@@ -83,12 +104,14 @@ async def browse_folders(
                 )
             )
 
-        return BrowseResponse(
+        result = BrowseResponse(
             snapshot_date=snapshot_date,
             parent_path=parent_path,
             folders=folders,
             total_count=len(folders),
         )
+        _cache.put(cache_key, result)
+        return result
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")

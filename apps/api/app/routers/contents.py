@@ -1,15 +1,19 @@
 """Contents API endpoints for directory contents (folders + files)."""
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from datetime import date
 from typing import Literal
 from app.db import execute_query
+from app.cache import LRUCache
 from app.models import ContentsResponse, DirectoryEntry
 
 router = APIRouter(prefix="/api/contents", tags=["contents"])
 
+_cache = LRUCache(maxsize=2048)
+
 
 @router.get("", response_model=ContentsResponse)
 async def get_contents(
+    response: Response,
     snapshot_date: date = Query(..., description="Snapshot date"),
     parent_path: str = Query("/", description="Parent directory path"),
     limit: int = Query(100, ge=1, le=8000, description="Maximum entries to return"),
@@ -37,6 +41,13 @@ async def get_contents(
     if parent_path != "/" and parent_path.endswith("/"):
         parent_path = parent_path.rstrip("/")
 
+    # Snapshot data is immutable: serve from cache when possible
+    response.headers["Cache-Control"] = "public, max-age=21600"
+    cache_key = (snapshot_date.isoformat(), parent_path, limit, offset, sort, filter_type)
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     # Build ORDER BY clause
     order_by_map = {
         "size_desc": "size DESC",
@@ -54,8 +65,10 @@ async def get_contents(
     elif filter_type == "folders":
         type_filter = "AND is_directory = 1"
 
-    # Query filesystem.entries for detailed information
-    # For directories, use recursive size from directory_recursive_sizes table
+    # Query filesystem.entries for detailed information.
+    # For directories, use recursive size from directory_recursive_sizes.
+    # The join side is pre-filtered to only the children of this directory,
+    # so the join hash table stays tiny instead of covering the whole table.
     query = f"""
     SELECT
         e.path,
@@ -84,8 +97,17 @@ async def get_contents(
         e.modified_time,
         e.accessed_time
     FROM filesystem.entries AS e
-    LEFT JOIN filesystem.directory_recursive_sizes AS rs
-        ON e.snapshot_date = rs.snapshot_date AND e.path = rs.path
+    LEFT JOIN (
+        SELECT path, recursive_size_bytes, recursive_file_count, recursive_dir_count
+        FROM filesystem.directory_recursive_sizes
+        WHERE snapshot_date = %(snapshot_date)s
+          AND path IN (
+              SELECT path FROM filesystem.entries
+              WHERE snapshot_date = %(snapshot_date)s
+                AND parent_path = %(parent_path)s
+                AND is_directory = 1
+          )
+    ) AS rs ON e.path = rs.path
     WHERE e.snapshot_date = %(snapshot_date)s
       AND e.parent_path = %(parent_path)s
       {type_filter}
@@ -118,10 +140,6 @@ async def get_contents(
         # Get entries
         results = execute_query(query, params)
 
-        # DEBUG: Log first result
-        if results:
-            print(f"DEBUG: First result = {results[0]}")
-
         # Convert to DirectoryEntry objects
         entries = []
         for row in results:
@@ -141,7 +159,7 @@ async def get_contents(
                 )
             )
 
-        return ContentsResponse(
+        result = ContentsResponse(
             snapshot_date=snapshot_date,
             parent_path=parent_path,
             entries=entries,
@@ -149,6 +167,8 @@ async def get_contents(
             offset=offset,
             limit=limit,
         )
+        _cache.put(cache_key, result)
+        return result
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
