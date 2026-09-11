@@ -424,50 +424,30 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           <>
             {error && <div className="absolute inset-0 flex items-center justify-center bg-black/80"><p className="text-red-500 font-bold">Failed to compute Voronoi: {error.toString()}</p></div>}
 
-            <div className={cn(
-              "absolute inset-0 flex items-center justify-center transition-all duration-700 ease-out",
-              isLocked
-                ? "opacity-100 bg-background/50 backdrop-blur-sm"
-                : "opacity-0 pointer-events-none bg-transparent"
-            )}>
-              <div className={cn(
-                "bg-card border border-border px-5 py-3 rounded-lg flex items-center gap-3 shadow-md transition-all duration-500",
-                isLocked ? "scale-100 opacity-100" : "scale-95 opacity-0"
-              )}>
-                <div className="loader-morph" />
-                <div className="text-muted-foreground text-[10px]">Computing visualization. This can take 60 seconds or more for deep trees.</div>
-              </div>
-            </div>
-
-            <div className={cn(
-              "absolute inset-0 flex items-center justify-center pointer-events-none transition-all duration-500 ease-out",
-              !isLocked && isRendering
-                ? "opacity-100 bg-background/30 backdrop-blur-[2px]"
-                : "opacity-0 bg-transparent"
-            )}>
-              <div className={cn(
-                "bg-card border border-border px-5 py-3 rounded-lg flex items-center gap-3 shadow-md transition-all duration-400",
-                !isLocked && isRendering ? "scale-100 opacity-100" : "scale-95 opacity-0"
-              )}>
-                <div className="loader-morph" />
-                <div className="text-muted-foreground text-[10px]">Rendering...</div>
-              </div>
-            </div>
-
-            <div className={cn(
-              "absolute inset-0 flex items-center justify-center pointer-events-none transition-all duration-400 ease-out",
-              isTransitioning && !isLocked && !isRendering
-                ? "opacity-100 bg-background/15 backdrop-blur-[1px]"
-                : "opacity-0 bg-transparent"
-            )}>
-              <div className={cn(
-                "bg-card/80 border border-border/50 px-5 py-3 rounded-lg flex items-center gap-3 shadow-sm transition-all duration-300",
-                isTransitioning && !isLocked && !isRendering ? "scale-100 opacity-100" : "scale-95 opacity-0"
-              )}>
-                <div className="loader-morph" />
-                <div className="text-muted-foreground/60 text-[10px]">Navigating...</div>
-              </div>
-            </div>
+            {/* Single loading overlay: one animation, label reflects the phase */}
+            {(() => {
+              const busyLabel = isLocked
+                ? 'Computing visualization...'
+                : isRendering
+                  ? 'Rendering...'
+                  : isTransitioning
+                    ? 'Navigating...'
+                    : null
+              return (
+                <div className={cn(
+                  "absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-300 ease-out",
+                  busyLabel ? "opacity-100 bg-background/40 backdrop-blur-[2px]" : "opacity-0 bg-transparent"
+                )}>
+                  <div className={cn(
+                    "bg-card border border-border px-5 py-3 rounded-lg flex items-center gap-3 shadow-md transition-transform duration-300",
+                    busyLabel ? "scale-100" : "scale-95"
+                  )}>
+                    <div className="loader-morph" />
+                    <div className="text-muted-foreground text-[10px]">{busyLabel || ''}</div>
+                  </div>
+                </div>
+              )
+            })()}
           </>
         )}
 

@@ -160,6 +160,16 @@ export class VoronoiComputer {
   }
 
   /**
+   * Removes stale cached polygons before a fresh solve. Without this, a
+   * partially failed solve can leave polygons from an older layout mixed
+   * with new ones, producing gaps and misplaced cells.
+   */
+  private clearCachedPolygons(node: any): void {
+    delete node.cachedPolygon
+    node.children?.forEach((c: any) => this.clearCachedPolygons(c))
+  }
+
+  /**
    * Computes or retrieves cached voronoi hierarchy.
    */
   compute(
@@ -183,12 +193,15 @@ export class VoronoiComputer {
 
     let hierarchy: d3.HierarchyNode<any>
 
-    // A cached layout with polygons can serve ANY dimensions: exact match is
-    // used as-is, otherwise polygons are linearly rescaled (no solver re-run).
-    const canReuse = cached && cached.hierarchyData &&
-                     cached.width && cached.height &&
-                     (cached.hierarchyData.cachedPolygon ||
-                      cached.hierarchyData.children?.some((c: any) => c.cachedPolygon))
+    // A cached layout can be rescaled linearly ONLY when the aspect ratio is
+    // essentially unchanged; stretching across different aspect ratios
+    // distorts the tiling. Otherwise fall through to a fresh solve.
+    const hasPolygons = cached && cached.hierarchyData &&
+                        (cached.hierarchyData.cachedPolygon ||
+                         cached.hierarchyData.children?.some((c: any) => c.cachedPolygon))
+    const aspectClose = cached && cached.width && cached.height &&
+                        Math.abs((cached.width / cached.height) - (width / height)) / (width / height) < 0.02
+    const canReuse = hasPolygons && (dimensionsMatch || aspectClose)
 
     if (canReuse) {
       if (!dimensionsMatch) {
@@ -219,6 +232,9 @@ export class VoronoiComputer {
       let hierarchyData = cached?.hierarchyData
       if (!hierarchyData) {
          hierarchyData = this.prepareHierarchy(data)
+      } else {
+         // Stale polygons from the previous layout must not survive a re-solve
+         this.clearCachedPolygons(hierarchyData)
       }
 
       hierarchy = d3.hierarchy(hierarchyData)
