@@ -92,7 +92,7 @@ fi
 if [ "$FORCE" = true ] && [ -n "$CURRENT_DATE" ] && [ "$NEW_DATE" = "$CURRENT_DATE" ]; then
   echo ""
   echo "--- Clearing existing ${NEW_DATE} from DB (--force) ---"
-  for table in entries directory_hierarchy voronoi_precomputed snapshots; do
+  for table in entries directory_hierarchy voronoi_precomputed snapshots directory_recursive_sizes directory_sizes file_type_distribution owner_distribution; do
     docker compose exec -T clickhouse ${CH_CLIENT} --query \
       "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${NEW_DATE}'"
   done
@@ -145,7 +145,7 @@ if [ "$KEEP_OLD" = false ]; then
     while IFS= read -r OLD_DATE; do
       [ -z "$OLD_DATE" ] && continue
       echo "  Removing ${OLD_DATE}..."
-      for table in entries directory_hierarchy voronoi_precomputed snapshots; do
+      for table in entries directory_hierarchy voronoi_precomputed snapshots directory_recursive_sizes directory_sizes file_type_distribution owner_distribution; do
         docker compose exec -T clickhouse ${CH_CLIENT} --query \
           "ALTER TABLE filesystem.${table} DELETE WHERE snapshot_date='${OLD_DATE}'"
       done
