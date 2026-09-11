@@ -33,6 +33,7 @@ import { VoronoiPartitionPanel } from '@/components/voronoi/VoronoiPartitionPane
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useVoronoiData } from '@/lib/voronoi/hooks/useVoronoiData'
 import { useVoronoiDataOnTheFly } from '@/lib/voronoi/hooks/useVoronoiDataOnTheFly'
+import { loadPersistedLayouts, persistLayout } from '@/lib/voronoi/utils/persistent-cache'
 import { useVoronoiNavigation } from '@/lib/voronoi/hooks/useVoronoiNavigation'
 import { useVoronoiSelection } from '@/lib/voronoi/hooks/useVoronoiSelection'
 import { useVoronoiZoom } from '@/lib/voronoi/hooks/useVoronoiZoom'
@@ -72,7 +73,44 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
   const simulationRef = useRef<d3.Simulation<any, undefined> | null>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const voronoiCacheRef = useRef<Map<string, VoronoiCacheEntry>>(new Map())
-  
+  const persistedKeysRef = useRef<Set<string>>(new Set())
+
+  // Hydrate the layout cache from IndexedDB when the snapshot is known.
+  // Previously computed layouts render instantly, even across browser restarts.
+  useEffect(() => {
+    if (!selectedSnapshot) return
+    // Layouts belong to a specific snapshot: drop everything in memory first
+    voronoiCacheRef.current.clear()
+    persistedKeysRef.current.clear()
+    let cancelled = false
+    loadPersistedLayouts(selectedSnapshot).then(persisted => {
+      if (cancelled) return
+      persisted.forEach((entry, path) => {
+        if (!voronoiCacheRef.current.has(path)) {
+          voronoiCacheRef.current.set(path, entry)
+        }
+        persistedKeysRef.current.add(path)
+      })
+    })
+    return () => { cancelled = true }
+  }, [selectedSnapshot])
+
+  // Auto-run when the view first becomes visible (tab opened). All tab panels
+  // stay mounted but hidden, so this avoids computing for users who never
+  // open the Voronoi tab while removing the manual Run click for those who do.
+  useEffect(() => {
+    if (hasRun) return
+    const el = wrapperRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) {
+        setHasRun(true)
+      }
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasRun, selectedSnapshot])
+
 
   const { data: snapshots } = useQuery({ queryKey: ['snapshots'], queryFn: getSnapshots })
 
@@ -185,6 +223,18 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
     handleInspect,
     performDrillDown
   })
+
+  // Persist freshly computed layouts to IndexedDB once rendering settles,
+  // so future sessions on this snapshot skip the solver entirely.
+  useEffect(() => {
+    if (isRendering || !selectedSnapshot) return
+    voronoiCacheRef.current.forEach((entry, path) => {
+      if (!persistedKeysRef.current.has(path)) {
+        persistedKeysRef.current.add(path)
+        persistLayout(selectedSnapshot, entry)
+      }
+    })
+  }, [isRendering, selectedSnapshot])
 
   // --- BREADCRUMB ---
   const breadcrumbParts = useMemo(() => {

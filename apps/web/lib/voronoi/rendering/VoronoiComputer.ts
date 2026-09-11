@@ -148,6 +148,18 @@ export class VoronoiComputer {
   }
 
   /**
+   * Linearly rescales all cached polygons to new dimensions.
+   * Area proportions are preserved, so a resize (or fullscreen toggle)
+   * reuses the cached layout instead of re-running the solver.
+   */
+  private scaleCachedPolygons(node: any, sx: number, sy: number): void {
+    if (node.cachedPolygon) {
+      node.cachedPolygon = node.cachedPolygon.map((p: [number, number]) => [p[0] * sx, p[1] * sy])
+    }
+    node.children?.forEach((c: any) => this.scaleCachedPolygons(c, sx, sy))
+  }
+
+  /**
    * Computes or retrieves cached voronoi hierarchy.
    */
   compute(
@@ -171,11 +183,26 @@ export class VoronoiComputer {
 
     let hierarchy: d3.HierarchyNode<any>
 
-    if (cached && dimensionsMatch && cached.hierarchyData) {
-      // --- CACHE HIT (EXACT MATCH) ---
-      console.log(`[VoronoiComputer] Cache HIT. Dimensions exact: ${width}x${height}`)
-      
-      const hierarchyData = cached.hierarchyData
+    // A cached layout with polygons can serve ANY dimensions: exact match is
+    // used as-is, otherwise polygons are linearly rescaled (no solver re-run).
+    const canReuse = cached && cached.hierarchyData &&
+                     cached.width && cached.height &&
+                     (cached.hierarchyData.cachedPolygon ||
+                      cached.hierarchyData.children?.some((c: any) => c.cachedPolygon))
+
+    if (canReuse) {
+      if (!dimensionsMatch) {
+        const sx = width / cached!.width!
+        const sy = height / cached!.height!
+        console.log(`[VoronoiComputer] Cache HIT (rescaled ${cached!.width}x${cached!.height} -> ${width}x${height})`)
+        this.scaleCachedPolygons(cached!.hierarchyData, sx, sy)
+        cached!.width = width
+        cached!.height = height
+      } else {
+        console.log(`[VoronoiComputer] Cache HIT. Dimensions exact: ${width}x${height}`)
+      }
+
+      const hierarchyData = cached!.hierarchyData
       hierarchy = d3.hierarchy(hierarchyData)
         .sum(d => (!d.children || d.children.length === 0) ? Math.max(d.size || 1, 1) : 0)
         .sort((a, b) => (b.value || 0) - (a.value || 0))
