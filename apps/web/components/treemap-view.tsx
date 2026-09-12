@@ -21,7 +21,7 @@ import { GridLoader } from '@/components/ui/grid-loader'
 import { VoronoiBreadcrumb } from '@/components/voronoi/VoronoiBreadcrumb'
 import { VoronoiPartitionPanel } from '@/components/voronoi/VoronoiPartitionPanel'
 import { type PartitionInfo } from '@/lib/voronoi/utils/types'
-import { STORAGE_QUOTA_TB, FILE_COUNT_QUOTA } from '@/lib/voronoi/utils/constants'
+import { quotaForPath } from '@/lib/voronoi/utils/constants'
 import { formatBytes } from '@/lib/utils/formatters'
 import { getSizeFillColor } from '@/lib/utils/icon-helpers'
 import { cn } from '@/lib/utils'
@@ -134,8 +134,8 @@ export function TreemapView() {
     file_count: d.fileCount || 0,
     isDirectory: true,
     isSynthetic: false,
-    quotaPercent: ((d.bytes || 0) / (1024 ** 4)) / STORAGE_QUOTA_TB * 100,
-    fileQuotaPercent: (d.fileCount || 0) / FILE_COUNT_QUOTA * 100,
+    quotaPercent: ((d.bytes || 0) / (1024 ** 4)) / quotaForPath(d.path).storageTB * 100,
+    fileQuotaPercent: quotaForPath(d.path).files ? (d.fileCount || 0) / quotaForPath(d.path).files! * 100 : 0,
     depth: 0,
     originalFiles: d.raw?.originalFiles,
     children: d.raw?.children?.filter((c: any) => c.isDirectory),

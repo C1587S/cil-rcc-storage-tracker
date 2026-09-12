@@ -18,8 +18,7 @@ import { Maximize2, Minimize2, Focus, BarChart2, Play, RotateCcw, HardDrive, Fil
 import { cn } from '@/lib/utils'
 import { getSnapshots } from '@/lib/api'
 import {
-  STORAGE_QUOTA_TB,
-  FILE_COUNT_QUOTA,
+  quotaForPath,
 } from '@/lib/voronoi/utils/constants'
 import { type VoronoiCacheEntry, type PartitionInfo } from '@/lib/voronoi/utils/types'
 import { VoronoiHeader } from '@/components/voronoi/VoronoiHeader'
@@ -194,14 +193,15 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
 
   const projectSize = globalRootSize || viewRootSize 
   const storageTB = projectSize / (1024 ** 4)
-  const storageQuotaPercent = (storageTB / STORAGE_QUOTA_TB) * 100
+  const rootQuota = quotaForPath(basePath)
+  const storageQuotaPercent = (storageTB / rootQuota.storageTB) * 100
 
   // Calculate percentage relative to 500 TB quota (not current view)
   const getPartitionQuotaPercent = useCallback((size: number) => {
     const sizeInTB = size / (1024 ** 4)
-    return (sizeInTB / STORAGE_QUOTA_TB) * 100
+    return (sizeInTB / rootQuota.storageTB) * 100
   }, [])
-  const getFileQuotaPercent = useCallback((fileCount: number) => (fileCount / FILE_COUNT_QUOTA) * 100, [])
+  const getFileQuotaPercent = useCallback((fileCount: number) => rootQuota.files ? (fileCount / rootQuota.files) * 100 : 0, [rootQuota])
   const getParentQuotaPercent = useCallback((size: number) => parentSize > 0 ? (size / parentSize) * 100 : 0, [parentSize])
 
   // --- RENDERING ---

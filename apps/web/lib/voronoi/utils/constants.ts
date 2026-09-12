@@ -35,7 +35,20 @@ export const FILE_TYPE_COLORS: Record<string, string> = {
 }
 
 export const STORAGE_QUOTA_TB = 500
-export const FILE_COUNT_QUOTA = 77_000_000
+export const FILE_COUNT_QUOTA = 77_300_000
+
+// Per-root quotas (rcchelp): Capacity has space + file quotas, Cost-Effective
+// (cds3) has a space quota only. Everything quota-related must resolve
+// through this — a cds3 number measured against project's quota is a lie.
+export const ROOT_QUOTAS: Array<{ root: string; storageTB: number; files: number | null }> = [
+  { root: '/cds3/cil', storageTB: 125, files: null },
+  { root: '/project/cil', storageTB: STORAGE_QUOTA_TB, files: FILE_COUNT_QUOTA },
+]
+
+export function quotaForPath(path: string | null | undefined) {
+  const p = path || '/project/cil'
+  return ROOT_QUOTAS.find(q => p === q.root || p.startsWith(q.root + '/')) ?? ROOT_QUOTAS[ROOT_QUOTAS.length - 1]
+}
 
 export const SIZE_SEVERITY = {
   NEGLIGIBLE: 10 * 1024 * 1024,

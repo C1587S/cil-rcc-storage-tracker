@@ -57,8 +57,14 @@ export function SnapshotSelector() {
           const res = await fetch(
             `${API_BASE_URL}/api/contents?snapshot_date=${selectedSnapshot}&parent_path=${encodeURIComponent(r.path)}&limit=1`
           );
-          const j = await res.json();
-          out[r.path] = (j.entries?.length ?? 0) > 0;
+          if (!res.ok) {
+            // API restarting / transient 5xx: never disable a root on an
+            // error — only a successful, genuinely empty listing may.
+            out[r.path] = true;
+          } else {
+            const j = await res.json();
+            out[r.path] = (j.entries?.length ?? 0) > 0;
+          }
         } catch {
           out[r.path] = true; // fail open: don't disable on a transient error
         }
