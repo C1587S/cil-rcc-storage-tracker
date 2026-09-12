@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { getBrowse, getContents, getSnapshots } from "@/lib/api";
+import { getBrowse, getContents, getSnapshots, API_BASE_URL } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,14 @@ interface DiskUsageState {
 
 // Hard-coded quotas
 const STORAGE_QUOTA_TB = 500;
-const FILE_COUNT_QUOTA = 77_000_000;
+const FILE_COUNT_QUOTA = 77_300_000;
+
+// Per-root quotas from rcchelp: Capacity has both space and file quotas,
+// Cost-Effective (cds3) has a space quota only.
+const ROOT_QUOTAS = [
+  { root: "/cds3/cil", storageTB: 125, files: null as number | null },
+  { root: "/project/cil", storageTB: STORAGE_QUOTA_TB, files: FILE_COUNT_QUOTA as number | null },
+];
 
 function getQuotaColor(percent: number): string {
   if (percent >= 95) return "bg-red-600/70";
@@ -489,15 +496,50 @@ export function DiskUsageExplorerV2() {
 
   const currentSnapshot = snapshots?.find(s => s.snapshot_date === selectedSnapshot);
 
-  // Progressive loading: use local size, global ref, or 0
-  const projectSize = localProjectSize || referenceSize || 0;
+  const activeRootQuota =
+    ROOT_QUOTAS.find(q => (referencePath || "/project/cil").startsWith(q.root)) ??
+    ROOT_QUOTAS[ROOT_QUOTAS.length - 1];
+
+  // Root-scoped totals: the snapshot now spans several storage roots
+  // (/project/cil and /cds3/cil), so snapshot-wide numbers can't be
+  // compared against a single root's quota.
+  const { data: rootStats } = useQuery({
+    queryKey: ["root-stats", selectedSnapshot, activeRootQuota.root],
+    enabled: !!selectedSnapshot,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const root = activeRootQuota.root;
+      const parent = root.split("/").slice(0, -1).join("/") || "/";
+      try {
+        const j = await getContents({
+          snapshot_date: selectedSnapshot!,
+          parent_path: parent,
+          limit: 50,
+        });
+        const e = (j.entries || []).find((x: any) => x.path === root);
+        if (e) return { size: e.recursive_size ?? e.size ?? 0, files: e.file_count ?? 0, dirs: e.dir_count ?? undefined };
+      } catch {}
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/voronoi/node/${selectedSnapshot}/subtree?path=${encodeURIComponent(root)}&max_depth=0`
+        );
+        const j = await res.json();
+        const n = Object.values(j).find((x: any) => x?.path === root) as any;
+        if (n) return { size: n.size ?? 0, files: n.file_count ?? 0, dirs: undefined };
+      } catch {}
+      return null;
+    },
+  });
+
+  // Progressive loading: use root stats, local size, global ref, or 0
+  const projectSize = rootStats?.size || localProjectSize || referenceSize || 0;
   const effectiveReferenceSize = referenceSize || projectSize;
-  const snapshotTotalFiles = currentSnapshot?.total_files || 0;
+  const snapshotTotalFiles = rootStats?.files || currentSnapshot?.total_files || 0;
   const effectiveReferenceFiles = referenceFiles || snapshotTotalFiles;
 
   const handleRootDataLoaded = (totalSize: number) => {
     setLocalProjectSize(totalSize);
-    if (totalSize > 0 && referencePath === "/project/cil" && !referenceSize) {
+    if (totalSize > 0 && !referenceSize && ROOT_QUOTAS.some(q => q.root === referencePath)) {
       setReferenceSize(totalSize);
     }
   };
@@ -548,9 +590,9 @@ export function DiskUsageExplorerV2() {
   }
 
   const storageTB = projectSize / (1024 ** 4);
-  const storageQuotaPercent = (storageTB / STORAGE_QUOTA_TB) * 100;
-  const totalFiles = currentSnapshot?.total_files || 0;
-  const fileCountQuotaPercent = (totalFiles / FILE_COUNT_QUOTA) * 100;
+  const storageQuotaPercent = (storageTB / activeRootQuota.storageTB) * 100;
+  const totalFiles = snapshotTotalFiles;
+  const fileCountQuotaPercent = activeRootQuota.files ? (totalFiles / activeRootQuota.files) * 100 : 0;
 
   const content = (
     <div className="flex flex-col h-full">
@@ -606,7 +648,7 @@ export function DiskUsageExplorerV2() {
                    style={{ width: `${Math.min(storageQuotaPercent, 100)}%` }} />
             </div>
             <span className="font-mono text-muted-foreground/80 shrink-0">
-              {storageTB.toFixed(1)} / {STORAGE_QUOTA_TB} TB
+              {storageTB.toFixed(1)} / {activeRootQuota.storageTB} TB
             </span>
             <span className={cn("font-mono font-medium shrink-0", getQuotaTextColor(storageQuotaPercent))}>
               ({storageQuotaPercent.toFixed(1)}%)
@@ -615,16 +657,24 @@ export function DiskUsageExplorerV2() {
 
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground/70 font-mono shrink-0">Files:</span>
-            <div className="flex-1 h-2 bg-muted/20 rounded-sm overflow-hidden border border-border/30 min-w-[60px]">
-              <div className={cn("h-full transition-all", getQuotaColor(fileCountQuotaPercent))}
-                   style={{ width: `${Math.min(fileCountQuotaPercent, 100)}%` }} />
-            </div>
-            <span className="font-mono text-muted-foreground/80 shrink-0">
-              {totalFiles.toLocaleString()} / {FILE_COUNT_QUOTA.toLocaleString()}
-            </span>
-            <span className={cn("font-mono font-medium shrink-0", getQuotaTextColor(fileCountQuotaPercent))}>
-              ({fileCountQuotaPercent.toFixed(1)}%)
-            </span>
+            {activeRootQuota.files ? (
+              <>
+                <div className="flex-1 h-2 bg-muted/20 rounded-sm overflow-hidden border border-border/30 min-w-[60px]">
+                  <div className={cn("h-full transition-all", getQuotaColor(fileCountQuotaPercent))}
+                       style={{ width: `${Math.min(fileCountQuotaPercent, 100)}%` }} />
+                </div>
+                <span className="font-mono text-muted-foreground/80 shrink-0">
+                  {totalFiles.toLocaleString()} / {activeRootQuota.files.toLocaleString()}
+                </span>
+                <span className={cn("font-mono font-medium shrink-0", getQuotaTextColor(fileCountQuotaPercent))}>
+                  ({fileCountQuotaPercent.toFixed(1)}%)
+                </span>
+              </>
+            ) : (
+              <span className="font-mono text-muted-foreground/80 shrink-0">
+                {totalFiles.toLocaleString()} (no file quota on this tier)
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -803,7 +853,7 @@ export function DiskUsageExplorerV2() {
           recursiveSize={projectSize}
           recursiveSizeFormatted={projectSize ? `${(projectSize / 1024 ** 4).toFixed(2)} TiB` : "Loading..."}
           fileCount={snapshotTotalFiles || undefined}
-          dirCount={currentSnapshot?.total_directories || undefined}
+          dirCount={rootStats?.dirs || undefined}
           owner={undefined}
           modifiedTime={undefined}
           accessedTime={undefined}

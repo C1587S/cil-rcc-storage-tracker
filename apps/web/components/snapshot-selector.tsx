@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check } from "lucide-react";
 import { getSnapshots, API_BASE_URL } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { Select } from "@/components/ui/select";
@@ -39,8 +38,6 @@ const STORAGE_ROOTS = [
 
 export function SnapshotSelector() {
   const { selectedSnapshot, setSelectedSnapshot, referencePath, setReferencePath, setReferenceSize } = useAppStore();
-  // Root staged in the badge but not yet applied (null = follow the store)
-  const [pendingRoot, setPendingRoot] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["snapshots"],
@@ -136,59 +133,43 @@ export function SnapshotSelector() {
         );
       })()}
 
-      {/* Selectable storage-root badge (shields style). Picking a root only
-          stages it; the check button applies it, so heavy views (Voronoi,
-          Treemap) don't reload on an accidental click. */}
-      {(() => {
-        const currentRoot = referencePath || "/project/cil";
-        const stagedRoot = pendingRoot ?? currentRoot;
-        return (
-          <span className="inline-flex items-stretch text-[11px] font-semibold rounded-full overflow-hidden shadow-sm select-none">
-            <span className="px-2.5 py-0.5 bg-[#444d56] text-white flex items-center">root</span>
-            {STORAGE_ROOTS.map(r => {
-              const available = rootAvailability?.[r.path] !== false;
-              const isStaged = stagedRoot === r.path;
-              return (
-                <button
-                  key={r.path}
-                  disabled={!available}
-                  className="px-2.5 py-0.5 flex items-center gap-1 transition-colors disabled:cursor-not-allowed"
-                  style={{
-                    background: isStaged ? "#1f6feb" : "#2d333b",
-                    color: isStaged ? "#ffffff" : "#8b949e",
-                    opacity: available ? 1 : 0.45,
-                    textDecoration: available ? "none" : "line-through",
-                  }}
-                  title={
-                    !available
-                      ? `${r.label}: no scan data imported yet`
-                      : currentRoot === r.path
-                        ? `${r.label} (active)`
-                        : `Select ${r.label}, then confirm with the check button`
-                  }
-                  onClick={() => setPendingRoot(r.path)}
-                >
-                  {r.path.split("/")[1]}
-                </button>
-              );
-            })}
-            {stagedRoot !== currentRoot && (
-              <button
-                className="px-2 py-0.5 flex items-center text-white transition-colors"
-                style={{ background: "#2ea44f" }}
-                title={`Load ${stagedRoot} in Tree, Voronoi and Treemap`}
-                onClick={() => {
-                  setReferencePath(stagedRoot);
+      {/* Storage-root switch: single-select button group, applies on click */}
+      <span className="inline-flex items-stretch text-[11px] font-semibold rounded-full overflow-hidden shadow-sm select-none">
+        <span className="px-2.5 py-0.5 bg-[#444d56] text-white flex items-center">root</span>
+        {STORAGE_ROOTS.map(r => {
+          const available = rootAvailability?.[r.path] !== false;
+          const isActive = (referencePath || "/project/cil") === r.path;
+          return (
+            <button
+              key={r.path}
+              disabled={!available}
+              className="px-2.5 py-0.5 flex items-center gap-1 transition-colors disabled:cursor-not-allowed"
+              style={{
+                background: isActive ? "#1f6feb" : "#2d333b",
+                color: isActive ? "#ffffff" : "#8b949e",
+                fontWeight: isActive ? 700 : 500,
+                opacity: available ? 1 : 0.45,
+                textDecoration: available ? "none" : "line-through",
+              }}
+              title={
+                !available
+                  ? `${r.label}: no scan data imported yet`
+                  : isActive
+                    ? `${r.label} (active)`
+                    : `Switch Tree, Voronoi and Treemap to ${r.label}`
+              }
+              onClick={() => {
+                if (!isActive) {
+                  setReferencePath(r.path);
                   setReferenceSize(0);
-                  setPendingRoot(null);
-                }}
-              >
-                <Check size={13} strokeWidth={3} />
-              </button>
-            )}
-          </span>
-        );
-      })()}
+                }
+              }}
+            >
+              {isActive ? "●" : "○"} {r.path.split("/")[1]}
+            </button>
+          );
+        })}
+      </span>
 
       {selectedSnapshot_?.import_time && (
         <span className="text-xs text-muted-foreground/60 ml-1">

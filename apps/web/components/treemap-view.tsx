@@ -205,11 +205,13 @@ export function TreemapView() {
 
   const jumpTo = useCallback((path: string) => {
     setViewPath(path)
-    // Rebuild the stack as the chain of ancestors between basePath and path
-    if (path === basePath) { setPathStack([]); return }
-    const rel = path.startsWith(basePath + '/') ? path.slice(basePath.length + 1) : ''
-    const stack = [basePath]
-    let acc = basePath
+    // Rebuild the stack as the chain of ancestors between the path's own
+    // storage root and the path (search can cross roots)
+    const root = ['/project/cil', '/cds3/cil'].find(r => path === r || path.startsWith(r + '/')) ?? basePath
+    if (path === root) { setPathStack([]); return }
+    const rel = path.startsWith(root + '/') ? path.slice(root.length + 1) : ''
+    const stack = [root]
+    let acc = root
     for (const seg of rel.split('/').slice(0, -1)) {
       acc = `${acc}/${seg}`
       stack.push(acc)
@@ -217,13 +219,20 @@ export function TreemapView() {
     setPathStack(stack)
   }, [basePath])
 
+  // The trail is built from whichever storage root the current view path
+  // actually lives under: search navigation can cross into the other root
+  // (e.g. /cds3/cil while the selector is on /project/cil), and the trail
+  // must still render and stay clickable.
+  const KNOWN_ROOTS = ['/project/cil', '/cds3/cil']
+  const viewRoot = KNOWN_ROOTS.find(r => viewPath === r || viewPath.startsWith(r + '/')) ?? basePath
+
   const breadcrumbParts = useMemo(() => {
     const parts: Array<{ name: string; path: string; isClickable: boolean }> = []
-    const baseName = basePath.split('/').filter(Boolean).pop() || 'root'
-    parts.push({ name: baseName, path: basePath, isClickable: viewPath !== basePath })
-    if (viewPath !== basePath && viewPath.startsWith(basePath + '/')) {
-      const rel = viewPath.slice(basePath.length + 1)
-      let acc = basePath
+    const baseName = viewRoot.split('/').filter(Boolean).pop() || 'root'
+    parts.push({ name: baseName, path: viewRoot, isClickable: viewPath !== viewRoot })
+    if (viewPath !== viewRoot && viewPath.startsWith(viewRoot + '/')) {
+      const rel = viewPath.slice(viewRoot.length + 1)
+      let acc = viewRoot
       const segs = rel.split('/')
       segs.forEach((seg, i) => {
         acc = `${acc}/${seg}`
@@ -231,7 +240,7 @@ export function TreemapView() {
       })
     }
     return parts
-  }, [basePath, viewPath])
+  }, [viewRoot, viewPath])
 
   // Chart lifecycle
   useEffect(() => {
@@ -478,6 +487,7 @@ export function TreemapView() {
       </div>
 
       {/* Shared navigation bar (same component as the Voronoi view) */}
+      <div className="relative z-30">
       <VoronoiBreadcrumb
         breadcrumbParts={breadcrumbParts}
         canGoBack={pathStack.length > 0}
@@ -487,6 +497,7 @@ export function TreemapView() {
         onNavigateToBreadcrumb={jumpTo}
         onDrillDown={drillDown}
       />
+      </div>
 
       {/* Shared Partition Info panel (same component as the Voronoi view).
           Hover previews; right-click pins. */}

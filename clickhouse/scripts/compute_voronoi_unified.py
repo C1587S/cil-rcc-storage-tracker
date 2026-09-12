@@ -148,14 +148,26 @@ class VoronoiStorage:
             logger.error(f"Failed to flush voronoi nodes: {e}")
             raise
 
-    def delete_snapshot(self, snapshot_date: date) -> None:
-        """Cleans up old data for idempotency."""
+    def delete_snapshot(self, snapshot_date: date, root_path: str = None) -> None:
+        """Cleans up old data for idempotency.
+
+        Scoped to root_path when given, so trees for different roots
+        (/project/cil, /cds3/cil) coexist within one snapshot.
+        """
         # mutations_sync: the delete MUST finish before we insert, otherwise
         # the new rows race the mutation and two generations can coexist.
-        query = f"ALTER TABLE {self.TABLE_NAME} DELETE WHERE snapshot_date = %(d)s SETTINGS mutations_sync = 1"
+        root_filter = " AND (path = %(root)s OR path LIKE %(rootpfx)s)" if root_path else ""
+        query = (
+            f"ALTER TABLE {self.TABLE_NAME} DELETE WHERE snapshot_date = %(d)s"
+            f"{root_filter} SETTINGS mutations_sync = 1"
+        )
         try:
             client = self._get_client()
-            client.execute(query, {"d": snapshot_date.isoformat()})
+            params = {"d": snapshot_date.isoformat()}
+            if root_path:
+                params["root"] = root_path
+                params["rootpfx"] = root_path + "/%"
+            client.execute(query, params)
             logger.info(f"Deleted old data for snapshot {snapshot_date}")
             client.disconnect()
         except Exception as e:
@@ -235,13 +247,19 @@ class VoronoiComputer:
         LEFT JOIN filesystem.directory_recursive_sizes AS r
             ON e.snapshot_date = r.snapshot_date AND e.path = r.path
         WHERE e.snapshot_date = %(date)s
-          AND e.path LIKE %(root)s
+          AND (e.path = %(root)s OR e.path LIKE %(rootpfx)s)
         ORDER BY e.path ASC
         """
 
         stream = client.execute_iter(
             query,
-            {"date": self.snapshot_date.isoformat(), "root": self.root_path + "%"}
+            {
+                "date": self.snapshot_date.isoformat(),
+                "root": self.root_path,
+                # root + "/%": a bare root + "%" would also match sibling
+                # paths like /cds3/cil-old and corrupt the stack walk
+                "rootpfx": self.root_path + "/%",
+            }
         )
 
         root_id = self._generate_id(self.root_path, True)
@@ -265,6 +283,14 @@ class VoronoiComputer:
             path, name, size, is_directory, recursive_file_count = row
             nodes_processed += 1
 
+            # The root's own entry row (present for some scan sources) must be
+            # handled BEFORE stack management: it doesn't start with root + "/",
+            # so the while-loop below would pop and finalize the root, emptying
+            # the stack and silently skipping every remaining row.
+            if path == self.root_path:
+                root_node['file_count'] = recursive_file_count
+                continue
+
             # 1. Stack management: close finished nodes and roll up sizes
             while stack and not path.startswith(stack[-1][0] + "/"):
                 _, finished_node = stack.pop()
@@ -279,11 +305,6 @@ class VoronoiComputer:
             if not stack: continue
 
             parent_path, parent_node = stack[-1]
-
-            if path == self.root_path:
-                # Update root with its recursive file count
-                parent_node['file_count'] = recursive_file_count
-                continue
 
             # 2. Process New Item
             node_id = self._generate_id(path, is_directory)
@@ -543,10 +564,11 @@ def main():
     logger.info(f"Target: {snap_date} | Root: {args.root} | Workers: {args.workers}")
 
     # 1. Cleanup old data (always: re-running must never leave two generations
-    # of nodes for the same snapshot in the table)
-    logger.info("Cleaning existing rows for this snapshot...")
+    # of nodes for the same snapshot in the table). Scoped to this root so
+    # trees for other roots (e.g. /cds3/cil) survive.
+    logger.info(f"Cleaning existing rows for this snapshot under {args.root}...")
     tmp_storage = VoronoiStorage(db_config)
-    tmp_storage.delete_snapshot(snap_date)
+    tmp_storage.delete_snapshot(snap_date, args.root)
 
     start_time = time.time()
 

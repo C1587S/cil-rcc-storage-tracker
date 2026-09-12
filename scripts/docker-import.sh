@@ -132,6 +132,16 @@ case "${1:-all}" in
             # directory_recursive_sizes for per-node file counts.
             docker compose run --rm importer python scripts/compute_voronoi_unified.py "$SNAPSHOT_DATE"
 
+            # Separate tree per extra root (deletes are root-scoped, so the
+            # trees coexist). Only when that root has entries in the snapshot.
+            CDS3_COUNT=$(docker compose exec -T clickhouse ${CH_CLIENT} --query \
+                "SELECT count() FROM filesystem.entries WHERE snapshot_date='$SNAPSHOT_DATE' AND startsWith(path, '/cds3/')" 2>/dev/null | tr -d '[:space:]')
+            if [ "${CDS3_COUNT:-0}" -gt 0 ]; then
+                echo ""
+                echo "Computing voronoi for /cds3/cil ($CDS3_COUNT entries)..."
+                docker compose run --rm importer python scripts/compute_voronoi_unified.py "$SNAPSHOT_DATE" --root /cds3/cil
+            fi
+
             echo ""
             echo "Optimizing materialized views (deduplication)..."
             docker compose exec clickhouse ${CH_CLIENT} --query "OPTIMIZE TABLE filesystem.directory_hierarchy FINAL"
