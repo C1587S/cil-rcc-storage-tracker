@@ -59,8 +59,10 @@ fi
 
 # Step 1: Detect latest published date from RCC
 echo "Checking RCC public URL for latest scan..."
+# Anchor on gcp_ (a core daily source): out-of-band sources like cds3 are
+# published on their own schedule and must not advance the snapshot date.
 NEW_DATE=$(curl -sk "${RCC_URL}/" \
-  | grep -oP '(?<=href=")[^"]+_\d{4}-\d{2}-\d{2}_chunk' \
+  | grep -oP '(?<=href=")gcp_\d{4}-\d{2}-\d{2}_chunk' \
   | grep -oP '\d{4}-\d{2}-\d{2}' \
   | sort -u | tail -1)
 
@@ -127,12 +129,73 @@ if [ "$DOWNLOAD_OK" = false ]; then
   exit 1
 fi
 
+# Step 1b: cds3 (Cost-Effective tier) — scanned on its own schedule from a
+# login node. Use the latest COMPLETED cds3 scan for this snapshot:
+#  - if today's cds3 files downloaded but its manifest is not completed,
+#    drop them (mid-scan publish) and fall back to the newest completed date
+#  - if no cds3 files for today, carry forward the newest completed scan
+echo ""
+echo "--- Step 1b: cds3 carry-forward ---"
+CDS3_DIR="${PROJECT_ROOT}/cil_scans/cds3/${NEW_DATE}"
+if ls "${CDS3_DIR}"/*.parquet >/dev/null 2>&1 && \
+   ! curl -sk "${RCC_URL}/cds3_${NEW_DATE}_manifest.json" | grep -q '"completed": *true'; then
+  echo "cds3 files for ${NEW_DATE} are from an unfinished scan — discarding."
+  rm -rf "$CDS3_DIR"
+fi
+if ls "${CDS3_DIR}"/*.parquet >/dev/null 2>&1; then
+  echo "cds3 scan for ${NEW_DATE} is complete and downloaded."
+else
+  CDS3_DATE=""
+  for d in $(curl -sk "${RCC_URL}/" \
+      | grep -oP '(?<=href=")cds3_\d{4}-\d{2}-\d{2}_manifest\.json' \
+      | grep -oP '\d{4}-\d{2}-\d{2}' | sort -ur); do
+    if curl -sk "${RCC_URL}/cds3_${d}_manifest.json" | grep -q '"completed": *true'; then
+      CDS3_DATE="$d"
+      break
+    fi
+  done
+  if [ -z "$CDS3_DATE" ]; then
+    echo "No completed cds3 scan published — snapshot will not include /cds3/cil."
+  else
+    echo "Using completed cds3 scan from ${CDS3_DATE} for snapshot ${NEW_DATE}."
+    mkdir -p "$CDS3_DIR"
+    CDS3_OK=true
+    for f in $(curl -sk "${RCC_URL}/" \
+        | grep -oP "(?<=href=\")cds3_${CDS3_DATE}_chunk_[0-9]+\.parquet" | sort -u); do
+      echo "  downloading ${f}"
+      if ! curl -skf "${RCC_URL}/${f}" -o "${CDS3_DIR}/${f}"; then
+        echo "  ERROR downloading ${f}"
+        CDS3_OK=false
+        break
+      fi
+    done
+    if [ "$CDS3_OK" = false ]; then
+      rm -rf "$CDS3_DIR"
+      echo "cds3 download failed — continuing without cds3 (main import unaffected)."
+    fi
+  fi
+fi
+
 # Step: Import new snapshot into ClickHouse
 echo ""
 echo "--- Step 2/3: Import ---"
 "${SCRIPT_DIR}/docker-import.sh"
 
 # Step 5: Delete ALL old snapshots from DB and disk (keep only NEW_DATE)
+# Safety: a snapshot much smaller than its predecessor means a broken or
+# partial import — keep the old data so the dashboard stays usable.
+if [ "$KEEP_OLD" = false ]; then
+  NEW_COUNT=$(docker compose exec -T clickhouse ${CH_CLIENT} --query \
+    "SELECT count() FROM filesystem.entries WHERE snapshot_date='${NEW_DATE}'" 2>/dev/null | tr -d '[:space:]')
+  MAX_OLD_COUNT=$(docker compose exec -T clickhouse ${CH_CLIENT} --query \
+    "SELECT max(cnt) FROM (SELECT count() AS cnt FROM filesystem.entries WHERE snapshot_date != '${NEW_DATE}' GROUP BY snapshot_date)" 2>/dev/null | tr -d '[:space:]')
+  if [ -n "$MAX_OLD_COUNT" ] && [ "$MAX_OLD_COUNT" != "0" ] && [ "${NEW_COUNT:-0}" -lt $((MAX_OLD_COUNT / 2)) ]; then
+    echo ""
+    echo "WARNING: New snapshot has ${NEW_COUNT:-0} entries vs ${MAX_OLD_COUNT} in the previous one."
+    echo "Looks like a partial import — keeping old snapshots (delete skipped)."
+    KEEP_OLD=true
+  fi
+fi
 if [ "$KEEP_OLD" = false ]; then
   # Get all snapshot dates except the one we just imported
   OLD_DATES=$(docker compose exec -T clickhouse ${CH_CLIENT} --query \
