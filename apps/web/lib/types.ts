@@ -22,8 +22,10 @@ export interface DirectoryEntry {
   file_type?: string;
   modified_time?: number;
   accessed_time?: number;
-  file_count?: number;  // Direct children count
-  dir_count?: number;  // Recursive subdirectories count
+  file_count?: number;  // Recursive files in subtree
+  dir_count?: number;  // Recursive subdirectories in subtree
+  direct_file_count?: number;  // Files directly inside (next level)
+  direct_dir_count?: number;  // Folders directly inside (next level)
 }
 
 export interface BrowseResponse {

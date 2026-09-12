@@ -35,7 +35,7 @@ async def browse_folders(
         parent_path = parent_path.rstrip("/")
 
     # Snapshot data is immutable: serve from cache when possible
-    response.headers["Cache-Control"] = "public, max-age=21600"
+    response.headers["Cache-Control"] = "public, max-age=300"
     cache_key = (snapshot_date.isoformat(), parent_path, limit)
     cached = _cache.get(cache_key)
     if cached is not None:
@@ -45,21 +45,23 @@ async def browse_folders(
     # recursive totals. The join side is pre-filtered to only this directory's
     # children so the join hash table stays tiny instead of covering the table.
     query = """
-    SELECT
+    SELECT DISTINCT
         h.child_path AS path,
-        h.name,
+        h.name AS name,
         1 AS is_directory,
         COALESCE(rs.recursive_size_bytes, 0) AS recursive_size,
         formatReadableSize(COALESCE(rs.recursive_size_bytes, 0)) AS recursive_size_formatted,
         COALESCE(rs.direct_size_bytes, 0) AS size,
         formatReadableSize(COALESCE(rs.direct_size_bytes, 0)) AS size_formatted,
         h.last_modified AS modified_time,
-        COALESCE(rs.direct_file_count, 0) AS file_count,
-        COALESCE(rs.recursive_dir_count, 0) AS dir_count
+        COALESCE(rs.recursive_file_count, 0) AS file_count,
+        COALESCE(rs.recursive_dir_count, 0) AS dir_count,
+        COALESCE(rs.direct_file_count, 0) AS direct_file_count,
+        COALESCE(ds.direct_dir_count, 0) AS direct_dir_count
     FROM filesystem.directory_hierarchy AS h
     LEFT JOIN (
         SELECT path, recursive_size_bytes, direct_size_bytes,
-               direct_file_count, recursive_dir_count
+               direct_file_count, recursive_file_count, recursive_dir_count
         FROM filesystem.directory_recursive_sizes
         WHERE snapshot_date = %(snapshot_date)s
           AND path IN (
@@ -69,6 +71,18 @@ async def browse_folders(
                 AND is_directory = 1
           )
     ) AS rs ON rs.path = h.child_path
+    LEFT JOIN (
+        SELECT path AS agg_path, sum(dir_count) AS direct_dir_count
+        FROM filesystem.directory_sizes
+        WHERE snapshot_date = %(snapshot_date)s
+          AND path IN (
+              SELECT child_path FROM filesystem.directory_hierarchy
+              WHERE snapshot_date = %(snapshot_date)s
+                AND parent_path = %(parent_path)s
+                AND is_directory = 1
+          )
+        GROUP BY agg_path
+    ) AS ds ON ds.agg_path = h.child_path
     WHERE h.snapshot_date = %(snapshot_date)s
       AND h.parent_path = %(parent_path)s
       AND h.is_directory = 1
@@ -101,6 +115,8 @@ async def browse_folders(
                     modified_time=row.get("modified_time"),
                     file_count=row.get("file_count"),
                     dir_count=row.get("dir_count"),
+                    direct_file_count=row.get("direct_file_count"),
+                    direct_dir_count=row.get("direct_dir_count"),
                 )
             )
 

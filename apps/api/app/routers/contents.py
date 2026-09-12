@@ -42,7 +42,7 @@ async def get_contents(
         parent_path = parent_path.rstrip("/")
 
     # Snapshot data is immutable: serve from cache when possible
-    response.headers["Cache-Control"] = "public, max-age=21600"
+    response.headers["Cache-Control"] = "public, max-age=300"
     cache_key = (snapshot_date.isoformat(), parent_path, limit, offset, sort, filter_type)
     cached = _cache.get(cache_key)
     if cached is not None:
@@ -71,9 +71,9 @@ async def get_contents(
     # so the join hash table stays tiny instead of covering the whole table.
     query = f"""
     SELECT
-        e.path,
-        e.name,
-        e.is_directory,
+        e.path AS path,
+        e.name AS name,
+        e.is_directory AS is_directory,
         CASE
             WHEN e.is_directory = 1 THEN COALESCE(rs.recursive_size_bytes, 0)
             ELSE e.size
@@ -92,13 +92,22 @@ async def get_contents(
             WHEN e.is_directory = 1 THEN COALESCE(rs.recursive_dir_count, 0)
             ELSE 0
         END AS dir_count,
-        e.owner,
-        e.file_type,
-        e.modified_time,
-        e.accessed_time
+        CASE
+            WHEN e.is_directory = 1 THEN COALESCE(rs.direct_file_count, 0)
+            ELSE 0
+        END AS direct_file_count,
+        CASE
+            WHEN e.is_directory = 1 THEN COALESCE(ds.direct_dir_count, 0)
+            ELSE 0
+        END AS direct_dir_count,
+        e.owner AS owner,
+        e.file_type AS file_type,
+        e.modified_time AS modified_time,
+        e.accessed_time AS accessed_time
     FROM filesystem.entries AS e
     LEFT JOIN (
-        SELECT path, recursive_size_bytes, recursive_file_count, recursive_dir_count
+        SELECT path, recursive_size_bytes, recursive_file_count, recursive_dir_count,
+               direct_file_count
         FROM filesystem.directory_recursive_sizes
         WHERE snapshot_date = %(snapshot_date)s
           AND path IN (
@@ -108,6 +117,18 @@ async def get_contents(
                 AND is_directory = 1
           )
     ) AS rs ON e.path = rs.path
+    LEFT JOIN (
+        SELECT path AS agg_path, sum(dir_count) AS direct_dir_count
+        FROM filesystem.directory_sizes
+        WHERE snapshot_date = %(snapshot_date)s
+          AND path IN (
+              SELECT path FROM filesystem.entries
+              WHERE snapshot_date = %(snapshot_date)s
+                AND parent_path = %(parent_path)s
+                AND is_directory = 1
+          )
+        GROUP BY agg_path
+    ) AS ds ON e.path = ds.agg_path
     WHERE e.snapshot_date = %(snapshot_date)s
       AND e.parent_path = %(parent_path)s
       {type_filter}
@@ -152,6 +173,8 @@ async def get_contents(
                     size_formatted=row.get("size_formatted"),
                     file_count=row.get("file_count"),
                     dir_count=row.get("dir_count"),
+                    direct_file_count=row.get("direct_file_count"),
+                    direct_dir_count=row.get("direct_dir_count"),
                     owner=row.get("owner"),
                     file_type=row.get("file_type"),
                     modified_time=row.get("modified_time"),

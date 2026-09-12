@@ -35,8 +35,10 @@ class DirectoryEntry(BaseModel):
     file_type: str | None = None
     modified_time: int | None = None  # Unix timestamp
     accessed_time: int | None = None  # Unix timestamp
-    file_count: int | None = None  # For directories (direct children)
-    dir_count: int | None = None  # For directories (recursive subdirectories)
+    file_count: int | None = None  # Recursive files in subtree (dirs only)
+    dir_count: int | None = None  # Recursive subdirectories in subtree (dirs only)
+    direct_file_count: int | None = None  # Files directly inside (next level)
+    direct_dir_count: int | None = None  # Folders directly inside (next level)
 
 
 class BrowseResponse(BaseModel):
