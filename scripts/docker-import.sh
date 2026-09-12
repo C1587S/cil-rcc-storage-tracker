@@ -118,12 +118,19 @@ case "${1:-all}" in
             done
 
             echo ""
-            echo "Computing voronoi visualization for $SNAPSHOT_DATE..."
-            docker compose run --rm importer python scripts/compute_voronoi_unified.py "$SNAPSHOT_DATE"
+            echo "Deduplicating entries (protects against overlapping scan runs)..."
+            PARTITION_ID=$(echo "$SNAPSHOT_DATE" | tr -d - | cut -c1-6)
+            docker compose exec -T clickhouse ${CH_CLIENT} --query "OPTIMIZE TABLE filesystem.entries PARTITION ID '$PARTITION_ID' FINAL DEDUPLICATE BY snapshot_date, parent_path, path"
 
             echo ""
             echo "Computing recursive directory sizes for $SNAPSHOT_DATE..."
             docker compose run --rm importer python scripts/compute_recursive_sizes_v2.py "$SNAPSHOT_DATE"
+
+            echo ""
+            echo "Computing voronoi visualization for $SNAPSHOT_DATE..."
+            # NOTE: must run AFTER recursive sizes — the voronoi precompute joins
+            # directory_recursive_sizes for per-node file counts.
+            docker compose run --rm importer python scripts/compute_voronoi_unified.py "$SNAPSHOT_DATE"
 
             echo ""
             echo "Optimizing materialized views (deduplication)..."

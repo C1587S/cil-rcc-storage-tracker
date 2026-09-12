@@ -150,7 +150,9 @@ class VoronoiStorage:
 
     def delete_snapshot(self, snapshot_date: date) -> None:
         """Cleans up old data for idempotency."""
-        query = f"ALTER TABLE {self.TABLE_NAME} DELETE WHERE snapshot_date = %(d)s"
+        # mutations_sync: the delete MUST finish before we insert, otherwise
+        # the new rows race the mutation and two generations can coexist.
+        query = f"ALTER TABLE {self.TABLE_NAME} DELETE WHERE snapshot_date = %(d)s SETTINGS mutations_sync = 1"
         try:
             client = self._get_client()
             client.execute(query, {"d": snapshot_date.isoformat()})
@@ -540,11 +542,11 @@ def main():
 
     logger.info(f"Target: {snap_date} | Root: {args.root} | Workers: {args.workers}")
 
-    # 1. Cleanup Old Data
-    if args.force:
-        logger.info("Force flag: Cleaning old data...")
-        tmp_storage = VoronoiStorage(db_config)
-        tmp_storage.delete_snapshot(snap_date)
+    # 1. Cleanup old data (always: re-running must never leave two generations
+    # of nodes for the same snapshot in the table)
+    logger.info("Cleaning existing rows for this snapshot...")
+    tmp_storage = VoronoiStorage(db_config)
+    tmp_storage.delete_snapshot(snap_date)
 
     start_time = time.time()
 
