@@ -3,6 +3,7 @@
 import { SnapshotSelector } from "@/components/snapshot-selector";
 import { DiskUsageExplorerV2 } from "@/components/disk-usage-explorer-v2";
 import { HierarchicalVoronoiView } from "@/components/hierarchical-voronoi-view";
+import { TreemapView } from "@/components/treemap-view";
 import { SearchConsole } from "@/components/search-console";
 import { DocsPage } from "@/components/docs-page";
 import { ComputingDashboard } from "@/components/computing-dashboard";
@@ -32,6 +33,7 @@ const TAB_GROUPS = [
       { id: "query",   label: "Query Console" },
       { id: "tree",    label: "Tree Explorer" },
       { id: "voronoi", label: "Voronoi"       },
+      { id: "treemap", label: "Treemap"       },
     ] as const,
   },
 ] as const;
@@ -162,6 +164,10 @@ export default function Home() {
 
         <div className={cn("w-full", activeTab !== "voronoi" && "hidden", !isVoronoiFullscreen && containerClass)}>
           <HierarchicalVoronoiView />
+        </div>
+
+        <div className={cn("space-y-6", containerClass, activeTab !== "treemap" && "hidden")}>
+          <TreemapView />
         </div>
 
         <div className={cn("space-y-6", containerClass, activeTab !== "computing" && "hidden")}>
