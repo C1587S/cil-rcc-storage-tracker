@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --mem-per-cpu=4G
 #SBATCH --time=24:00:00
-#SBATCH --array=0-8
+#SBATCH --array=0-6,8
 #SBATCH -o ./slurm_out/scan_%a.out
 #SBATCH -e ./slurm_out/scan_%a.err
 
@@ -26,7 +26,9 @@
 #   # Or specific jobs: sbatch --array=2,5 scanner/scripts/scan_cil_parallel.sh
 ################################################################################
 
-# Scan targets (must match --array=0-8 above).
+# Scan targets. Default array runs 0-6,8: every source EXCEPT cds3 (7),
+# because /cds3 is not mounted on compute nodes. cds3 is scanned from a
+# login node instead -- see scan_cds3_login.sh / run_full_scan.sh.
 # NAMES[i] becomes the output file prefix; PATHS[i] is the directory scanned.
 NAMES=(
     "battuta-shares-S3-archive"
