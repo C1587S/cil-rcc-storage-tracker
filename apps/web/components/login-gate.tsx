@@ -90,7 +90,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: string) => void }) {
                 className="rounded-full w-6 h-6 sm:w-7 sm:h-7"
               />
               <h1 className="text-base sm:text-lg font-semibold tracking-tight text-foreground">
-                CIL RCC <span className="font-normal text-muted-foreground">Console</span>
+                CIL RCC <span className="font-normal text-muted-foreground">Monitor</span>
               </h1>
             </div>
             <ThemeToggle />
@@ -104,7 +104,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: string) => void }) {
           <div className="text-center mb-6 sm:mb-8">
             <img
               src="/cil-rcc-tracker/cil_rcc_console.png"
-              alt="CIL RCC Console"
+              alt="CIL RCC Monitor"
               width={64}
               height={64}
               className="mx-auto mb-4 sm:mb-5 rounded-xl shadow-sm logo-spin-once w-12 h-12 sm:w-16 sm:h-16"

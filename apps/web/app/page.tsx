@@ -93,7 +93,7 @@ export default function Home() {
                     onAnimationEnd={() => setLogoSpinning(false)}
                   />
                   <h1 className="text-base sm:text-lg font-semibold tracking-tight text-foreground">
-                    CIL RCC <span className="font-normal text-muted-foreground">Console</span>
+                    CIL RCC <span className="font-normal text-muted-foreground">Monitor</span>
                   </h1>
                 </div>
                 <div className="flex items-center gap-2 sm:gap-4">

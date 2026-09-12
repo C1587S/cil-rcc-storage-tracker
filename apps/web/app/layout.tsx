@@ -7,7 +7,7 @@ const basePath = "/cil-rcc-tracker";
 
 export const metadata: Metadata = {
   title: "CRC",
-  description: "CIL RCC Console",
+  description: "CIL RCC Monitor",
   icons: {
     icon: [
       { url: `${basePath}/favicon-32x32.png`, sizes: "32x32", type: "image/png" },
