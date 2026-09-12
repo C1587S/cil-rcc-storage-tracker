@@ -197,9 +197,28 @@ class VoronoiStore:
 
         # OPTIMIZED: Single query to fetch ALL nodes in subtree
         # Uses path prefix matching + depth filtering
-        subtree_query = """
+        # With files_limit, truncate each node's file list to the N largest
+        # INSIDE ClickHouse: parsing multi-MB JSON blobs in Python is 10-50x
+        # slower than this arraySort in C++.
+        if files_limit:
+            # Only shallow nodes keep a (truncated, largest-first) file list:
+            # sorting a 100K+-entry JSON array per deep node dominated query
+            # time. Drilling into a node re-roots the fetch, so its files
+            # come back at that point.
+            files_expr = """
+               if(depth > %(full_depth)s, '',
+                  if(original_files_json != '' AND original_files_json != '[]',
+                     concat('[', arrayStringConcat(arraySlice(
+                         arrayReverseSort(f -> JSONExtractUInt(f, 'size'),
+                                          JSONExtractArrayRaw(original_files_json)),
+                         1, %(files_limit)s), ','), ']'),
+                     original_files_json)) AS original_files_json"""
+        else:
+            files_expr = "original_files_json"
+
+        subtree_query = f"""
         SELECT node_id, name, path, size, is_directory, depth,
-               children_json, file_count, is_synthetic, original_files_json
+               children_json, file_count, is_synthetic, {files_expr}
         FROM voronoi_precomputed
         WHERE snapshot_date = %(snapshot_date)s
           AND (path = %(root_path)s OR path LIKE %(path_prefix)s)
@@ -217,6 +236,7 @@ class VoronoiStore:
                 "full_depth": root_depth + 2,
                 "min_size": min_size,
                 "min_files": min_files,
+                "files_limit": files_limit,
             },
         )
 
@@ -225,12 +245,6 @@ class VoronoiStore:
         for row in results:
             child_ids = json.loads(row[6]) if row[6] else []
             original_files = json.loads(row[9]) if row[9] else []
-            # Directories can hold 100K+ direct files; charts only need the
-            # biggest ones for the info panel, not the full listing.
-            if files_limit and len(original_files) > files_limit:
-                original_files = sorted(
-                    original_files, key=lambda f: f.get("size", 0), reverse=True
-                )[:files_limit]
 
             # For all nodes except root, return children as IDs only (not full objects)
             # This matches the existing API contract

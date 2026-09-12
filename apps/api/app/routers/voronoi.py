@@ -2,12 +2,16 @@
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from datetime import date
+from app.cache import LRUCache
 from app.services.snapshot_storage import SnapshotStorage
 from app.services.voronoi_store import VoronoiStore
 
 router = APIRouter(prefix="/api/voronoi", tags=["voronoi"])
 storage = SnapshotStorage()
 voronoi_store = VoronoiStore()
+# Deep subtree fetches take seconds; snapshot data is immutable so cache them.
+# Payloads reach ~15MB, so keep the entry count small.
+_subtree_cache = LRUCache(maxsize=24)
 
 
 @router.get("/artifact/{snapshot_date}")
@@ -202,8 +206,13 @@ async def get_voronoi_subtree(
         500: If retrieval fails
     """
     try:
-        # OPTIMIZED: Use single SQL query instead of N+1 recursive fetches
-        results = voronoi_store.get_subtree(snapshot_date, path, max_depth, min_share, files_limit)
+        cache_key = (str(snapshot_date), path, max_depth, min_share, files_limit)
+        results = _subtree_cache.get(cache_key)
+        if results is None:
+            # OPTIMIZED: Use single SQL query instead of N+1 recursive fetches
+            results = voronoi_store.get_subtree(snapshot_date, path, max_depth, min_share, files_limit)
+            if results:
+                _subtree_cache.put(cache_key, results)
 
         if not results:
             raise HTTPException(

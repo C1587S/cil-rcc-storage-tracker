@@ -569,6 +569,14 @@ function UnifiedQueryMode({
         </div>
       )}
 
+      {/* Generation status */}
+      {generatePhase === "generating" && (
+        <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] text-primary/70 font-mono">
+          <GridLoader size={4} />
+          <span className="snapshot-prompt">Generating SQL with AI...</span>
+        </div>
+      )}
+
       {/* Linting status */}
       {generatePhase === "linting" && (
         <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] text-primary/70 font-mono">
@@ -662,12 +670,21 @@ LIMIT 100`}
         );
       })()}
 
+      {/* Executing */}
+      {hasExecuted && isLoading && (
+        <div className="border-t border-border/20 pt-4">
+          <div className="p-8 flex justify-center">
+            <GridLoader label="Executing query" />
+          </div>
+        </div>
+      )}
+
       {/* Results */}
-      {hasExecuted && queryResult && (
+      {hasExecuted && queryResult && !isLoading && (
         <div className="border-t border-border/20 pt-4">
           <QueryResultsTable
             result={queryResult}
-            isLoading={isLoading}
+            isLoading={false}
             sql={sql}
             mode="query"
             onAddToReport={onAddToReport}

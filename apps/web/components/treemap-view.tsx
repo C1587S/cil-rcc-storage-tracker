@@ -29,6 +29,10 @@ import { cn } from '@/lib/utils'
 echarts.use([TreemapChart, SunburstChart, TooltipComponent, CanvasRenderer])
 
 type ChartKind = 'treemap' | 'sunburst'
+
+// Deepest level in the precomputed tree ("All" depth option). Deep fetches
+// stay cheap thanks to server-side min_share pruning + files_limit.
+const MAX_TREE_DEPTH = 25
 type WeightMode = 'size' | 'files'
 
 interface EChartsNode {
@@ -114,7 +118,7 @@ export function TreemapView() {
   const [visible, setVisible] = useState(false)
   const [chartKind, setChartKind] = useState<ChartKind>('treemap')
   const [weightMode, setWeightMode] = useState<WeightMode>('size')
-  const [depthLimit, setDepthLimit] = useState(2)
+  const [depthLimit, setDepthLimit] = useState(5)
   const [viewPath, setViewPath] = useState(basePath)
   const [pathStack, setPathStack] = useState<string[]>([])
   // Hovered-node info shown in the sunburst center (defaults to the root)
@@ -423,24 +427,34 @@ export function TreemapView() {
 
         <div className="flex items-center gap-1 rounded-md border border-border overflow-hidden">
           <span className="px-2 text-[10px] text-muted-foreground uppercase">Depth</span>
-          {[2, 3, 4].map(d => (
+          {[2, 3, 4, 5, MAX_TREE_DEPTH].map(d => (
             <button
               key={d}
               className={cn(
-                'w-7 h-8 text-xs transition-colors',
+                'min-w-[28px] px-1.5 h-8 text-xs transition-colors',
                 depthLimit === d ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
               )}
               onClick={() => setDepthLimit(d)}
-              title={`Show ${d} levels below the current root`}
+              title={d === MAX_TREE_DEPTH ? 'Show every level down to the deepest directory' : `Show ${d} levels below the current root`}
             >
-              {d}
+              {d === MAX_TREE_DEPTH ? 'All' : d}
             </button>
           ))}
         </div>
 
-        <span className="inline-flex items-center gap-2 text-[10px] text-muted-foreground">
-          <span>
-            Area = {weightMode === 'size' ? 'size' : 'file count'} · Color = {weightMode === 'size' ? 'file count' : 'size'}:
+        <span className="ml-auto px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] uppercase tracking-wide">
+          In development
+        </span>
+      </div>
+
+      {/* Legend: what area and color encode, with the color scale */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground border border-border/60 rounded-md px-3 py-1.5">
+          <span className="font-medium text-foreground/80">
+            Area = {weightMode === 'size' ? 'storage size' : 'file count'}
+          </span>
+          <span className="text-muted-foreground/50">|</span>
+          <span className="font-medium text-foreground/80">
+            Color = {weightMode === 'size' ? 'file count' : 'storage size'}:
           </span>
           {(weightMode === 'size'
             ? [
@@ -457,15 +471,10 @@ export function TreemapView() {
               ]
           ).map(s => (
             <span key={s.l} className="inline-flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: s.c }} />
+              <span className="w-2.5 h-2.5 rounded-sm border border-black/10" style={{ background: s.c }} />
               {s.l}
             </span>
           ))}
-        </span>
-
-        <span className="ml-auto px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] uppercase tracking-wide">
-          In development
-        </span>
       </div>
 
       {/* Shared navigation bar (same component as the Voronoi view) */}
