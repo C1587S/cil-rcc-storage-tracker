@@ -15,6 +15,7 @@ interface VoronoiPartitionPanelProps {
   isExpanded?: boolean
   isFullscreen?: boolean
   isPartitionFixed?: boolean  // True when partition is selected with right-click (not just hovered)
+  heightClassName?: string    // Override panel height (default sm:h-[200px])
 }
 
 type SortColumn = 'name' | 'size'
@@ -28,7 +29,8 @@ export function VoronoiPartitionPanel({
   onFileClick,
   isExpanded = false,
   isFullscreen = false,
-  isPartitionFixed = false
+  isPartitionFixed = false,
+  heightClassName = 'sm:h-[200px]'
 }: VoronoiPartitionPanelProps) {
   const theme = useAppStore(state => state.theme)
   const [showFloatingPanel, setShowFloatingPanel] = useState(false)
@@ -46,7 +48,7 @@ export function VoronoiPartitionPanel({
     try {
       await navigator.clipboard.writeText(path)
       setCopiedPath(path)
-      setToastMessage(`Path copiado: ${path}`)
+      setToastMessage(`Path copied: ${path}`)
       setShowToast(true)
       setTimeout(() => {
         setCopiedPath(null)
@@ -78,11 +80,9 @@ export function VoronoiPartitionPanel({
       return { displayedItems: [], totalCount: 0, maxSize: 0 }
     }
 
-    // 1. Combine folders (only if partition is fixed with right-click) and files
-    // When hovering: show only files
-    // When fixed with right-click: show folders + files
+    // Folders and files are both listed/searchable in hover and fixed modes
     const allItems = [
-      ...(isPartitionFixed && hasFolders ? (activePartition.children || []) : []),
+      ...(hasFolders ? (activePartition.children || []) : []),
       ...(activePartition.originalFiles || [])
     ]
 
@@ -114,21 +114,10 @@ export function VoronoiPartitionPanel({
     }
   }, [activePartition?.originalFiles, activePartition?.children, isPartitionFixed, searchQuery, sortColumn, sortDirection, displayLimit])
 
-  // DEBUG: Log active partition when it changes
-  if (activePartition) {
-    console.log('[VoronoiPartitionPanel] Active partition updated:', {
-      name: activePartition.name,
-      path: activePartition.path,
-      file_count: activePartition.file_count,
-      fileQuotaPercent: activePartition.fileQuotaPercent,
-      size: activePartition.size,
-      isDirectory: activePartition.isDirectory
-    })
-  }
-
   return (
     <div className={cn(
-      "border rounded-lg overflow-hidden h-auto sm:h-[200px] flex flex-col shrink-0",
+      "border rounded-lg overflow-hidden h-auto flex flex-col shrink-0",
+      heightClassName,
       theme === 'dark' ? 'bg-[#161b22] border-gray-800' : 'bg-card border-border'
     )}>
       <div className={cn(
@@ -210,8 +199,16 @@ export function VoronoiPartitionPanel({
               {/* FILE COUNT */}
               <div className="flex items-center gap-1.5">
                 <Files className="w-3 h-3 text-gray-600" />
-                <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILES:</label>
+                <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILES (TOTAL):</label>
                 <div className={cn("font-bold", getFileCountSeverity(activePartition.file_count).color)} style={{ fontSize: `${11 * textScale}px` }}>{activePartition.file_count > 0 ? activePartition.file_count.toLocaleString() : '—'}</div>
+              </div>
+              <div>
+                <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>FILES (DIRECT):</label>
+                <div className="font-bold" style={{ fontSize: `${11 * textScale}px` }}>{(activePartition.originalFiles?.length ?? 0).toLocaleString()}</div>
+              </div>
+              <div>
+                <label className="text-gray-600" style={{ fontSize: `${9 * textScale}px` }}>SUBDIRS (DIRECT):</label>
+                <div className="font-bold" style={{ fontSize: `${11 * textScale}px` }}>{(activePartition.children?.length ?? 0).toLocaleString()}</div>
               </div>
 
               <div className={cn("h-4 w-px", theme === 'dark' ? 'bg-gray-700' : 'bg-border')} />

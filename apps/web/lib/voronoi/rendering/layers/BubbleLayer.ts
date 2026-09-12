@@ -171,6 +171,19 @@ export class BubbleLayer {
       }
     }
 
+    // Packing density per partition: in tightly packed cells the forces are
+    // damped so bubbles settle calmly instead of jittering against each other.
+    const densityByPolygon = new Map<any, number>()
+    for (const b of bubbleNodes) {
+      if (!densityByPolygon.has(b.polygon)) {
+        const area = Math.abs(d3.polygonArea(b.polygon))
+        const circleArea = bubbleNodes
+          .filter(n => n.polygon === b.polygon)
+          .reduce((acc, n) => acc + Math.PI * n.r * n.r, 0)
+        densityByPolygon.set(b.polygon, area > 0 ? circleArea / area : 1)
+      }
+    }
+
     // Index SVG circles by path once; the tick handler updates via O(1) lookups
     const circleByPath = new Map<string, SVGCircleElement>()
     this.gBubbles.selectAll<SVGCircleElement, any>('.file-bubble').each(function (datum: any) {
@@ -183,12 +196,17 @@ export class BubbleLayer {
         .radius(d => d.r + 2)
         .strength(1.0)
         .iterations(1))
-      // Charge force: repulsion between bubbles (Barnes-Hut, cheap)
-      .force('charge', d3.forceManyBody<BubbleNode>().strength(-10))
+      // Charge force: repulsion between bubbles (Barnes-Hut, cheap).
+      // Damped in dense partitions: repulsion in a packed cell causes jitter.
+      .force('charge', d3.forceManyBody<BubbleNode>().strength((d: any) => {
+        const density = densityByPolygon.get(d.polygon) ?? 0
+        return -10 * Math.max(0.15, 1 - density)
+      }))
       // Positioning: each bubble gravitates toward its partition centroid
       .force('position', d3.forceX<BubbleNode>().x(d => centroidByPolygon.get(d.polygon)![0]).strength(0.02))
       .force('positionY', d3.forceY<BubbleNode>().y(d => centroidByPolygon.get(d.polygon)![1]).strength(0.02))
-      .alphaDecay(0.05)
+      .alphaDecay(0.06)
+      .velocityDecay(0.5)
 
     // The clustering and size-gravity forces are O(n^2) per tick.
     // Only enable them for small scenes; on large ones they dominate render time
@@ -204,11 +222,17 @@ export class BubbleLayer {
       bubbleNodes.forEach(b => {
         const c = constrainToPolygon(b.x!, b.y!, b.polygon, b.r)
 
+        // Border repulsion damped by density; velocity clamped for smoothness
+        const density = densityByPolygon.get(b.polygon) ?? 0
+        const damp = Math.max(0.1, 1 - density)
         const pushStrength = this.calculateBorderRepulsion(b.x!, b.y!, b.polygon, b.r)
         if (pushStrength.fx !== 0 || pushStrength.fy !== 0) {
-          b.vx = (b.vx || 0) + pushStrength.fx
-          b.vy = (b.vy || 0) + pushStrength.fy
+          b.vx = (b.vx || 0) + pushStrength.fx * damp
+          b.vy = (b.vy || 0) + pushStrength.fy * damp
         }
+        const vMax = 3
+        if (b.vx! > vMax) b.vx = vMax; else if (b.vx! < -vMax) b.vx = -vMax
+        if (b.vy! > vMax) b.vy = vMax; else if (b.vy! < -vMax) b.vy = -vMax
 
         b.x = c[0]
         b.y = c[1]

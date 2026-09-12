@@ -360,9 +360,9 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
           isFullscreen ? "flex-1" : ""
         )}
         style={{
-          // Fixed height in normal mode, auto in fullscreen so flex-1 works
-          height: isFullscreen ? 'auto' : undefined,
-          minHeight: isFullscreen ? '0' : '300px'
+          // Normal mode fills most of the viewport; auto in fullscreen so flex-1 works
+          height: isFullscreen ? 'auto' : '62vh',
+          minHeight: isFullscreen ? '0' : '420px'
         }}
       >
         {/* SVG canvas — always mounted, hidden behind gate when not running */}

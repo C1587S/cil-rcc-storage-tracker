@@ -7,6 +7,8 @@ import { API_BASE_URL } from '@/lib/api'
  * Options for useVoronoiData hook
  */
 interface UseVoronoiDataOptions {
+  /** How many levels below the current root to load (default 2) */
+  maxDepth?: number
   selectedSnapshot: string | null
   effectivePath: string
   enabled?: boolean
@@ -37,7 +39,7 @@ type NodeCache = Map<string, VoronoiNodeExtended>
  * @param options - Configuration options
  * @returns Query result with data, loading states, and error
  */
-export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true }: UseVoronoiDataOptions) {
+export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true, maxDepth = 2 }: UseVoronoiDataOptions) {
   // In-memory node cache (persistent across renders)
   const nodeCacheRef = useRef<NodeCache>(new Map())
 
@@ -480,7 +482,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
         }
 
         // Expand to preview depth (matching on-the-fly behavior)
-        const expandedTree = await expandToPreviewDepth(targetNode, 2)
+        const expandedTree = await expandToPreviewDepth(targetNode, maxDepth)
 
         // Debug: Log full tree structure
         const debugTree = (node: VoronoiNode, depth: number = 0): any => {
@@ -499,7 +501,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
         console.error('[useVoronoiData] Failed to load path:', error)
         // Fallback to root
         try {
-          const expandedRoot = await expandToPreviewDepth(rootNode, 2)
+          const expandedRoot = await expandToPreviewDepth(rootNode, maxDepth)
           setVisibleRoot(expandedRoot)
         } catch (fallbackError) {
           console.error('[useVoronoiData] Fallback failed:', fallbackError)
@@ -511,7 +513,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
     }
 
     loadPath()
-  }, [rootNode, effectivePath, selectedSnapshot, expandToPreviewDepth, navigateToPath])
+  }, [rootNode, effectivePath, selectedSnapshot, enabled, maxDepth, expandToPreviewDepth, navigateToPath])
 
   // Clear cache when snapshot changes
   useEffect(() => {
