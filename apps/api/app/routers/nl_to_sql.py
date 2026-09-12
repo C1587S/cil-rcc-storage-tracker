@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from app.models import NLToSQLRequest, NLToSQLResponse, FixSQLRequest
 from app.services.gemini import generate_sql, fix_sql, GeminiError
 from app.services.guardrails import enforce_sql_guardrails, lint_clickhouse_sql, QueryValidationError
+from app.settings import get_settings
 
 router = APIRouter(prefix="/api/nl-to-sql", tags=["nl-to-sql"])
 
@@ -20,7 +21,7 @@ async def nl_to_sql(request: NLToSQLRequest):
     try:
         raw_sql = await asyncio.to_thread(generate_sql, request.question)
         linted_sql = lint_clickhouse_sql(raw_sql)
-        validated_sql = enforce_sql_guardrails(linted_sql, limit=5000)
+        validated_sql = enforce_sql_guardrails(linted_sql, limit=get_settings().max_result_rows)
 
         return NLToSQLResponse(
             question=request.question,
@@ -55,7 +56,7 @@ async def fix_failed_sql(request: FixSQLRequest):
     try:
         raw_sql = await asyncio.to_thread(fix_sql, request.sql, request.error)
         linted_sql = lint_clickhouse_sql(raw_sql)
-        validated_sql = enforce_sql_guardrails(linted_sql, limit=5000)
+        validated_sql = enforce_sql_guardrails(linted_sql, limit=get_settings().max_result_rows)
 
         return NLToSQLResponse(
             question=f"Fix: {request.error[:100]}",

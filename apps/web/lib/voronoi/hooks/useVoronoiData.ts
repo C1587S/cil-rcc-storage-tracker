@@ -9,6 +9,10 @@ import { API_BASE_URL } from '@/lib/api'
 interface UseVoronoiDataOptions {
   /** How many levels below the current root to load (default 2) */
   maxDepth?: number
+  /** Server-side pruning: drop nodes below this fraction of the root (by size and files) beyond depth 2 */
+  minShare?: number
+  /** If >0, each node's direct-file list is truncated server-side to the N largest files */
+  filesLimit?: number
   selectedSnapshot: string | null
   effectivePath: string
   enabled?: boolean
@@ -39,7 +43,7 @@ type NodeCache = Map<string, VoronoiNodeExtended>
  * @param options - Configuration options
  * @returns Query result with data, loading states, and error
  */
-export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true, maxDepth = 2 }: UseVoronoiDataOptions) {
+export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true, maxDepth = 2, minShare = 0, filesLimit = 0 }: UseVoronoiDataOptions) {
   // In-memory node cache (persistent across renders)
   const nodeCacheRef = useRef<NodeCache>(new Map())
 
@@ -214,7 +218,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
           // CRITICAL: Fetch ONE EXTRA DEPTH beyond targetDepth
           // If targetDepth=2, we need depths 0,1,2,3 so that depth-2 nodes can have their children loaded for preview
           const fetchDepth = targetDepth + 1
-          const subtreeUrl = `${API_BASE_URL}/api/voronoi/node/${selectedSnapshot}/subtree?path=${encodeURIComponent(node.path)}&max_depth=${fetchDepth}`
+          const subtreeUrl = `${API_BASE_URL}/api/voronoi/node/${selectedSnapshot}/subtree?path=${encodeURIComponent(node.path)}&max_depth=${fetchDepth}${minShare > 0 ? `&min_share=${minShare}` : ''}${filesLimit > 0 ? `&files_limit=${filesLimit}` : ''}`
           console.log('[expandToPreviewDepth] Fetching subtree:', {
             url: subtreeUrl,
             nodePath: node.path,
@@ -379,7 +383,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
 
       return result
     },
-    [getCachedNode, expandDepthByDepth, selectedSnapshot, cacheNode]
+    [getCachedNode, expandDepthByDepth, selectedSnapshot, cacheNode, minShare, filesLimit]
   )
 
   /**

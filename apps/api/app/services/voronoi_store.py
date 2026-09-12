@@ -159,7 +159,8 @@ class VoronoiStore:
         }
 
     def get_subtree(
-        self, snapshot_date: date, root_path: str, max_relative_depth: int = 2
+        self, snapshot_date: date, root_path: str, max_relative_depth: int = 2,
+        min_share: float = 0.0, files_limit: int = 0,
     ) -> Dict[str, Dict[str, Any]]:
         """
         OPTIMIZED: Fetch entire subtree in ONE SQL query.
@@ -176,7 +177,7 @@ class VoronoiStore:
         """
         # First get root node to know its depth
         root_query = """
-        SELECT depth FROM voronoi_precomputed
+        SELECT depth, size, file_count FROM voronoi_precomputed
         WHERE snapshot_date = %(snapshot_date)s AND path = %(root_path)s
         LIMIT 1
         """
@@ -186,8 +187,13 @@ class VoronoiStore:
         if not root_result:
             return {}
 
-        root_depth = root_result[0][0]
+        root_depth, root_size, root_files = root_result[0]
         max_absolute_depth = root_depth + max_relative_depth
+        # Prune deep tiny nodes: below min_share of the root by BOTH size and
+        # file count they render as sub-degree slivers. The first two levels
+        # are always returned complete.
+        min_size = int((root_size or 0) * min_share)
+        min_files = int((root_files or 0) * min_share)
 
         # OPTIMIZED: Single query to fetch ALL nodes in subtree
         # Uses path prefix matching + depth filtering
@@ -198,6 +204,7 @@ class VoronoiStore:
         WHERE snapshot_date = %(snapshot_date)s
           AND (path = %(root_path)s OR path LIKE %(path_prefix)s)
           AND depth <= %(max_depth)s
+          AND (depth <= %(full_depth)s OR size >= %(min_size)s OR file_count >= %(min_files)s)
         ORDER BY depth, path
         """
         results = self.client.execute(
@@ -207,6 +214,9 @@ class VoronoiStore:
                 "root_path": root_path,
                 "path_prefix": f"{root_path}/%",
                 "max_depth": max_absolute_depth,
+                "full_depth": root_depth + 2,
+                "min_size": min_size,
+                "min_files": min_files,
             },
         )
 
@@ -215,6 +225,12 @@ class VoronoiStore:
         for row in results:
             child_ids = json.loads(row[6]) if row[6] else []
             original_files = json.loads(row[9]) if row[9] else []
+            # Directories can hold 100K+ direct files; charts only need the
+            # biggest ones for the info panel, not the full listing.
+            if files_limit and len(original_files) > files_limit:
+                original_files = sorted(
+                    original_files, key=lambda f: f.get("size", 0), reverse=True
+                )[:files_limit]
 
             # For all nodes except root, return children as IDs only (not full objects)
             # This matches the existing API contract

@@ -175,6 +175,8 @@ async def get_voronoi_subtree(
     snapshot_date: date,
     path: str = Query(..., description="Root path of subtree to fetch"),
     max_depth: int = Query(2, description="Maximum depth relative to root"),
+    min_share: float = Query(0.0, ge=0.0, le=0.1, description="Prune nodes below this fraction of the root (by size and file count) beyond depth 2"),
+    files_limit: int = Query(0, ge=0, description="If >0, truncate each node's direct-file list to the N largest files"),
 ):
     """
     Fetch an entire subtree in a single request for maximum performance.
@@ -201,7 +203,7 @@ async def get_voronoi_subtree(
     """
     try:
         # OPTIMIZED: Use single SQL query instead of N+1 recursive fetches
-        results = voronoi_store.get_subtree(snapshot_date, path, max_depth)
+        results = voronoi_store.get_subtree(snapshot_date, path, max_depth, min_share, files_limit)
 
         if not results:
             raise HTTPException(

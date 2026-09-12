@@ -60,15 +60,22 @@ function compactCount(n: number): string {
   return String(n)
 }
 
-function toEChartsTree(node: any, mode: WeightMode, depthLimit = 2, depth = 0): EChartsNode {
+function toEChartsTree(
+  node: any, mode: WeightMode, depthLimit = 2, depth = 0,
+  rootWeight = 0, pruneFrac = 0,
+): EChartsNode {
   const bytes = node.size || 0
   const fileCount = node.file_count || node.originalFiles?.length || 0
   const value = mode === 'files' ? Math.max(fileCount, 1) : Math.max(bytes, 1)
+  const rw = depth === 0 ? value : rootWeight
 
   const childDirs = (node.children || []).filter((c: any) => c.isDirectory)
-  // Render as deep as the loaded data allows (bounded by the depth selector)
-  const children = depth < depthLimit
-    ? childDirs.map((c: any) => toEChartsTree(c, mode, depthLimit, depth + 1))
+  // Sunburst layering: branches below pruneFrac of the root stop expanding,
+  // so only heavy subtrees reach the outer rings (the "pie grows if deeper"
+  // look) instead of every ring closing into a full circle.
+  const insignificant = pruneFrac > 0 && depth > 0 && value < rw * pruneFrac
+  const children = depth < depthLimit && !insignificant
+    ? childDirs.map((c: any) => toEChartsTree(c, mode, depthLimit, depth + 1, rw, pruneFrac))
     : undefined
 
   return {
@@ -152,17 +159,29 @@ export function TreemapView() {
     return () => observer.disconnect()
   }, [visible])
 
+  // Sunburst renders one level deeper than the treemap: rings are cheap and
+  // the extra depth is what produces the layered silhouette.
+  const effectiveDepth = chartKind === 'sunburst' ? depthLimit + 1 : depthLimit
+
   const { data, isLoading, isFetching, error } = useVoronoiData({
     selectedSnapshot,
     effectivePath: viewPath,
     enabled: visible && !!selectedSnapshot,
-    maxDepth: depthLimit,
+    maxDepth: effectiveDepth,
+    // Server-side pruning keeps deep fetches small; 0.05% of the root is
+    // already a sub-degree sliver in either chart.
+    minShare: 0.0005,
+    // Full direct-file listings are megabytes per dir; the panel only needs
+    // the biggest ones.
+    filesLimit: 100,
   })
 
   const chartData = useMemo(() => {
     if (!data) return null
-    return toEChartsTree(data, weightMode, depthLimit)
-  }, [data, weightMode, depthLimit])
+    return chartKind === 'sunburst'
+      ? toEChartsTree(data, weightMode, effectiveDepth, 0, 0, 0.01)
+      : toEChartsTree(data, weightMode, depthLimit)
+  }, [data, weightMode, depthLimit, effectiveDepth, chartKind])
 
   const isBusy = isLoading || isFetching
 
@@ -298,8 +317,15 @@ export function TreemapView() {
           animationDurationUpdate: 1000,
           itemStyle: {
             borderColor: borderColor,
-            borderWidth: 2,
+            borderWidth: 1.5,
           },
+          // Fade deeper rings so depth reads as layered bands, not one disc
+          levels: [
+            {},
+            ...Array.from({ length: effectiveDepth + 1 }, (_, i) => ({
+              itemStyle: { opacity: Math.max(0.45, 0.95 - i * 0.12) },
+            })),
+          ],
           center: ['50%', '50%'],
         }
 
@@ -412,8 +438,29 @@ export function TreemapView() {
           ))}
         </div>
 
-        <span className="text-[10px] text-muted-foreground">
-          Area: {weightMode === 'size' ? 'size' : 'file count'} | Color: {weightMode === 'size' ? 'file count' : 'size'} (green to red)
+        <span className="inline-flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span>
+            Area = {weightMode === 'size' ? 'size' : 'file count'} · Color = {weightMode === 'size' ? 'file count' : 'size'}:
+          </span>
+          {(weightMode === 'size'
+            ? [
+                { c: '#4ade80', l: '<10K files' },
+                { c: '#facc15', l: '10K–100K' },
+                { c: '#fb923c', l: '100K–1M' },
+                { c: '#ef4444', l: '>1M' },
+              ]
+            : [
+                { c: '#4ade80', l: '<10 GB' },
+                { c: '#facc15', l: '10–20 GB' },
+                { c: '#fb923c', l: '20–50 GB' },
+                { c: '#ef4444', l: '>50 GB' },
+              ]
+          ).map(s => (
+            <span key={s.l} className="inline-flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-sm" style={{ background: s.c }} />
+              {s.l}
+            </span>
+          ))}
         </span>
 
         <span className="ml-auto px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] uppercase tracking-wide">
