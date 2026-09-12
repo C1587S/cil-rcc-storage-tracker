@@ -16,6 +16,18 @@ const formatTimestamp = (ts?: string) => {
   });
 };
 
+/** Freshness badge for the scan date: green when recent, amber when aging,
+ *  red when the pipeline is likely broken. Staleness must be visible. */
+function scanAgeBadge(snapshotDate: string) {
+  const ageDays = Math.floor((Date.now() - new Date(snapshotDate + "T00:00:00").getTime()) / 86400000);
+  const label = ageDays <= 0 ? "today" : ageDays === 1 ? "1 day ago" : `${ageDays} days ago`;
+  const tone =
+    ageDays <= 2 ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+    : ageDays <= 7 ? "border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+    : "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400";
+  return { label, tone, ageDays };
+}
+
 export function SnapshotSelector() {
   const { selectedSnapshot, setSelectedSnapshot } = useAppStore();
 
@@ -66,6 +78,29 @@ export function SnapshotSelector() {
           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/50 text-xs pointer-events-none font-mono">…</span>
         </div>
       )}
+
+      {selectedSnapshot && (() => {
+        const b = scanAgeBadge(selectedSnapshot);
+        const valueBg =
+          b.ageDays <= 2 ? "#2ea44f" : b.ageDays <= 7 ? "#d29922" : "#cf222e";
+        return (
+          <span
+            className="inline-flex items-stretch text-[11px] font-semibold rounded-full overflow-hidden shadow-sm select-none"
+            title={
+              b.ageDays > 7
+                ? "Scan data is stale: the RCC scan pipeline may be down"
+                : "Date of the filesystem scan this data comes from"
+            }
+          >
+            <span className="px-2.5 py-0.5 bg-[#444d56] text-white flex items-center">
+              scan
+            </span>
+            <span className="px-2.5 py-0.5 text-white flex items-center" style={{ background: valueBg }}>
+              {selectedSnapshot} · {b.label}
+            </span>
+          </span>
+        );
+      })()}
 
       {selectedSnapshot_?.import_time && (
         <span className="text-xs text-muted-foreground/60 ml-1">
