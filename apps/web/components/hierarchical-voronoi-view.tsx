@@ -445,8 +445,22 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
                   "absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-300 ease-out",
                   busyLabel ? "opacity-100 bg-background/60" : "opacity-0 bg-transparent"
                 )}>
-                  <div className="bg-card border border-border px-8 py-6 rounded-xl shadow-md">
+                  <div className="bg-card border border-border px-8 py-6 rounded-xl shadow-md flex flex-col items-center gap-3">
                     <GridLoader label={busyLabel || ''} />
+                    {busyLabel && (
+                      <button
+                        className="pointer-events-auto text-[11px] px-3 py-1 rounded border border-border text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={() => {
+                          // Abort the heavy run: stop fetching/rendering and
+                          // drop cached layouts so memory is released.
+                          voronoiCacheRef.current.clear()
+                          persistedKeysRef.current.clear()
+                          setHasRun(false)
+                        }}
+                      >
+                        Cancel and clear memory
+                      </button>
+                    )}
                   </div>
                 </div>
               )

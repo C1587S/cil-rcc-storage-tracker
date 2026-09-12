@@ -44,6 +44,16 @@ interface EChartsNode {
   raw?: any
 }
 
+// File-count severity: same visual language as size severity, applied to
+// the number of files in the subtree.
+function getFileCountFillColor(files: number): string {
+  if (files > 1_000_000) return '#ef4444'  // red    (>1M files)
+  if (files > 100_000) return '#fb923c'    // orange (100K-1M)
+  if (files > 10_000) return '#facc15'     // yellow (10K-100K)
+  if (files > 0) return '#4ade80'          // green  (<10K)
+  return '#9ca3af'
+}
+
 function compactCount(n: number): string {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`
@@ -72,11 +82,11 @@ function toEChartsTree(node: any, mode: WeightMode, depthLimit = 2, depth = 0): 
     isDirectory: true,
     children: children && children.length > 0 ? children : undefined,
     raw: node,
-    // Same size-severity palette as the Tree and Voronoi views.
-    // Dotted decal marks file-dense cells (many files per byte): the texture
-    // encodes file count while the area encodes the selected metric.
+    // Dual encoding: AREA carries the selected metric, COLOR carries the
+    // complementary one (area=size -> color=file count, area=files -> color=size).
+    // Dotted decal additionally marks file-dense cells.
     itemStyle: {
-      color: getSizeFillColor(bytes),
+      color: mode === 'size' ? getFileCountFillColor(fileCount) : getSizeFillColor(bytes),
       ...(fileCount > 50000 && bytes > 0 && fileCount / (bytes / 1e9) > 1000 ? {
         decal: {
           symbol: 'circle',
@@ -282,7 +292,7 @@ export function TreemapView() {
           data: chartData.children || [chartData],
           nodeClick: false as const,
           sort: 'desc' as const,
-          radius: ['20%', '90%'],
+          radius: ['15%', '95%'],
           label: { show: false },
           universalTransition: true,
           animationDurationUpdate: 1000,
@@ -291,25 +301,6 @@ export function TreemapView() {
             borderWidth: 2,
           },
           center: ['50%', '50%'],
-          // Sequences-sunburst style: rings of decreasing thickness.
-          // Only the inner ring is labeled; center panel + tooltip carry detail.
-          levels: depthLimit >= 4 ? [
-            {},
-            { r0: '22%', r: '48%', label: { fontSize: 11, minAngle: 6 } },
-            { r0: '48%', r: '68%', label: { show: false } },
-            { r0: '68%', r: '84%', label: { show: false } },
-            { r0: '84%', r: '95%', label: { show: false } },
-          ] : depthLimit === 3 ? [
-            {},
-            { r0: '24%', r: '54%', label: { fontSize: 11, minAngle: 6 } },
-            { r0: '54%', r: '78%', label: { show: false } },
-            { r0: '78%', r: '95%', label: { show: false } },
-          ] : [
-            {},
-            { r0: '26%', r: '60%', label: { fontSize: 11, minAngle: 6 } },
-            { r0: '60%', r: '81%', label: { show: false } },
-            { r0: '81%', r: '95%', label: { show: false } },
-          ],
         }
 
     chart.setOption({
@@ -404,6 +395,30 @@ export function TreemapView() {
           </button>
         </div>
 
+        <div className="flex items-center gap-1 rounded-md border border-border overflow-hidden">
+          <span className="px-2 text-[10px] text-muted-foreground uppercase">Depth</span>
+          {[2, 3, 4].map(d => (
+            <button
+              key={d}
+              className={cn(
+                'w-7 h-8 text-xs transition-colors',
+                depthLimit === d ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+              )}
+              onClick={() => setDepthLimit(d)}
+              title={`Show ${d} levels below the current root`}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+
+        <span className="text-[10px] text-muted-foreground">
+          Area: {weightMode === 'size' ? 'size' : 'file count'} | Color: {weightMode === 'size' ? 'file count' : 'size'} (green to red)
+        </span>
+
+        <span className="ml-auto px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] uppercase tracking-wide">
+          In development
+        </span>
       </div>
 
       {/* Shared navigation bar (same component as the Voronoi view) */}

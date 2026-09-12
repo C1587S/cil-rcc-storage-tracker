@@ -105,6 +105,14 @@ function formatDate(timestamp?: number): string {
   return `${Math.floor(diffDays / 365)}y`;
 }
 
+// Adaptive percent: 1 decimal for large shares, up to 4 for tiny ones so
+// small-but-real folders don't collapse to a meaningless 0.0%.
+function formatPercent(p: number): string {
+  if (p >= 1) return `${p.toFixed(1)}%`;
+  if (p === 0) return "0%";
+  return `${p.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}%`;
+}
+
 function compactCount(n: number): string {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
@@ -335,7 +343,7 @@ function TreeNode({
         <div className="flex-1 flex items-center gap-2 min-w-[100px] sm:min-w-[200px]">
           {shouldShowBar ? (
             <>
-              <div className="flex-1 flex flex-col gap-[2px]" title={`Size: ${percent.toFixed(1)}% of reference | Files: ${filePercent.toFixed(1)}% of reference`}>
+              <div className="flex-1 flex flex-col gap-[2px]" title={`Size: ${formatPercent(percent)} | Files: ${formatPercent(filePercent)} (base per Percent toggle)`}>
                 <div className="h-2 bg-muted/15 rounded-sm overflow-hidden border border-border/30">
                   <div
                     className={cn(
@@ -364,8 +372,8 @@ function TreeNode({
               <span className={cn("text-xs font-mono min-w-[65px] text-right font-medium", getSizeColor(displaySize))}>
                 {recursiveSizeFormatted || sizeFormatted}
               </span>
-              <span className="text-xs font-mono text-muted-foreground/60 min-w-[48px] text-right">
-                {percent.toFixed(1)}%
+              <span className="text-xs font-mono text-muted-foreground/60 min-w-[64px] text-right">
+                {formatPercent(percent)}
               </span>
             </>
           ) : (
@@ -470,7 +478,7 @@ export function DiskUsageExplorerV2() {
     referencePath: referencePath,
     referenceSize: referenceSize,
     sortMode: "size",
-    percentMode: "parent",
+    percentMode: "reference",
     selectedPath: null,
   });
 

@@ -301,7 +301,7 @@ function SUByUserTable({ report, userColorMap, selectedUsers, onToggleUser }: {
                 <span className="text-xs font-mono truncate">{u.user}</span>
               </div>
               <div className="flex-1 min-w-0">
-                <ProgressBar value={pct} />
+                <ProgressBar value={pct} tickEveryPct={total > 0 ? (5000 / total) * 100 : undefined} />
               </div>
               <span className="text-xs text-muted-foreground w-16 sm:w-24 text-right">{formatSU(u.consumed)}</span>
               <span className="text-[10px] text-muted-foreground w-8 sm:w-12 text-right">{formatPct(pct)}</span>
@@ -326,7 +326,7 @@ function SUByUserTable({ report, userColorMap, selectedUsers, onToggleUser }: {
                   <div key={p.partition} className="flex items-center gap-3">
                     <span className="text-xs font-mono text-muted-foreground w-20 sm:w-32 truncate">{p.partition}</span>
                     <div className="flex-1 min-w-0">
-                      <ProgressBar value={pct} />
+                      <ProgressBar value={pct} tickEveryPct={total > 0 ? (5000 / total) * 100 : undefined} />
                     </div>
                     <span className="text-xs text-muted-foreground w-16 sm:w-24 text-right">{formatSU(p.consumed)}</span>
                     <span className="text-[10px] text-muted-foreground w-8 sm:w-12 text-right">{formatPct(pct)}</span>
