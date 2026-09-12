@@ -35,9 +35,12 @@ if [ ! -d "$SOURCE_DIR" ]; then
     exit 1
 fi
 
-# Clear previously published files
-echo "Clearing previous scan from $PUBLISH_DIR..."
-rm -rf "$PUBLISH_DIR"
+# Clear previously published scan files ONLY (top-level parquet/manifests).
+# Subdirectories like quotas/ and projections/ hold the computing and
+# projection reports published by other jobs — they must survive.
+echo "Clearing previous scan files from $PUBLISH_DIR..."
+mkdir -p "$PUBLISH_DIR"
+find "$PUBLISH_DIR" -maxdepth 1 -type f -delete
 
 # Set up publish directory with correct permissions
 mkdir -p "$PUBLISH_DIR"

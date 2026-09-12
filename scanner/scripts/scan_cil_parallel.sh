@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --mem-per-cpu=4G
 #SBATCH --time=24:00:00
-#SBATCH --array=0-7
+#SBATCH --array=0-8
 #SBATCH -o ./slurm_out/scan_%a.out
 #SBATCH -e ./slurm_out/scan_%a.err
 
@@ -26,7 +26,7 @@
 #   # Or specific jobs: sbatch --array=2,5 scanner/scripts/scan_cil_parallel.sh
 ################################################################################
 
-# Scan targets (must match --array=0-7 above).
+# Scan targets (must match --array=0-8 above).
 # NAMES[i] becomes the output file prefix; PATHS[i] is the directory scanned.
 NAMES=(
     "battuta-shares-S3-archive"
@@ -37,6 +37,7 @@ NAMES=(
     "norgay"
     "sacagawea_shares"
     "cds3"
+    "coastal"
 )
 PATHS=(
     "/project/cil/battuta-shares-S3-archive"
@@ -47,6 +48,7 @@ PATHS=(
     "/project/cil/norgay"
     "/project/cil/sacagawea_shares"
     "/cds3/cil"
+    "/project/cil/coastal"
 )
 
 # Configuration
