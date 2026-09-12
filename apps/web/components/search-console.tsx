@@ -711,8 +711,8 @@ function QueryResultsTable({
   if (isLoading) {
     return (
       <div className="border border-border/30 rounded-sm bg-muted/5">
-        <div className="p-8 text-center text-xs text-muted-foreground font-mono">
-          Executing query...
+        <div className="p-8 flex justify-center">
+          <GridLoader label="Executing query" />
         </div>
       </div>
     );

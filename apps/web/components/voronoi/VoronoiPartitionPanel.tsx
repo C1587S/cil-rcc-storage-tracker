@@ -429,7 +429,6 @@ export function VoronoiPartitionPanel({
           </div>
         ) : (
           <div className="flex items-center gap-3 text-muted-foreground py-4 justify-center">
-            <GridLoader size={6} />
             <span style={{ fontSize: `${11 * textScale}px` }}>Hover or right-click a partition to inspect</span>
           </div>
         )}

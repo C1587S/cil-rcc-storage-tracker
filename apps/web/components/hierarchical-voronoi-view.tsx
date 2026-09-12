@@ -152,17 +152,20 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
 
   const { isFullscreen, isTransitioning, zoomRef, resetZoom, toggleFullscreen } = useVoronoiZoom()
 
-  // Choose data loading strategy based on mode
+  // Choose data loading strategy based on mode.
+  // Only the ACTIVE mode's hook may fetch: the legacy on-the-fly hook walks
+  // the whole tree with hundreds of requests and would starve the
+  // precomputed fetch if left enabled in parallel.
   const precomputedResult = useVoronoiData({
     selectedSnapshot,
     effectivePath,
-    enabled: hasRun,
+    enabled: hasRun && mode === 'precomputed',
   })
 
   const onTheFlyResult = useVoronoiDataOnTheFly({
     selectedSnapshot,
     effectivePath,
-    enabled: hasRun,
+    enabled: hasRun && mode === 'on-the-fly',
   })
 
   // Select the appropriate result based on mode
@@ -433,7 +436,7 @@ export function HierarchicalVoronoiView({ mode = 'precomputed' }: HierarchicalVo
               const busyLabel = isLocked
                 ? 'Computing partition layout'
                 : isRendering
-                  ? 'Rendering'
+                  ? 'Rendering geometries and partition info'
                   : isTransitioning
                     ? 'Navigating'
                     : null
