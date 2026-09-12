@@ -28,8 +28,16 @@ function scanAgeBadge(snapshotDate: string) {
   return { label, tone, ageDays };
 }
 
+
+// Storage roots the dashboard can explore. cds3 appears once its scan data
+// is imported; selecting it before that shows an empty tree.
+const STORAGE_ROOTS = [
+  { path: "/project/cil", label: "/project/cil (Capacity)" },
+  { path: "/cds3/cil", label: "/cds3/cil (Cost-Effective)" },
+];
+
 export function SnapshotSelector() {
-  const { selectedSnapshot, setSelectedSnapshot } = useAppStore();
+  const { selectedSnapshot, setSelectedSnapshot, referencePath, setReferencePath, setReferenceSize } = useAppStore();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["snapshots"],
@@ -101,6 +109,26 @@ export function SnapshotSelector() {
           </span>
         );
       })()}
+
+      {/* Selectable storage-root badge (shields style) */}
+      <span className="inline-flex items-stretch text-[11px] font-semibold rounded-full overflow-hidden shadow-sm select-none">
+        <span className="px-2.5 py-0.5 bg-[#444d56] text-white flex items-center">root</span>
+        {STORAGE_ROOTS.map(r => (
+          <button
+            key={r.path}
+            className="px-2.5 py-0.5 flex items-center transition-colors"
+            style={{
+              background: (referencePath || "/project/cil") === r.path ? "#1f6feb" : "#6e7681",
+              color: "white",
+              opacity: (referencePath || "/project/cil") === r.path ? 1 : 0.75,
+            }}
+            title={`Explore ${r.label} in Tree, Voronoi and Treemap`}
+            onClick={() => { setReferencePath(r.path); setReferenceSize(0); }}
+          >
+            {r.path.split("/")[1]}
+          </button>
+        ))}
+      </span>
 
       {selectedSnapshot_?.import_time && (
         <span className="text-xs text-muted-foreground/60 ml-1">

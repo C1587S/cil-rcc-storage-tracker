@@ -793,8 +793,8 @@ export function DiskUsageExplorerV2() {
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
         <TreeNode
           key={`/project/cil-${state.referencePath || 'default'}`}
-          path="/project/cil"
-          name="cil"
+          path={referencePath || "/project/cil"}
+          name={(referencePath || "/project/cil").split("/").filter(Boolean).pop() || "cil"}
           snapshotDate={selectedSnapshot}
           level={0}
           isDirectory={true}
@@ -816,7 +816,7 @@ export function DiskUsageExplorerV2() {
           setState={setState}
           onSetReference={handleSetReference}
           isInsideReference={true}
-          parentPath="/project"
+          parentPath={(referencePath || "/project/cil").split("/").slice(0, -1).join("/") || "/"}
           onDataLoaded={handleRootDataLoaded}
         />
       </div>

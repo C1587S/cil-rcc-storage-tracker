@@ -1243,7 +1243,11 @@ function QuotaSection({ report }: { report: ComputingReport }) {
       const key = `${fs.filesystem}|${fs.type}`;
       if (!seen.has(key)) {
         seen.add(key);
-        groupQuotas.push({ ...fs, cluster: clusterName });
+        // Name the actual mount so people recognize the tiers
+        const friendly = fs.filesystem
+          .replace("cil (Capacity)", "cil — Capacity (/project/cil)")
+          .replace("cil (Cost-Effective)", "cil — Cost-Effective (/cds3/cil)");
+        groupQuotas.push({ ...fs, filesystem: friendly, cluster: clusterName });
       }
     }
   }
