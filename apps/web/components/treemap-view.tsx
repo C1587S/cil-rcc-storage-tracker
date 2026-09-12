@@ -167,11 +167,20 @@ export function TreemapView() {
   // the extra depth is what produces the layered silhouette.
   const effectiveDepth = chartKind === 'sunburst' ? depthLimit + 1 : depthLimit
 
+  // Monotonic fetch depth per path: lowering the depth selector must never
+  // refetch — a depth-4 tree is a subset of the depth-5 data already in
+  // memory, so we keep the deepest fetch and slice client-side in
+  // toEChartsTree. Only going DEEPER than ever before costs a fetch.
+  const maxRequestedRef = useRef<Map<string, number>>(new Map())
+  const fetchDepth = Math.max(effectiveDepth, maxRequestedRef.current.get(viewPath) ?? 0)
+  maxRequestedRef.current.set(viewPath, fetchDepth)
+  useEffect(() => { maxRequestedRef.current.clear() }, [selectedSnapshot])
+
   const { data, isLoading, isFetching, error } = useVoronoiData({
     selectedSnapshot,
     effectivePath: viewPath,
     enabled: visible && !!selectedSnapshot,
-    maxDepth: effectiveDepth,
+    maxDepth: fetchDepth,
     // Server-side pruning keeps deep fetches small; 0.05% of the root is
     // already a sub-degree sliver in either chart.
     minShare: 0.0005,
