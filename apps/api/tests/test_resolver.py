@@ -85,6 +85,19 @@ class TestPredicates(unittest.TestCase):
         self.assertEqual(rq.params["size_lt"], 4096)
 
 
+class TestPathSegment(unittest.TestCase):
+    def test_segment_matches_infix_directory(self):
+        rq = resolve("/project/cil", "2026-09-11", "/project/cil/gcp",
+                     predicate={"path_segment": "__pycache__"})
+        self.assertIn("position(path, %(pseg)s) > 0", rq.where)
+        self.assertEqual(rq.params["pseg"], "/__pycache__/")
+
+    def test_segment_rejects_slashes(self):
+        with self.assertRaises(ResolverError):
+            resolve("/project/cil", "2026-09-11", "/project/cil/gcp",
+                    predicate={"path_segment": "a/b"})
+
+
 class TestInjectionSafety(unittest.TestCase):
     def test_no_user_value_ever_lands_in_sql_text(self):
         hostile = "/project/cil/x'; DROP TABLE filesystem.entries; --"

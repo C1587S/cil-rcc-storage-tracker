@@ -63,7 +63,7 @@ CREATE INDEX IF NOT EXISTS assignment_assignee_idx ON assignment (assignee);
 CREATE TABLE IF NOT EXISTS decision (
     id          BIGSERIAL PRIMARY KEY,
     target_id   BIGINT NOT NULL REFERENCES target(id),
-    verdict     TEXT NOT NULL CHECK (verdict IN ('keep','delete','archive','compress','needs_info','not_mine')),
+    verdict     TEXT NOT NULL CHECK (verdict IN ('keep','delete','quarantine','archive','compress','needs_info','not_mine')),
     rationale   TEXT,
     decided_by  TEXT NOT NULL REFERENCES person(username),
     decided_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -119,3 +119,38 @@ BEGIN
             FOR EACH ROW EXECUTE FUNCTION event_append_only();
     END IF;
 END $$;
+
+
+-- Migration: widen the verdict set for databases created before the
+-- 'quarantine' verdict existed (delete = purge outright; quarantine =
+-- rename into grace-period holding, per-row reviewer choice).
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.check_constraints
+        WHERE constraint_name = 'decision_verdict_check'
+          AND check_clause NOT LIKE '%quarantine%'
+    ) THEN
+        ALTER TABLE decision DROP CONSTRAINT decision_verdict_check;
+        ALTER TABLE decision ADD CONSTRAINT decision_verdict_check
+            CHECK (verdict IN ('keep','delete','quarantine','archive','compress','needs_info','not_mine'));
+    END IF;
+END $$;
+
+-- Quarantine registry: one row per file sitting in grace-period holding.
+-- original_path is recorded so returning a file is a single reverse rename,
+-- not detective work. Populated automatically from executor receipts.
+CREATE TABLE IF NOT EXISTS quarantine_item (
+    id              BIGSERIAL PRIMARY KEY,
+    execution_id    BIGINT NOT NULL REFERENCES execution(id),
+    manifest_id     TEXT NOT NULL,
+    original_path   TEXT NOT NULL,
+    quarantine_path TEXT NOT NULL,
+    size_bytes      BIGINT NOT NULL DEFAULT 0,
+    quarantined_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at      TIMESTAMPTZ NOT NULL,
+    restored_at     TIMESTAMPTZ,
+    purged_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS quarantine_expiry_idx ON quarantine_item (expires_at) WHERE restored_at IS NULL AND purged_at IS NULL;
+CREATE INDEX IF NOT EXISTS quarantine_original_idx ON quarantine_item (original_path);

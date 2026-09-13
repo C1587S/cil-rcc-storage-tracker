@@ -1,3 +1,8 @@
+[workspace]
+members = ["crates/manifest-types", "crates/hk-executor"]
+# The future housekeeping executor joins here as its own member binary.
+# The scanner stays read-only: destructive code never lives in this package.
+
 [package]
 name = "storage-scanner"
 version = "0.1.0"

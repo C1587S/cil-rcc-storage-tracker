@@ -1,0 +1,13 @@
+[package]
+name = "hk-executor"
+version = "0.1.0"
+edition = "2021"
+description = "Housekeeping executor: verifies and quarantines/purges files listed in a manifest. Runs as the file owner; dry-run by default."
+license = "MIT"
+
+[dependencies]
+manifest-types = { path = "../manifest-types" }
+clap = { version = "4.4", features = ["derive"] }
+rayon = "1.8"
+serde_json = "1.0"
+libc = "0.2"

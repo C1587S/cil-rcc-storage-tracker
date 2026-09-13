@@ -12,10 +12,13 @@ import subprocess
 from datetime import date
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.db.clickhouse import get_client
 from app.housekeeping import db as hk
+from app.housekeeping import manifests as mf
+from app.housekeeping import pilot
 from app.housekeeping.resolver import (
     ResolverError, members_sql, resolve, rollup_sql,
 )
@@ -276,6 +279,318 @@ def claim_execution(body: ExecutionIn, x_user: str | None = Header(default=None)
                             payload={"decision_id": body.decision_id})
     _trigger_backup()
     return {"id": row[0]}
+
+
+# ---------- manifests & receipts ----------
+
+class ManifestRequest(BaseModel):
+    decision_id: int
+
+
+@router.post("/manifests")
+def generate_manifests(body: ManifestRequest, x_user: str | None = Header(default=None)):
+    """Generate per-owner executor manifests for a decision (format v1,
+    docs/manifest-format.md). One manifest per file owner — execution on
+    RCC is per-owner by construction."""
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        row = conn.execute(
+            "SELECT d.id, d.verdict, t.id, t.root, t.path, t.scope, t.predicate"
+            " FROM decision d JOIN target t ON t.id = d.target_id"
+            " WHERE d.id = %s", (body.decision_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="decision not found")
+    decision_id, verdict, target_id, root, path, scope, predicate = row
+    if verdict not in ("delete", "quarantine", "archive", "compress"):
+        raise HTTPException(status_code=422, detail=f"verdict {verdict!r} has nothing to execute")
+
+    snap = _latest_snapshot()
+    try:
+        rq = resolve(root, snap, path, scope, predicate or {})
+    except ResolverError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    summaries = mf.generate_manifests(rq, snap, root, target_id, decision_id, actor)
+
+    with hk.tx() as conn:
+        hk.write_with_event(conn, actor, "manifests_generated", target_id=target_id,
+                            ref_table="decision", ref_id=decision_id,
+                            payload={"manifests": summaries, "snapshot": snap})
+    _trigger_backup()
+    return {"decision_id": decision_id, "snapshot": snap, "manifests": summaries}
+
+
+@router.get("/manifests/{manifest_id}")
+def download_manifest(manifest_id: str):
+    m = mf.load_manifest(manifest_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail="manifest not found")
+    return JSONResponse(content=m, headers={
+        "Content-Disposition": f"attachment; filename={m['manifest_id']}.json",
+    })
+
+
+@router.post("/receipts")
+def upload_receipt(receipt: dict, x_user: str | None = Header(default=None)):
+    """The executor's receipt closes the loop: it becomes the execution
+    row(s) — nobody clicks 'I did it'. Dry-run receipts are recorded in the
+    event log only."""
+    problems = mf.validate_receipt(receipt)
+    if problems:
+        raise HTTPException(status_code=422, detail="; ".join(problems))
+    manifest = mf.load_manifest(receipt["manifest_id"])
+    if manifest is None:
+        raise HTTPException(status_code=404, detail=f"unknown manifest {receipt['manifest_id']}")
+
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        executor = str(receipt["executor"]).lower()
+        conn.execute("INSERT INTO person (username) VALUES (%s) ON CONFLICT DO NOTHING", (executor,))
+        exec_ids = []
+        if not receipt.get("dry_run"):
+            for decision_id in manifest["decision_ids"]:
+                row = conn.execute(
+                    "INSERT INTO execution (decision_id, executor, owner_uname, manifest_ref, destination_path)"
+                    " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                    (decision_id, executor, manifest["owner_uname"], manifest["manifest_id"],
+                     manifest["quarantine_dir"] if receipt["action"] == "quarantine" else None),
+                ).fetchone()
+                exec_ids.append(row[0])
+            # Quarantine registry: original path recorded per file, so a
+            # restore is one reverse rename — not detective work.
+            if receipt["action"] == "quarantine" and exec_ids:
+                size_by_path = {e["path"]: e["size_bytes"] for e in manifest.get("entries", [])}
+                root = manifest["root"]
+                qdir = manifest["quarantine_dir"]
+                q_rows = [
+                    (exec_ids[0], manifest["manifest_id"], o["path"],
+                     qdir + o["path"][len(root):], size_by_path.get(o["path"], 0))
+                    for o in receipt.get("outcomes", [])
+                    if o.get("outcome") == "quarantined"
+                ]
+                if q_rows:
+                    conn.cursor().executemany(
+                        "INSERT INTO quarantine_item (execution_id, manifest_id, original_path,"
+                        " quarantine_path, size_bytes, expires_at)"
+                        " VALUES (%s, %s, %s, %s, %s, now() + interval '30 days')",
+                        q_rows)
+        hk.write_with_event(
+            conn, actor, "receipt_uploaded",
+            target_id=manifest["target_ids"][0] if manifest.get("target_ids") else None,
+            ref_table="execution", ref_id=exec_ids[0] if exec_ids else None,
+            payload={
+                "manifest_id": manifest["manifest_id"],
+                "action": receipt["action"],
+                "dry_run": bool(receipt.get("dry_run")),
+                "bytes_freed": receipt.get("bytes_freed", 0),
+                "files_removed": receipt.get("files_removed", 0),
+                "files_skipped_changed": receipt.get("files_skipped_changed", 0),
+                "files_failed": receipt.get("files_failed", 0),
+                "execution_ids": exec_ids,
+            })
+    _trigger_backup()
+    return {"execution_ids": exec_ids, "dry_run": bool(receipt.get("dry_run"))}
+
+
+
+# ---------- pilot: candidates, adoption, CSV round-trip, quarantine ----------
+
+@router.get("/candidates")
+def candidates(root: str = Query(...), category: str = Query(...),
+               group_depth: int = Query(2, ge=1, le=4)):
+    if category not in pilot.CATEGORIES:
+        raise HTTPException(status_code=422, detail=f"unknown category; known: {list(pilot.CATEGORIES)}")
+    snap = _latest_snapshot()
+    groups = pilot.discover_candidates(root, category, snap, group_depth)
+    return {"snapshot": snap, "category": category,
+            "label": pilot.CATEGORIES[category]["label"], "groups": groups}
+
+
+class AdoptRequest(BaseModel):
+    root: str
+    category: str
+    paths: list[str]
+    campaign: str | None = None
+
+
+@router.post("/candidates/adopt")
+def adopt_candidates(body: AdoptRequest, x_user: str | None = Header(default=None)):
+    """Turn selected candidate groups into targets, provisionally assigned
+    to the majority byte owner (>= 60% confidence; otherwise unassigned —
+    a bad suggestion is worse than none)."""
+    if body.category not in pilot.CATEGORIES:
+        raise HTTPException(status_code=422, detail="unknown category")
+    snap = _latest_snapshot()
+    predicate = pilot.CATEGORIES[body.category]["predicate"]
+    groups = {g["path"]: g for g in pilot.discover_candidates(body.root, body.category, snap, 4)}
+    # re-discover at requested paths' own depth: fall back to fresh rollup per path
+    created = []
+    ch = get_client()
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        for path in body.paths:
+            try:
+                rq = resolve(body.root, snap, path, "subtree", predicate)
+            except ResolverError as e:
+                raise HTTPException(status_code=422, detail=f"{path}: {e}")
+            files, bytes_ = ch.execute(rollup_sql(rq), rq.params)[0]
+            if not files:
+                continue
+            path_hash = ch.execute("SELECT toString(cityHash64(%(p)s))", {"p": path})[0][0]
+            row = conn.execute(
+                "INSERT INTO target (name, root, path, path_hash, scope, predicate, campaign,"
+                " created_by, cached_bytes, cached_files, cached_snapshot)"
+                " VALUES (%s, %s, %s, %s, 'subtree', %s, %s, %s, %s, %s, %s) RETURNING id",
+                (f"{body.category}: {path.split('/')[-1] or path}", body.root, path, path_hash,
+                 json.dumps(predicate), body.campaign, actor, bytes_ or 0, files or 0, snap),
+            ).fetchone()
+            target_id = row[0]
+            # provisional assignment from majority owner, when confident
+            dist = ch.execute(
+                "SELECT owner, sum(size) AS b FROM filesystem.entries"
+                f" WHERE {rq.where} GROUP BY owner ORDER BY b DESC LIMIT 2", rq.params)
+            assignee = None
+            if dist:
+                total = sum(r[1] for r in dist) or 1
+                if dist[0][1] / total >= 0.6 or len(dist) == 1:
+                    assignee = dist[0][0]
+            if assignee:
+                conn.execute("INSERT INTO person (username) VALUES (%s) ON CONFLICT DO NOTHING", (assignee,))
+                conn.execute(
+                    "INSERT INTO assignment (target_id, assignee, assigned_by) VALUES (%s, %s, %s)",
+                    (target_id, assignee, actor))
+            hk.write_with_event(conn, actor, "target_created", target_id=target_id,
+                                ref_table="target", ref_id=target_id,
+                                payload={"category": body.category, "path": path,
+                                         "bytes": bytes_ or 0, "files": files or 0,
+                                         "provisional_assignee": assignee})
+            created.append({"target_id": target_id, "path": path, "bytes": bytes_ or 0,
+                            "files": files or 0, "assignee": assignee})
+    _trigger_backup()
+    return {"created": created, "snapshot": snap}
+
+
+class WorklistUpload(BaseModel):
+    csv_text: str
+    commit: bool = False
+
+
+@router.post("/worklist-upload")
+def worklist_upload(body: WorklistUpload, x_user: str | None = Header(default=None)):
+    """The return leg of the Drive round trip. Classifies every row as
+    error / warning / clean, shows the diff, and only applies on
+    commit=true. Errors skip that row only; the rest still push."""
+    meta, rows, problems = pilot.parse_worklist_csv(body.csv_text)
+    if problems and not rows:
+        raise HTTPException(status_code=422, detail="; ".join(problems))
+
+    errors, warnings, changes, unchanged = [], [], [], 0
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        for r in rows:
+            tid_s = r.get("id", "")
+            try:
+                tid = int(tid_s)
+            except ValueError:
+                errors.append({"line": r["line"], "problem": f"bad target id {tid_s!r}"})
+                continue
+            t = conn.execute(
+                "SELECT t.id, d.verdict FROM target t"
+                " LEFT JOIN LATERAL (SELECT verdict FROM decision WHERE target_id = t.id"
+                "  AND superseded_by IS NULL ORDER BY decided_at DESC LIMIT 1) d ON true"
+                " WHERE t.id = %s", (tid,)).fetchone()
+            if not t:
+                errors.append({"line": r["line"], "problem": f"unknown target id {tid}"})
+                continue
+            current_verdict = t[1]
+            new_verdict = (r.get("new_verdict") or "").lower()
+            new_assignee = (r.get("new_assignee") or "").lower()
+            if new_verdict and new_verdict not in pilot.VALID_VERDICTS:
+                errors.append({"line": r["line"], "problem": f"unparseable verdict {new_verdict!r}"})
+                continue
+            # changed-underneath detection via row_version vs current events
+            rv = r.get("row_version", "")
+            cur_rv = conn.execute(
+                "SELECT COALESCE(max(id), 0) FROM event WHERE target_id = %s", (tid,)).fetchone()[0]
+            if rv and rv.isdigit() and int(rv) != cur_rv:
+                warnings.append({"line": r["line"], "target_id": tid,
+                                 "problem": f"changed since export (row_version {rv} -> {cur_rv})"})
+            if not new_verdict and not new_assignee:
+                unchanged += 1
+                continue
+            if new_verdict and new_verdict == current_verdict and not new_assignee:
+                unchanged += 1
+                continue
+            changes.append({"target_id": tid, "from": current_verdict,
+                            "to": new_verdict or current_verdict,
+                            "assignee": new_assignee or None,
+                            "rationale": r.get("new_rationale") or None})
+
+        applied = []
+        if body.commit:
+            for c in changes:
+                if c["to"] and c["to"] != c["from"]:
+                    prev = conn.execute(
+                        "SELECT id FROM decision WHERE target_id = %s AND superseded_by IS NULL",
+                        (c["target_id"],)).fetchall()
+                    row = conn.execute(
+                        "INSERT INTO decision (target_id, verdict, rationale, decided_by)"
+                        " VALUES (%s, %s, %s, %s) RETURNING id",
+                        (c["target_id"], c["to"], c["rationale"], actor)).fetchone()
+                    for (old_id,) in prev:
+                        conn.execute("UPDATE decision SET superseded_by = %s WHERE id = %s",
+                                     (row[0], old_id))
+                if c["assignee"]:
+                    conn.execute("INSERT INTO person (username) VALUES (%s) ON CONFLICT DO NOTHING",
+                                 (c["assignee"],))
+                    conn.execute(
+                        "INSERT INTO assignment (target_id, assignee, assigned_by) VALUES (%s, %s, %s)",
+                        (c["target_id"], c["assignee"], actor))
+                applied.append(c["target_id"])
+            hk.write_with_event(conn, actor, "worklist_uploaded", payload={
+                "worklist": meta.get("worklist"), "base_event": meta.get("base_event"),
+                "applied": len(applied), "errors": len(errors),
+                "warnings": len(warnings), "unchanged": unchanged,
+                "changes": changes[:200],
+            })
+    if body.commit:
+        _trigger_backup()
+    return {"meta": meta, "errors": errors, "warnings": warnings,
+            "changes": changes, "unchanged": unchanged,
+            "applied": len(changes) if body.commit else 0, "committed": body.commit}
+
+
+@router.get("/quarantine")
+def quarantine_list(active_only: bool = Query(default=True)):
+    """Where everything went: original path, holding path, expiry."""
+    with hk.tx() as conn:
+        q = ("SELECT id, manifest_id, original_path, quarantine_path, size_bytes,"
+             " quarantined_at, expires_at, restored_at, purged_at FROM quarantine_item")
+        if active_only:
+            q += " WHERE restored_at IS NULL AND purged_at IS NULL"
+        q += " ORDER BY expires_at ASC LIMIT 5000"
+        rows = conn.execute(q).fetchall()
+    cols = ["id", "manifest_id", "original_path", "quarantine_path", "size_bytes",
+            "quarantined_at", "expires_at", "restored_at", "purged_at"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+@router.post("/quarantine/{item_id}/restored")
+def mark_restored(item_id: int, x_user: str | None = Header(default=None)):
+    """Record that a file was returned (reverse rename done by the owner)."""
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        row = conn.execute(
+            "UPDATE quarantine_item SET restored_at = now()"
+            " WHERE id = %s AND restored_at IS NULL AND purged_at IS NULL RETURNING original_path",
+            (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="not found or not active")
+        hk.write_with_event(conn, actor, "quarantine_restored", ref_table="quarantine_item",
+                            ref_id=item_id, payload={"original_path": row[0]})
+    _trigger_backup()
+    return {"restored": row[0]}
 
 
 # ---------- report ----------

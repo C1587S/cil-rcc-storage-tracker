@@ -21,6 +21,9 @@ KNOWN_ROOTS = ("/project/cil", "/cds3/cil")
 # Predicate keys accepted from clients; anything else is rejected loudly.
 ALLOWED_PREDICATE_KEYS = {
     "ext", "name", "owner", "size_lt", "size_gt", "mtime_before", "mtime_after",
+    # files living under a directory with this exact name anywhere in the
+    # subtree (e.g. "__pycache__")
+    "path_segment",
 }
 
 
@@ -100,6 +103,13 @@ def resolve(
             raise ResolverError("owner must be a non-empty list of unames")
         params["owners"] = owners
         conds.append("owner IN %(owners)s")
+
+    if "path_segment" in predicate:
+        seg = predicate["path_segment"]
+        if not isinstance(seg, str) or "/" in seg or not seg:
+            raise ResolverError("path_segment must be a plain directory name")
+        params["pseg"] = f"/{seg}/"
+        conds.append("position(path, %(pseg)s) > 0")
 
     if "size_lt" in predicate:
         params["size_lt"] = int(predicate["size_lt"])

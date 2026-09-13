@@ -1,0 +1,10 @@
+[package]
+name = "manifest-types"
+version = "1.0.0"
+edition = "2021"
+description = "Shared manifest + receipt types for the housekeeping executor. Read-only crate: no filesystem operations live here."
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

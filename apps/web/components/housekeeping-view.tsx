@@ -21,7 +21,7 @@ import { formatBytes } from "@/lib/utils/formatters";
 import { cn } from "@/lib/utils";
 
 const ROOTS = ["/cds3/cil", "/project/cil"];
-const VERDICTS = ["keep", "delete", "archive", "compress", "needs_info", "not_mine"];
+const VERDICTS = ["keep", "delete", "quarantine", "archive", "compress", "needs_info", "not_mine"];
 
 type Row = Record<string, any>;
 
@@ -180,6 +180,9 @@ export function HousekeepingView() {
         </div>
       )}
 
+      <CandidatesPanel root={rootFilter || "/project/cil"}
+                       onAdopted={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
+
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex rounded-md border border-border overflow-hidden text-xs">
@@ -206,12 +209,15 @@ export function HousekeepingView() {
         >
           <Plus size={13} /> New target
         </button>
-        <button
-          className="h-8 px-3 text-xs rounded-md border border-border flex items-center gap-1.5 text-muted-foreground hover:text-foreground ml-auto"
-          onClick={downloadCsv}
-        >
-          <Download size={13} /> CSV
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <UploadPanel onApplied={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
+          <button
+            className="h-8 px-3 text-xs rounded-md border border-border flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
+            onClick={downloadCsv}
+          >
+            <Download size={13} /> CSV
+          </button>
+        </div>
       </div>
 
       {/* Minimal target creation (hand-created targets, step 3) */}
@@ -331,5 +337,256 @@ export function HousekeepingView() {
         </table>
       </div>
     </div>
+  );
+}
+
+
+// ---------------- Pilot: candidate discovery ----------------
+
+function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => void }) {
+  const { currentUser } = useAppStore();
+  const [category, setCategory] = useState("logs");
+  const [groups, setGroups] = useState<any[] | null>(null);
+  const [label, setLabel] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    setBusy(true);
+    try {
+      const d = await api(`/candidates?root=${encodeURIComponent(root)}&category=${category}&group_depth=2`);
+      setGroups(d.groups); setLabel(d.label); setSelected(new Set());
+    } catch (e: any) { window.alert(e.message); }
+    setBusy(false);
+  };
+
+  const adopt = async () => {
+    setBusy(true);
+    try {
+      const d = await api("/candidates/adopt", {
+        method: "POST",
+        body: JSON.stringify({ root, category, paths: [...selected], campaign: "pilot" }),
+      }, currentUser);
+      window.alert(`${d.created.length} target(s) created` +
+        d.created.map((c: any) => `\n  #${c.target_id} ${c.path} -> ${c.assignee ?? "unassigned"}`).join(""));
+      setSelected(new Set());
+      onAdopted();
+    } catch (e: any) { window.alert(e.message); }
+    setBusy(false);
+  };
+
+  const gb = (b: number) => (b / 1024 ** 3).toFixed(2);
+  return (
+    <details className="border border-border/60 rounded-md">
+      <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
+        Find candidates <span className="text-muted-foreground">— safe categories, grouped, with suggested owners</span>
+      </summary>
+      <div className="p-3 space-y-2 border-t border-border/40">
+        <div className="flex items-center gap-2 text-xs">
+          <select className="h-8 px-2 rounded border border-border bg-transparent"
+                  value={category} onChange={e => setCategory(e.target.value)}>
+            <option value="logs">.log / .err under 100 MB</option>
+            <option value="pycache">__pycache__ contents</option>
+          </select>
+          <span className="text-muted-foreground font-mono">{root}</span>
+          <button className="h-8 px-3 rounded bg-primary text-primary-foreground disabled:opacity-50"
+                  disabled={busy} onClick={load}>{busy ? "Scanning…" : "Scan"}</button>
+          {groups && selected.size > 0 && (
+            <button className="h-8 px-3 rounded border border-primary text-primary disabled:opacity-50"
+                    disabled={busy || !currentUser} onClick={adopt}>
+              Adopt {selected.size} into worklist
+            </button>
+          )}
+        </div>
+        {groups && (
+          <div className="max-h-72 overflow-y-auto border border-border/40 rounded">
+            <table className="w-full text-xs">
+              <thead><tr className="text-left text-muted-foreground border-b border-border/40">
+                <th className="px-2 py-1.5 w-6"></th>
+                <th className="px-2 py-1.5">Path</th>
+                <th className="px-2 py-1.5 text-right">Size</th>
+                <th className="px-2 py-1.5 text-right">Files</th>
+                <th className="px-2 py-1.5">Suggested owner</th>
+              </tr></thead>
+              <tbody>
+                {groups.map(g => (
+                  <tr key={g.path} className="border-b border-border/20 hover:bg-muted/20">
+                    <td className="px-2 py-1">
+                      <input type="checkbox" checked={selected.has(g.path)}
+                             onChange={e => {
+                               const n = new Set(selected);
+                               e.target.checked ? n.add(g.path) : n.delete(g.path);
+                               setSelected(n);
+                             }} />
+                    </td>
+                    <td className="px-2 py-1 font-mono truncate max-w-[380px]" title={g.path}>{g.path}</td>
+                    <td className="px-2 py-1 text-right font-mono">{gb(g.bytes)} GB</td>
+                    <td className="px-2 py-1 text-right font-mono">{g.files.toLocaleString()}</td>
+                    <td className="px-2 py-1">
+                      {g.suggest_assignment
+                        ? <span>{g.suggested_owner} <span className="text-muted-foreground">({Math.round(g.owner_confidence * 100)}%)</span></span>
+                        : <span className="text-muted-foreground/60">— below 60%, no suggestion</span>}
+                    </td>
+                  </tr>
+                ))}
+                {groups.length === 0 && <tr><td colSpan={5} className="px-2 py-3 text-center text-muted-foreground">No matches.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="text-[10px] text-muted-foreground">
+          Empty files are deliberately excluded from every category: zero-byte pipeline
+          sentinels look identical to zero-byte garbage.
+        </p>
+      </div>
+    </details>
+  );
+}
+
+// ---------------- Pilot: worklist upload (return leg of the Drive round trip) ----------------
+
+function UploadPanel({ onApplied }: { onApplied: () => void }) {
+  const { currentUser } = useAppStore();
+  const [result, setResult] = useState<any | null>(null);
+  const [csvText, setCsvText] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const push = async (text: string, commit: boolean) => {
+    setBusy(true);
+    try {
+      const d = await api("/worklist-upload", {
+        method: "POST", body: JSON.stringify({ csv_text: text, commit }),
+      }, currentUser);
+      setResult(d);
+      if (commit) { setCsvText(null); onApplied(); }
+    } catch (e: any) { window.alert(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="inline-flex items-center gap-2">
+      <label className="h-8 px-3 text-xs rounded-md border border-border flex items-center gap-1.5 text-muted-foreground hover:text-foreground cursor-pointer">
+        ⇪ Upload annotated CSV
+        <input type="file" accept=".csv,text/csv" className="hidden"
+               onChange={async e => {
+                 const f = e.target.files?.[0];
+                 if (!f) return;
+                 const text = await f.text();
+                 setCsvText(text);
+                 await push(text, false);
+                 e.target.value = "";
+               }} />
+      </label>
+      {result && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" onClick={() => setResult(null)}>
+          <div className="bg-card border border-border rounded-lg p-4 max-w-2xl w-full max-h-[80vh] overflow-y-auto text-xs space-y-2"
+               onClick={e => e.stopPropagation()}>
+            <div className="font-medium text-sm">
+              {result.committed ? "Applied" : "Review before applying"} — {result.meta?.worklist}
+            </div>
+            <div className="flex gap-4 font-mono">
+              <span className="text-emerald-600">{result.changes.length} changes</span>
+              <span>{result.unchanged} unchanged</span>
+              <span className={result.warnings.length ? "text-amber-600" : ""}>{result.warnings.length} warnings</span>
+              <span className={result.errors.length ? "text-red-600" : ""}>{result.errors.length} errors</span>
+            </div>
+            {result.errors.map((e: any, i: number) => (
+              <div key={i} className="text-red-600">line {e.line}: {e.problem} (row skipped)</div>
+            ))}
+            {result.warnings.map((w: any, i: number) => (
+              <div key={i} className="text-amber-600">line {w.line}: {w.problem}</div>
+            ))}
+            <table className="w-full">
+              <thead><tr className="text-left text-muted-foreground"><th>target</th><th>from</th><th>to</th><th>assignee</th><th>rationale</th></tr></thead>
+              <tbody>
+                {result.changes.map((c: any) => (
+                  <tr key={c.target_id} className="border-t border-border/30">
+                    <td className="py-1 font-mono">#{c.target_id}</td>
+                    <td className="py-1">{c.from ?? "—"}</td>
+                    <td className="py-1 font-medium">{c.to}</td>
+                    <td className="py-1">{c.assignee ?? ""}</td>
+                    <td className="py-1 text-muted-foreground">{c.rationale ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="flex gap-2 pt-2">
+              {!result.committed && csvText && (
+                <button className="h-8 px-4 rounded bg-primary text-primary-foreground disabled:opacity-50"
+                        disabled={busy || result.changes.length === 0}
+                        onClick={() => push(csvText, true)}>
+                  Apply {result.changes.length} change(s)
+                </button>
+              )}
+              <button className="h-8 px-3 rounded border border-border" onClick={() => setResult(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------- Pilot: quarantine registry + history ----------------
+
+function QuarantinePanel() {
+  const { currentUser } = useAppStore();
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["hk-quarantine"], queryFn: () => api("/quarantine") });
+  if (!data?.length) return null;
+  return (
+    <details className="border border-border/60 rounded-md">
+      <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
+        Quarantine <span className="text-muted-foreground">— {data.length} item(s) in grace period</span>
+      </summary>
+      <div className="p-3 border-t border-border/40 max-h-72 overflow-y-auto">
+        <table className="w-full text-xs">
+          <thead><tr className="text-left text-muted-foreground border-b border-border/40">
+            <th className="px-2 py-1">Original path</th><th className="px-2 py-1">Expires</th><th className="px-2 py-1"></th>
+          </tr></thead>
+          <tbody>
+            {data.map((q: any) => (
+              <tr key={q.id} className="border-b border-border/20">
+                <td className="px-2 py-1 font-mono truncate max-w-[480px]" title={`now at: ${q.quarantine_path}`}>{q.original_path}</td>
+                <td className="px-2 py-1 font-mono">{String(q.expires_at).slice(0, 10)}</td>
+                <td className="px-2 py-1">
+                  <button className="text-primary hover:underline"
+                          title="Record that this file was renamed back to its original path"
+                          onClick={async () => {
+                            try { await api(`/quarantine/${q.id}/restored`, { method: "POST" }, currentUser); }
+                            catch (e: any) { window.alert(e.message); }
+                            qc.invalidateQueries({ queryKey: ["hk-quarantine"] });
+                          }}>
+                    mark restored
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
+function HistoryPanel() {
+  const { data } = useQuery({ queryKey: ["hk-events"], queryFn: () => api("/events?limit=100") });
+  return (
+    <details className="border border-border/60 rounded-md">
+      <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
+        History <span className="text-muted-foreground">— every state change, append-only</span>
+      </summary>
+      <div className="p-3 border-t border-border/40 max-h-72 overflow-y-auto space-y-1 text-xs font-mono">
+        {(data ?? []).map((e: any) => (
+          <div key={e.id} className="flex gap-2">
+            <span className="text-muted-foreground shrink-0">{String(e.at).slice(0, 19).replace("T", " ")}</span>
+            <span className="shrink-0 font-medium">{e.actor}</span>
+            <span className="shrink-0">{e.kind}</span>
+            {e.target_id && <span className="text-muted-foreground">target #{e.target_id}</span>}
+          </div>
+        ))}
+        {data?.length === 0 && <div className="text-muted-foreground">No events yet.</div>}
+      </div>
+    </details>
   );
 }
