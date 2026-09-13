@@ -55,9 +55,58 @@ def _slashes(s: str) -> int:
 
 CLEAN_OWNER = "position(owner, char(0)) = 0"  # corrupted rows are excluded, never repaired
 
+DISMISS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS hk_dismissal (
+    id BIGSERIAL PRIMARY KEY,
+    root TEXT NOT NULL,
+    path TEXT NOT NULL,
+    path_hash TEXT NOT NULL,
+    note TEXT NOT NULL,
+    dismissed_by TEXT NOT NULL,
+    dismissed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoked_at TIMESTAMPTZ,
+    revoked_by TEXT
+);
+CREATE INDEX IF NOT EXISTS hk_dismissal_root_idx ON hk_dismissal (root) WHERE revoked_at IS NULL;
+"""
+
+
+def _active_dismissals(root: str) -> list[dict]:
+    with hk.tx() as conn:
+        conn.execute(DISMISS_SCHEMA)
+        rows = conn.execute(
+            "SELECT id, path, note, dismissed_by, dismissed_at FROM hk_dismissal"
+            " WHERE root = %s AND revoked_at IS NULL", (root,)).fetchall()
+    return [{"id": r[0], "path": r[1], "note": r[2], "by": r[3], "at": str(r[4])} for r in rows]
+
+
+def _apply_dismissals(rows: list[dict], dismissals: list[dict], include: bool,
+                      path_key: str = "path") -> tuple[list[dict], int]:
+    """Hide rows at or under any dismissed path. A dismissal covers the
+    whole subtree: reviewing a tree once must silence all of it."""
+    if not dismissals:
+        return rows, 0
+    def covering(p: str):
+        for d in dismissals:
+            if p == d["path"] or p.startswith(d["path"] + "/"):
+                return d
+        return None
+    visible, hidden = [], 0
+    for r in rows:
+        d = covering(r[path_key])
+        if d is None:
+            visible.append(r)
+        elif include:
+            visible.append({**r, "dismissed": {"note": d["note"], "by": d["by"],
+                                               "at": d["at"], "id": d["id"]}})
+        else:
+            hidden += 1
+    return visible, hidden
+
 
 @router.get("/age")
-def by_age(root: str = Query(...), min_age_days: int = Query(365, ge=30)):
+def by_age(root: str = Query(...), min_age_days: int = Query(365, ge=30),
+           include_dismissed: bool = Query(default=False)):
     """Coldest MAXIMAL subtrees: directories whose whole tree is older than
     the cutoff but whose parent is not (so each cold tree appears once),
     ranked by the bytes they would free."""
@@ -88,17 +137,20 @@ def by_age(root: str = Query(...), min_age_days: int = Query(365, ge=30)):
         return [{"path": p, "bytes": int(b), "files": int(f), "last_modified": int(lm)}
                 for p, b, f, lm in rows]
 
+    rows, hidden = _apply_dismissals(
+        _cached(("age", snap, root, min_age_days), run),
+        _active_dismissals(root), include_dismissed)
     return {
         "snapshot": snap, "min_age_days": min_age_days,
         "measures": ("Time since last MODIFICATION (mtime) anywhere in the subtree. "
                      "Reading a file does not update mtime, and atime is unreliable "
                      "on this mount — 'not modified' is NOT 'unused'."),
-        "rows": _cached(("age", snap, root, min_age_days), run),
+        "rows": rows, "hidden_dismissed": hidden,
     }
 
 
 @router.get("/dirs")
-def by_directory(root: str = Query(...)):
+def by_directory(root: str = Query(...), include_dismissed: bool = Query(default=False)):
     """Directories holding the most FILES — inode pressure, invisible in
     size-sorted lists. Bytes shown beside counts; the disagreement is the
     interesting part. du-style: a directory and its parent both appear."""
@@ -124,7 +176,9 @@ def by_directory(root: str = Query(...)):
                  "bytes": int(b), "last_modified": int(lm)}
                 for p, df, rf, b, lm in rows]
 
-    return {"snapshot": snap, "rows": _cached(("dirs", snap, root), run)}
+    rows, hidden = _apply_dismissals(
+        _cached(("dirs", snap, root), run), _active_dismissals(root), include_dismissed)
+    return {"snapshot": snap, "rows": rows, "hidden_dismissed": hidden}
 
 
 @router.get("/owners")
@@ -170,7 +224,9 @@ def owner_directories(root: str = Query(...), owner: str = Query(...)):
         return [{"path": g, "files": int(f), "bytes": int(b), "last_modified": int(lm)}
                 for g, f, b, lm in rows]
 
-    return {"snapshot": snap, "owner": owner, "rows": _cached(("odirs", snap, root, owner), run)}
+    rows, hidden = _apply_dismissals(
+        _cached(("odirs", snap, root, owner), run), _active_dismissals(root), False)
+    return {"snapshot": snap, "owner": owner, "rows": rows, "hidden_dismissed": hidden}
 
 
 @router.get("/largest")
@@ -222,6 +278,102 @@ def files_detail(root: str = Query(...), prefix: str = Query(...),
     return {"snapshot": snap, "rows": [
         {"path": p, "owner": o, "bytes": int(s), "last_modified": int(m), "created": int(c)}
         for p, o, s, m, c in rows]}
+
+
+@router.get("/preview")
+def preview(root: str = Query(...), path: str = Query(...)):
+    """Everything needed to judge a tree WITHOUT leaving the panel: sample
+    paths, extension breakdown, owner mix, date range — plus any standing
+    dismissal note on this path or an ancestor."""
+    _check_root(root)
+    if not (path == root or path.startswith(root + "/")):
+        raise HTTPException(status_code=422, detail="path must live under root")
+    snap = _snap()
+
+    def run():
+        ch = get_client()
+        scope = {"snap": snap, "p": path, "pfx": path + "/%"}
+        base = ("FROM filesystem.entries WHERE snapshot_date = %(snap)s"
+                " AND (path = %(p)s OR path LIKE %(pfx)s) AND is_directory = 0")
+        totals = ch.execute(
+            f"SELECT count(), sum(size), min(modified_time), max(modified_time) {base}", scope)[0]
+        exts = ch.execute(
+            f"""SELECT if(match(name, '\\.[A-Za-z0-9_]+$'),
+                          lower(arrayElement(splitByChar('.', name), -1)), '(none)') AS ext,
+                       count() AS files, sum(size) AS bytes
+                {base} GROUP BY ext ORDER BY bytes DESC LIMIT 10""", scope)
+        owners = ch.execute(
+            f"SELECT owner, count(), sum(size) {base} AND {CLEAN_OWNER}"
+            " GROUP BY owner ORDER BY sum(size) DESC LIMIT 5", scope)
+        samples = ch.execute(
+            f"SELECT path, size, modified_time {base} ORDER BY size DESC LIMIT 8", scope)
+        return {
+            "files": int(totals[0] or 0), "bytes": int(totals[1] or 0),
+            "oldest_mtime": int(totals[2] or 0), "newest_mtime": int(totals[3] or 0),
+            "extensions": [{"ext": e, "files": int(f), "bytes": int(b)} for e, f, b in exts],
+            "owners": [{"owner": o, "files": int(f), "bytes": int(b)} for o, f, b in owners],
+            "samples": [{"path": p, "bytes": int(s_), "mtime": int(m)} for p, s_, m in samples],
+        }
+
+    data = dict(_cached(("preview", snap, root, path), run))
+    covering = None
+    for d in _active_dismissals(root):
+        if path == d["path"] or path.startswith(d["path"] + "/"):
+            covering = d
+            break
+    data["dismissal"] = covering
+    data["snapshot"] = snap
+    return data
+
+
+class DismissIn(BaseModel):
+    root: str
+    path: str
+    note: str
+
+
+@router.post("/dismissals")
+def dismiss(body: DismissIn, x_user: str | None = Header(default=None)):
+    """Reviewed-and-dismissed: the tree stops appearing in recon, and the
+    reason sticks to the path for whoever looks next."""
+    _check_root(body.root)
+    if not body.note.strip():
+        raise HTTPException(status_code=422, detail="a dismissal requires a note — future-you needs the reason")
+    if not (body.path == body.root or body.path.startswith(body.root + "/")):
+        raise HTTPException(status_code=422, detail="path must live under root")
+    ph = get_client().execute("SELECT toString(cityHash64(%(p)s))", {"p": body.path})[0][0]
+    with hk.tx() as conn:
+        conn.execute(DISMISS_SCHEMA)
+        actor = _actor(conn, x_user)
+        row = conn.execute(
+            "INSERT INTO hk_dismissal (root, path, path_hash, note, dismissed_by)"
+            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (body.root, body.path, ph, body.note.strip(), actor)).fetchone()
+        hk.write_with_event(conn, actor, "dismissed", ref_table="hk_dismissal", ref_id=row[0],
+                            payload={"path": body.path, "note": body.note.strip()})
+    return {"id": row[0]}
+
+
+@router.delete("/dismissals/{dismissal_id}")
+def undismiss(dismissal_id: int, x_user: str | None = Header(default=None)):
+    with hk.tx() as conn:
+        conn.execute(DISMISS_SCHEMA)
+        actor = _actor(conn, x_user)
+        row = conn.execute(
+            "UPDATE hk_dismissal SET revoked_at = now(), revoked_by = %s"
+            " WHERE id = %s AND revoked_at IS NULL RETURNING path",
+            (actor, dismissal_id)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="not found or already revoked")
+        hk.write_with_event(conn, actor, "undismissed", ref_table="hk_dismissal",
+                            ref_id=dismissal_id, payload={"path": row[0]})
+    return {"restored_to_recon": row[0]}
+
+
+@router.get("/dismissals")
+def dismissals(root: str = Query(...)):
+    _check_root(root)
+    return _active_dismissals(root)
 
 
 # ---------------- custom lists ----------------

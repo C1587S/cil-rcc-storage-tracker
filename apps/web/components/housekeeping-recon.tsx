@@ -75,16 +75,18 @@ export function ReconPanel({ root }: { root: string }) {
   const [drill, setDrill] = useState<{ prefix: string; owner?: string } | null>(null);
   const [ownerDrill, setOwnerDrill] = useState<string | null>(null);
   const [active, setActive] = useState(activeList());
+  const [showDismissed, setShowDismissed] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const enabled = (t: Tab) => tab === t;
   const age = useQuery({
-    queryKey: ["recon-age", root, minAgeDays],
-    queryFn: () => rapi(`/age?root=${encodeURIComponent(root)}&min_age_days=${minAgeDays}`),
+    queryKey: ["recon-age", root, minAgeDays, showDismissed],
+    queryFn: () => rapi(`/age?root=${encodeURIComponent(root)}&min_age_days=${minAgeDays}&include_dismissed=${showDismissed}`),
     enabled: enabled("age"),
   });
   const dirs = useQuery({
-    queryKey: ["recon-dirs", root],
-    queryFn: () => rapi(`/dirs?root=${encodeURIComponent(root)}`),
+    queryKey: ["recon-dirs", root, showDismissed],
+    queryFn: () => rapi(`/dirs?root=${encodeURIComponent(root)}&include_dismissed=${showDismissed}`),
     enabled: enabled("dirs"),
   });
   const owners = useQuery({
@@ -136,6 +138,95 @@ export function ReconPanel({ root }: { root: string }) {
     setDrill({ prefix, owner });
     setTab("files");
   };
+
+  const invalidateRecon = () => {
+    qc.invalidateQueries({ queryKey: ["recon-age"] });
+    qc.invalidateQueries({ queryKey: ["recon-dirs"] });
+    qc.invalidateQueries({ queryKey: ["recon-preview"] });
+  };
+
+  const dismissPath = async (path: string) => {
+    const note = window.prompt(
+      `Dismiss from recon:\n${path}\n\nWhy is this fine? (required — the note sticks to the path)`);
+    if (!note?.trim()) return;
+    try {
+      await rapi("/dismissals", {
+        method: "POST", body: JSON.stringify({ root, path, note }),
+      }, currentUser);
+      invalidateRecon();
+    } catch (e: any) { window.alert(e.message); }
+  };
+
+  const undismiss = async (id: number) => {
+    try {
+      await rapi(`/dismissals/${id}`, { method: "DELETE" }, currentUser);
+      invalidateRecon();
+    } catch (e: any) { window.alert(e.message); }
+  };
+
+  // Everything needed to judge a tree without leaving the panel
+  function PreviewBox({ path }: { path: string }) {
+    const pv = useQuery({
+      queryKey: ["recon-preview", root, path],
+      queryFn: () => rapi(`/preview?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`),
+    });
+    if (pv.isLoading) return <div className="p-3 text-xs text-muted-foreground">loading preview…</div>;
+    if (!pv.data) return null;
+    const d = pv.data;
+    return (
+      <div className="p-3 bg-muted/10 text-xs space-y-2">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono">
+          <span>{d.files.toLocaleString()} files</span>
+          <span>{formatBytes(d.bytes)}</span>
+          <span>mtimes {fmtDate(d.oldest_mtime)} → {fmtDate(d.newest_mtime)}</span>
+        </div>
+        {d.dismissal && (
+          <div className="px-2 py-1 rounded border border-border/60 bg-muted/30">
+            Dismissed by <strong>{d.dismissal.by}</strong> ({String(d.dismissal.at).slice(0, 10)}):
+            {" "}<em>{d.dismissal.note}</em>
+            {" "}<button className="text-primary hover:underline" onClick={() => undismiss(d.dismissal.id)}>un-dismiss</button>
+          </div>
+        )}
+        <div className="grid gap-3 md:grid-cols-3">
+          <div>
+            <div className="text-muted-foreground mb-0.5">Extensions (by bytes)</div>
+            {d.extensions.map((e: any) => (
+              <div key={e.ext} className="flex justify-between font-mono">
+                <span>.{e.ext}</span><span>{formatBytes(e.bytes)} · {e.files.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div className="text-muted-foreground mb-0.5">Owners</div>
+            {d.owners.map((o: any) => (
+              <div key={o.owner} className="flex justify-between font-mono">
+                <span>{o.owner}</span><span>{formatBytes(o.bytes)}</span>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div className="text-muted-foreground mb-0.5">Largest files</div>
+            {d.samples.map((f: any) => (
+              <div key={f.path} className="font-mono truncate" title={f.path}>
+                {formatBytes(f.bytes)} — {f.path.slice(path.length + 1) || f.path}
+              </div>
+            ))}
+          </div>
+        </div>
+        {!d.dismissal && (
+          <div className="flex gap-3 pt-1">
+            <button className="text-primary hover:underline" onClick={() => dismissPath(path)}>
+              Reviewed — dismiss with note
+            </button>
+            <button className="text-primary hover:underline"
+                    onClick={() => addPaths.mutate({ paths: [path], source: "recon:preview" })}>
+              Add to list
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const AddBtn = ({ path, source }: { path: string; source: string }) => (
     <button
@@ -201,25 +292,74 @@ export function ReconPanel({ root }: { root: string }) {
                 </button>
               ))}
             </div>
+            {(age.data?.hidden_dismissed ?? 0) > 0 && !showDismissed && (
+              <button className="text-[11px] text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowDismissed(true)}>
+                {age.data.hidden_dismissed} dismissed tree(s) hidden — show them
+              </button>
+            )}
+            {showDismissed && (
+              <button className="text-[11px] text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowDismissed(false)}>
+                hide dismissed
+              </button>
+            )}
             <table className="w-full text-xs">
               <thead><tr className="text-left text-muted-foreground border-b border-border/40">
+                <th className="w-6"></th>
                 <th className="px-2 py-1.5">Cold subtree (whole tree unmodified)</th>
                 {ageSort.TH({ k: "bytes", label: "Would free", right: true })}
                 {ageSort.TH({ k: "files", label: "Files", right: true })}
                 {ageSort.TH({ k: "last_modified", label: "Last modified", right: true })}
-                <th className="w-10"></th>
+                <th className="w-24"></th>
               </tr></thead>
               <tbody>
                 {ageSort.sorted.map((r: any) => (
-                  <tr key={r.path} className="border-b border-border/20 hover:bg-muted/20">
-                    <td className="px-2 py-1"><PathCell path={r.path} /></td>
-                    <td className="px-2 py-1 text-right font-mono">{formatBytes(r.bytes)}</td>
-                    <td className="px-2 py-1 text-right font-mono">{r.files.toLocaleString()}</td>
-                    <td className="px-2 py-1 text-right font-mono" title={fmtDate(r.last_modified)}>
-                      {fmtAge(r.last_modified)} ago
-                    </td>
-                    <td className="px-2 py-1"><AddBtn path={r.path} source={`recon:age>${minAgeDays}d`} /></td>
-                  </tr>
+                  <>
+                    <tr key={r.path}
+                        className={cn("border-b border-border/20 hover:bg-muted/20",
+                          r.dismissed && "opacity-50")}>
+                      <td className="px-1 py-1">
+                        <button className="text-muted-foreground hover:text-foreground"
+                                title="Preview: samples, extensions, owners, dates"
+                                onClick={() => setExpanded(expanded === r.path ? null : r.path)}>
+                          {expanded === r.path ? "▾" : "▸"}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1">
+                        <PathCell path={r.path} />
+                        {r.dismissed && (
+                          <div className="text-[10px] text-muted-foreground italic">
+                            dismissed by {r.dismissed.by}: {r.dismissed.note}{" "}
+                            <button className="text-primary not-italic hover:underline"
+                                    onClick={() => undismiss(r.dismissed.id)}>un-dismiss</button>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-right font-mono">{formatBytes(r.bytes)}</td>
+                      <td className="px-2 py-1 text-right font-mono">{r.files.toLocaleString()}</td>
+                      <td className="px-2 py-1 text-right font-mono" title={fmtDate(r.last_modified)}>
+                        {fmtAge(r.last_modified)} ago
+                      </td>
+                      <td className="px-2 py-1 whitespace-nowrap">
+                        {!r.dismissed && (
+                          <button className="text-muted-foreground hover:text-foreground text-[11px] mr-2"
+                                  title="Reviewed — dismiss with a note"
+                                  onClick={() => dismissPath(r.path)}>
+                            dismiss
+                          </button>
+                        )}
+                        <AddBtn path={r.path} source={`recon:age>${minAgeDays}d`} />
+                      </td>
+                    </tr>
+                    {expanded === r.path && (
+                      <tr key={r.path + ":preview"}>
+                        <td colSpan={6} className="border-b border-border/30">
+                          <PreviewBox path={r.path} />
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 ))}
               </tbody>
             </table>
@@ -238,14 +378,39 @@ export function ReconPanel({ root }: { root: string }) {
             </tr></thead>
             <tbody>
               {dirSort.sorted.map((r: any) => (
-                <tr key={r.path} className="border-b border-border/20 hover:bg-muted/20">
-                  <td className="px-2 py-1"><PathCell path={r.path} /></td>
-                  <td className="px-2 py-1 text-right font-mono">{r.files.toLocaleString()}</td>
-                  <td className="px-2 py-1 text-right font-mono">{r.direct_files.toLocaleString()}</td>
-                  <td className="px-2 py-1 text-right font-mono">{formatBytes(r.bytes)}</td>
-                  <td className="px-2 py-1 text-right font-mono">{fmtAge(r.last_modified)}</td>
-                  <td className="px-2 py-1"><AddBtn path={r.path} source="recon:dirs" /></td>
-                </tr>
+                <>
+                  <tr key={r.path} className={cn("border-b border-border/20 hover:bg-muted/20",
+                        r.dismissed && "opacity-50")}>
+                    <td className="px-2 py-1">
+                      <button className="text-muted-foreground hover:text-foreground mr-1"
+                              onClick={() => setExpanded(expanded === r.path ? null : r.path)}>
+                        {expanded === r.path ? "▾" : "▸"}
+                      </button>
+                      <span className="inline-block align-middle"><PathCell path={r.path} /></span>
+                      {r.dismissed && (
+                        <div className="text-[10px] text-muted-foreground italic">
+                          dismissed: {r.dismissed.note}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-2 py-1 text-right font-mono">{r.files.toLocaleString()}</td>
+                    <td className="px-2 py-1 text-right font-mono">{r.direct_files.toLocaleString()}</td>
+                    <td className="px-2 py-1 text-right font-mono">{formatBytes(r.bytes)}</td>
+                    <td className="px-2 py-1 text-right font-mono">{fmtAge(r.last_modified)}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">
+                      {!r.dismissed && (
+                        <button className="text-muted-foreground hover:text-foreground text-[11px] mr-2"
+                                onClick={() => dismissPath(r.path)}>dismiss</button>
+                      )}
+                      <AddBtn path={r.path} source="recon:dirs" />
+                    </td>
+                  </tr>
+                  {expanded === r.path && (
+                    <tr key={r.path + ":preview"}>
+                      <td colSpan={6} className="border-b border-border/30"><PreviewBox path={r.path} /></td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>
