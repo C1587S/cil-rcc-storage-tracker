@@ -19,6 +19,7 @@ import { useAppStore } from "@/lib/store";
 import { API_BASE_URL } from "@/lib/api";
 import { formatBytes } from "@/lib/utils/formatters";
 import { cn } from "@/lib/utils";
+import { ReconPanel } from "@/components/housekeeping-recon";
 
 const ROOTS = ["/cds3/cil", "/project/cil"];
 const VERDICTS = ["keep", "delete", "quarantine", "archive", "compress", "needs_info", "not_mine"];
@@ -179,6 +180,9 @@ export function HousekeepingView() {
           <Headline label="Verified" tb={h.verified_tb} />
         </div>
       )}
+
+      {/* Reconnaissance first: see where the problem is before deciding */}
+      <ReconPanel root={rootFilter || "/project/cil"} />
 
       <CandidatesPanel root={rootFilter || "/project/cil"}
                        onAdopted={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />

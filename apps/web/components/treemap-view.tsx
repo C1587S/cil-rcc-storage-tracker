@@ -755,13 +755,22 @@ export function TreemapView() {
               Unpin partition info
             </button>
             {activePartition?.path && currentUser && (
-              <button
-                className="text-[11px] text-primary hover:underline"
-                title={`Create a housekeeping target for ${activePartition.path} (subtree, current rollup)`}
-                onClick={createTargetFromPartition}
-              >
-                + Create housekeeping target
-              </button>
+              <>
+                <button
+                  className="text-[11px] text-primary hover:underline"
+                  title={`Create a housekeeping target for ${activePartition.path} (subtree, current rollup)`}
+                  onClick={createTargetFromPartition}
+                >
+                  + Create housekeeping target
+                </button>
+                <button
+                  className="text-[11px] text-primary hover:underline"
+                  title="Add this directory to the active custom list (select one in Housekeeping)"
+                  onClick={async () => window.alert(await addToActiveList([activePartition.path], 'treemap'))}
+                >
+                  + Add to list
+                </button>
+              </>
             )}
           </div>
         )}

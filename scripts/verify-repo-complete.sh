@@ -38,6 +38,9 @@ REQUIRED_PATHS=(
   apps/api/app/housekeeping/manifests.py
   apps/api/app/housekeeping/pilot.py
   apps/api/app/routers/housekeeping.py
+  apps/api/app/routers/recon.py
+  apps/web/components/housekeeping-recon.tsx
+  apps/web/lib/hk.ts
   apps/api/tests/test_resolver.py
   apps/web/components/housekeeping-view.tsx
   docs/manifest-format.md

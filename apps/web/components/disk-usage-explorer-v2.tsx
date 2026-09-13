@@ -13,6 +13,7 @@ import {
   Minimize2,
   RotateCcw,
   Target,
+  ListPlus,
 } from "lucide-react";
 import { getFileIcon, getFolderIcon, getSizeColor } from "@/lib/utils/icon-helpers";
 import { useState, useEffect } from "react";
@@ -415,6 +416,21 @@ function TreeNode({
             title={isReferenceRow ? "Reference directory" : "Set as reference"}
           >
             <Target className="w-3 h-3" />
+          </Button>
+        )}
+        {isDirectory && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 transition-all opacity-40 hover:opacity-100 hover:text-primary"
+            onClick={async (e) => {
+              e.stopPropagation();
+              const { addToActiveList } = await import("@/lib/hk");
+              window.alert(await addToActiveList([path], "tree"));
+            }}
+            title="Add to the active housekeeping list"
+          >
+            <ListPlus className="w-3 h-3" />
           </Button>
         )}
       </div>
