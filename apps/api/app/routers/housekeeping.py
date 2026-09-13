@@ -9,7 +9,7 @@ import csv
 import io
 import json
 import subprocess
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
@@ -591,6 +591,188 @@ def mark_restored(item_id: int, x_user: str | None = Header(default=None)):
                             ref_id=item_id, payload={"original_path": row[0]})
     _trigger_backup()
     return {"restored": row[0]}
+
+
+
+# ---------- the record: exportable archive + per-path story ----------
+# The history is the point of the tool. Both endpoints are designed for a
+# reader who was never here: the archive is a single self-describing file
+# that needs no app to read; the story answers "what happened to this
+# path" for ANY path — including ones that no longer exist, and including
+# the honest answer "nobody ever looked at it".
+
+def _ledger_rows(conn) -> list[dict]:
+    """Flat chronological ledger, human-readable without the app."""
+    rows = conn.execute("""
+        SELECT e.at, e.actor, e.kind, e.target_id,
+               COALESCE(e.payload->>'path', t.path) AS path,
+               e.payload
+        FROM event e LEFT JOIN target t ON t.id = e.target_id
+        ORDER BY e.id
+    """).fetchall()
+    out = []
+    for at, actor, kind, target_id, path, payload in rows:
+        p = payload or {}
+        detail = ""
+        if kind == "decided":
+            detail = f"verdict={p.get('verdict')}"
+        elif kind == "dismissed":
+            detail = f"note={p.get('note')}"
+        elif kind == "receipt_uploaded":
+            detail = (f"action={p.get('action')} bytes_freed={p.get('bytes_freed')}"
+                      f" removed={p.get('files_removed')} dry_run={p.get('dry_run')}")
+        elif kind == "target_created":
+            detail = f"bytes={p.get('bytes')} files={p.get('files')}"
+        elif kind == "assigned":
+            detail = f"assignee={p.get('assignee')}"
+        elif kind == "worklist_uploaded":
+            detail = f"applied={p.get('applied')} errors={p.get('errors')} warnings={p.get('warnings')}"
+        else:
+            detail = json.dumps({k: v for k, v in p.items() if k not in ("changes", "manifests")})[:200]
+        out.append({"at": str(at), "actor": actor, "action": kind,
+                    "target_id": target_id, "path": path or "", "detail": detail})
+    return out
+
+
+@router.get("/archive.json")
+def archive_json():
+    """The complete record as one self-describing document."""
+    with hk.tx() as conn:
+        def table(sql):
+            cur = conn.execute(sql)
+            cols = [d.name for d in cur.description]
+            return [dict(zip(cols, [str(v) if hasattr(v, "isoformat") else v for v in r]))
+                    for r in cur.fetchall()]
+        doc = {
+            "_what_is_this": (
+                "Complete housekeeping record for the CIL RCC storage cleanup: every "
+                "target, decision, dismissal, execution, quarantine movement and note, "
+                "with actors and timestamps. Exported so the history survives the "
+                "dashboard. The 'ledger' section is the chronological human-readable "
+                "summary; the other sections are the full tables."
+            ),
+            "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "ledger": _ledger_rows(conn),
+            "targets": table("SELECT * FROM target ORDER BY id"),
+            "decisions": table("SELECT * FROM decision ORDER BY id"),
+            "assignments": table("SELECT * FROM assignment ORDER BY id"),
+            "executions": table("SELECT * FROM execution ORDER BY id"),
+            "events": table("SELECT * FROM event ORDER BY id"),
+        }
+        for opt_table, key in (("hk_dismissal", "dismissals"), ("quarantine_item", "quarantine"),
+                               ("hk_list", "lists"), ("hk_list_item", "list_items")):
+            try:
+                doc[key] = table(f"SELECT * FROM {opt_table} ORDER BY 1")
+            except Exception:
+                doc[key] = []
+    return JSONResponse(content=json.loads(json.dumps(doc, default=str)), headers={
+        "Content-Disposition": "attachment; filename=housekeeping-archive.json"})
+
+
+@router.get("/archive.csv")
+def archive_csv():
+    """The chronological ledger as flat CSV — openable anywhere, forever."""
+    with hk.tx() as conn:
+        rows = _ledger_rows(conn)
+    buf = io.StringIO()
+    buf.write("# CIL RCC housekeeping ledger — every recorded action, chronological.\n")
+    buf.write(f"# exported_at: {datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}\n")
+    w = csv.DictWriter(buf, fieldnames=["at", "actor", "action", "target_id", "path", "detail"])
+    w.writeheader()
+    for r in rows:
+        w.writerow(r)
+    return Response(content=buf.getvalue(), media_type="text/csv", headers={
+        "Content-Disposition": "attachment; filename=housekeeping-ledger.csv"})
+
+
+@router.get("/story")
+def story(path: str = Query(..., min_length=1)):
+    """What happened here — for any path, existing or not. Collects
+    everything at, above (covering) or below the path, chronologically.
+    An empty result is itself the answer: nobody ever looked at it."""
+    p = path.rstrip("/") or "/"
+    entries: list[dict] = []
+
+    def rel(other: str) -> str:
+        if other == p:
+            return "exact"
+        if p.startswith(other + "/"):
+            return "covers this path"
+        return "within this path"
+
+    with hk.tx() as conn:
+        args3 = (p, p, p)
+        cover = " (path = %s OR %s LIKE path || '/%%' OR path LIKE %s || '/%%')"
+
+        for tid, tpath, tname, tby, tat in conn.execute(
+                "SELECT id, path, name, created_by, created_at FROM target WHERE" + cover,
+                args3).fetchall():
+            entries.append({"at": str(tat), "actor": tby, "kind": "target_created",
+                            "path": tpath, "relation": rel(tpath),
+                            "summary": f"became worklist target '{tname}' (#{tid})"})
+            for did, verdict, rationale, dby, dat, sup in conn.execute(
+                    "SELECT id, verdict, rationale, decided_by, decided_at, superseded_by"
+                    " FROM decision WHERE target_id = %s ORDER BY decided_at", (tid,)).fetchall():
+                entries.append({"at": str(dat), "actor": dby, "kind": "decision",
+                                "path": tpath, "relation": rel(tpath),
+                                "summary": f"decided '{verdict}'"
+                                           + (f" — {rationale}" if rationale else "")
+                                           + (" (later superseded)" if sup else "")})
+                for ex, eby, eat, vat, vdb in conn.execute(
+                        "SELECT manifest_ref, executor, claimed_at, verified_at, verified_delta_bytes"
+                        " FROM execution WHERE decision_id = %s", (did,)).fetchall():
+                    entries.append({"at": str(eat), "actor": eby, "kind": "execution",
+                                    "path": tpath, "relation": rel(tpath),
+                                    "summary": f"executed under manifest {ex or '(none)'}"
+                                               + (f"; verified {vat}, delta {vdb} bytes" if vat else "; not yet verified by snapshot")})
+
+        try:
+            for did_, dpath, note, dby, dat, rat, rby in conn.execute(
+                    "SELECT id, path, note, dismissed_by, dismissed_at, revoked_at, revoked_by"
+                    " FROM hk_dismissal WHERE" + cover, args3).fetchall():
+                entries.append({"at": str(dat), "actor": dby, "kind": "dismissed",
+                                "path": dpath, "relation": rel(dpath),
+                                "summary": f"reviewed and dismissed — {note}"})
+                if rat:
+                    entries.append({"at": str(rat), "actor": rby or "?", "kind": "undismissed",
+                                    "path": dpath, "relation": rel(dpath),
+                                    "summary": "dismissal revoked (back in recon)"})
+        except Exception:
+            pass
+
+        try:
+            for qpath, qdest, qat, qexp, qres, qpur in conn.execute(
+                    "SELECT original_path, quarantine_path, quarantined_at, expires_at,"
+                    " restored_at, purged_at FROM quarantine_item WHERE"
+                    + cover.replace("path", "original_path"), args3).fetchall():
+                st = ("restored " + str(qres)[:10] if qres
+                      else "purged " + str(qpur)[:10] if qpur
+                      else f"in quarantine until {str(qexp)[:10]}")
+                entries.append({"at": str(qat), "actor": "", "kind": "quarantined",
+                                "path": qpath, "relation": rel(qpath),
+                                "summary": f"moved to {qdest} — {st}"})
+        except Exception:
+            pass
+
+        try:
+            for lpath, lname, lby, lat in conn.execute(
+                    "SELECT i.path, l.name, i.added_by, i.added_at FROM hk_list_item i"
+                    " JOIN hk_list l ON l.id = i.list_id WHERE"
+                    + cover.replace("path", "i.path"), args3).fetchall():
+                entries.append({"at": str(lat), "actor": lby, "kind": "listed",
+                                "path": lpath, "relation": rel(lpath),
+                                "summary": f"added to list '{lname}'"})
+        except Exception:
+            pass
+
+    entries.sort(key=lambda e: e["at"])
+    return {
+        "path": p,
+        "entries": entries,
+        "verdict": ("No record: nobody has reviewed, listed, decided on or executed "
+                    "against this path or anything above or below it.")
+                   if not entries else None,
+    }
 
 
 # ---------- report ----------

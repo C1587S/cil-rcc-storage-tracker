@@ -69,6 +69,23 @@ docker compose exec -T clickhouse clickhouse-client --password "${CLICKHOUSE_PAS
 mv "$BACKUP_DIR/daily_rollup-$STAMP.csv.tmp" "$BACKUP_DIR/daily_rollup-$STAMP.csv"
 ROLLUP_FILE="$BACKUP_DIR/daily_rollup-$STAMP.csv"
 
+# --- 2b. Human-readable record: the archive must outlive the app.
+# JSON = complete structured record; CSV = flat chronological ledger.
+log "Exporting the record..."
+if curl -sf --compressed "http://localhost:8000/api/housekeeping/archive.json" \
+     -o "$BACKUP_DIR/housekeeping-archive-$STAMP.json.tmp" &&
+   curl -sf "http://localhost:8000/api/housekeeping/archive.csv" \
+     -o "$BACKUP_DIR/housekeeping-ledger-$STAMP.csv.tmp"; then
+  mv "$BACKUP_DIR/housekeeping-archive-$STAMP.json.tmp" "$BACKUP_DIR/housekeeping-archive-$STAMP.json"
+  mv "$BACKUP_DIR/housekeeping-ledger-$STAMP.csv.tmp" "$BACKUP_DIR/housekeeping-ledger-$STAMP.csv"
+  ARCHIVE_FILE="$BACKUP_DIR/housekeeping-archive-$STAMP.json"
+  LEDGER_FILE="$BACKUP_DIR/housekeeping-ledger-$STAMP.csv"
+else
+  log "WARNING: record export failed (API down?) — dumps still cover the data."
+  ARCHIVE_FILE=""
+  LEDGER_FILE=""
+fi
+
 # --- 3. Ship to R2 under lifecycle-matched prefixes, verifying each key ---
 if [ -n "${R2_ENDPOINT:-}" ] && [ -n "${R2_BUCKET:-}" ]; then
     R2="python3 ${SCRIPT_DIR}/r2util.py"
@@ -78,6 +95,8 @@ if [ -n "${R2_ENDPOINT:-}" ] && [ -n "${R2_BUCKET:-}" ]; then
         log "Uploading to ${prefix}..."
         $R2 put "$PG_DUMP_FILE" "${prefix}/housekeeping-$STAMP.sql"
         $R2 put "$ROLLUP_FILE" "${prefix}/daily_rollup-$STAMP.csv"
+        [ -n "$ARCHIVE_FILE" ] && $R2 put "$ARCHIVE_FILE" "${prefix}/housekeeping-archive-$STAMP.json"
+        [ -n "$LEDGER_FILE" ] && $R2 put "$LEDGER_FILE" "${prefix}/housekeeping-ledger-$STAMP.csv"
     }
 
     upload_pair "hourly"
@@ -97,5 +116,7 @@ fi
 # --- 4. Local retention: keep 7 days of hourly dumps ---
 find "$BACKUP_DIR" -name "housekeeping-2*.sql" -mtime +7 -delete
 find "$BACKUP_DIR" -name "daily_rollup-2*.csv" -mtime +7 -delete
+find "$BACKUP_DIR" -name "housekeeping-archive-2*.json" -mtime +7 -delete
+find "$BACKUP_DIR" -name "housekeeping-ledger-2*.csv" -mtime +7 -delete
 
 log "Done."

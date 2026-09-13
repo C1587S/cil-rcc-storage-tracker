@@ -181,6 +181,8 @@ export function HousekeepingView() {
         </div>
       )}
 
+      <StoryLookup />
+
       {/* Reconnaissance first: see where the problem is before deciding */}
       <ReconPanel root={rootFilter || "/project/cil"} />
 
@@ -592,5 +594,76 @@ function HistoryPanel() {
         {data?.length === 0 && <div className="text-muted-foreground">No events yet.</div>}
       </div>
     </details>
+  );
+}
+
+
+// ---------------- "What happened here?" — the record, one search away ----------------
+
+function StoryLookup() {
+  const [path, setPath] = useState("");
+  const [story, setStory] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const lookup = async () => {
+    if (!path.trim()) return;
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/housekeeping/story?path=${encodeURIComponent(path.trim())}`);
+      setStory(await res.json());
+    } catch (e: any) { window.alert(String(e)); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="border border-border/60 rounded-md px-3 py-2 space-y-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-medium whitespace-nowrap">What happened here?</span>
+        <input
+          className="h-8 px-2 rounded border border-border bg-transparent font-mono flex-1 min-w-[280px]"
+          placeholder="/project/cil/any/path — works for deleted paths and paths never touched"
+          value={path}
+          onChange={e => setPath(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && lookup()}
+        />
+        <button className="h-8 px-3 rounded bg-primary text-primary-foreground disabled:opacity-50"
+                disabled={busy || !path.trim()} onClick={lookup}>
+          {busy ? "…" : "Look up"}
+        </button>
+        <span className="ml-auto flex items-center gap-2 text-muted-foreground">
+          Full record:
+          <a className="text-primary hover:underline"
+             href={`${API_BASE_URL}/api/housekeeping/archive.json`} download>archive.json</a>
+          <a className="text-primary hover:underline"
+             href={`${API_BASE_URL}/api/housekeeping/archive.csv`} download>ledger.csv</a>
+        </span>
+      </div>
+      {story && (
+        <div className="text-xs space-y-1">
+          {story.verdict ? (
+            <div className="px-2.5 py-1.5 rounded border border-border/60 bg-muted/20 text-muted-foreground">
+              {story.verdict}
+            </div>
+          ) : (
+            story.entries.map((e: any, i: number) => (
+              <div key={i} className="flex gap-2 items-baseline">
+                <span className="font-mono text-muted-foreground shrink-0">{String(e.at).slice(0, 16)}</span>
+                <span className="font-medium shrink-0">{e.actor || "system"}</span>
+                <span className={cn("shrink-0 px-1.5 rounded text-[10px] uppercase",
+                  e.kind === "dismissed" ? "bg-muted/40" :
+                  e.kind === "decision" ? "bg-amber-500/15 text-amber-700 dark:text-amber-400" :
+                  e.kind === "execution" || e.kind === "quarantined" ? "bg-red-500/10 text-red-600" :
+                  "bg-primary/10 text-primary")}>{e.kind}</span>
+                {e.relation !== "exact" && (
+                  <span className="text-[10px] text-muted-foreground shrink-0">({e.relation})</span>
+                )}
+                <span>{e.summary}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }
