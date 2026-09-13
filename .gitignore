@@ -67,3 +67,4 @@ Thumbs.db
 logs/*.log
 cleanup/
 nohup.out
+backups/

@@ -15,6 +15,8 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     "clickhouse-driver>=0.2.7",
     "python-dotenv>=1.0.0",
+    "psycopg[binary]>=3.1.0",
+    "psycopg-pool>=3.2.0",
 ]
 
 [project.optional-dependencies]

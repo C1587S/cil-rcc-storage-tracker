@@ -126,6 +126,35 @@ case "${1:-all}" in
             echo "Computing recursive directory sizes for $SNAPSHOT_DATE..."
             docker compose run --rm importer python scripts/compute_recursive_sizes_v2.py "$SNAPSHOT_DATE"
 
+            # Permanent per-prefix history for housekeeping (root + 2 levels).
+            # Snapshots are disposable; this table is NOT — never add a TTL
+            # and never include it in snapshot deletion loops.
+            echo "Writing daily_rollup for $SNAPSHOT_DATE..."
+            docker compose exec -T clickhouse ${CH_CLIENT} --query "
+                CREATE TABLE IF NOT EXISTS filesystem.daily_rollup (
+                    date Date,
+                    root String,
+                    prefix String,
+                    depth_rel UInt8,
+                    bytes UInt64,
+                    files UInt64,
+                    dirs UInt64,
+                    computed_at DateTime DEFAULT now()
+                ) ENGINE = ReplacingMergeTree(computed_at)
+                ORDER BY (date, root, prefix)"
+            for ROLLUP_ROOT in /project/cil /cds3/cil; do
+                ROOT_SLASHES=$(echo -n "$ROLLUP_ROOT" | tr -cd '/' | wc -c)
+                docker compose exec -T clickhouse ${CH_CLIENT} --query "
+                    INSERT INTO filesystem.daily_rollup (date, root, prefix, depth_rel, bytes, files, dirs)
+                    SELECT snapshot_date, '$ROLLUP_ROOT', path,
+                           toUInt8((length(path) - length(replaceAll(path, '/', ''))) - $ROOT_SLASHES),
+                           recursive_size_bytes, recursive_file_count, recursive_dir_count
+                    FROM filesystem.directory_recursive_sizes
+                    WHERE snapshot_date = '$SNAPSHOT_DATE'
+                      AND (path = '$ROLLUP_ROOT' OR path LIKE '$ROLLUP_ROOT/%')
+                      AND (length(path) - length(replaceAll(path, '/', ''))) <= $ROOT_SLASHES + 2"
+            done
+
             echo ""
             echo "Computing voronoi visualization for $SNAPSHOT_DATE..."
             # NOTE: must run AFTER recursive sizes — the voronoi precompute joins

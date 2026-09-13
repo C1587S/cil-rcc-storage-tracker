@@ -2,6 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# postgresql-client provides pg_dump for the on-write housekeeping backup
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir -e .

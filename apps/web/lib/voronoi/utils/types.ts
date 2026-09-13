@@ -8,6 +8,8 @@ export interface PartitionInfo {
   size: number
   file_count: number
   isDirectory: boolean
+  /** Recursive max mtime (epoch seconds) — 0 when unknown */
+  last_modified?: number
   isSynthetic: boolean
   quotaPercent: number
   fileQuotaPercent: number

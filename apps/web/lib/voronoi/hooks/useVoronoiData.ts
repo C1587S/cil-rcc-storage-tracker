@@ -105,6 +105,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
           isDirectory: Boolean((nodeData as any).is_directory),
           is_directory: Boolean((nodeData as any).is_directory),
           isSynthetic: Boolean((nodeData as any).is_synthetic),
+          last_modified: (nodeData as any).last_modified ?? 0,
           file_count: (nodeData as any).file_count ?? 0,
           childrenIds: (nodeData as any).children_ids || [],
           children: undefined,
@@ -248,6 +249,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
                 isDirectory: Boolean((nodeData as any).is_directory),
                 is_directory: Boolean((nodeData as any).is_directory),
                 isSynthetic: Boolean((nodeData as any).is_synthetic),
+          last_modified: (nodeData as any).last_modified ?? 0,
                 file_count: (nodeData as any).file_count ?? 0,
                 childrenIds: (nodeData as any).children_ids || [],
                 children: undefined,
@@ -432,6 +434,7 @@ export function useVoronoiData({ selectedSnapshot, effectivePath, enabled = true
           isDirectory: Boolean(data.is_directory),
           is_directory: Boolean(data.is_directory),
           isSynthetic: Boolean(data.is_synthetic),
+          last_modified: (data as any).last_modified ?? 0,
           file_count: data.file_count ?? 0,
           childrenIds: data.children_ids || [],
           children: undefined, // Not expanded yet

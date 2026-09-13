@@ -206,25 +206,37 @@ class VoronoiStore:
             # time. Drilling into a node re-roots the fetch, so its files
             # come back at that point.
             files_expr = """
-               if(depth > %(full_depth)s, '',
-                  if(original_files_json != '' AND original_files_json != '[]',
+               if(v.depth > %(full_depth)s, '',
+                  if(v.original_files_json != '' AND v.original_files_json != '[]',
                      concat('[', arrayStringConcat(arraySlice(
                          arrayReverseSort(f -> JSONExtractUInt(f, 'size'),
-                                          JSONExtractArrayRaw(original_files_json)),
+                                          JSONExtractArrayRaw(v.original_files_json)),
                          1, %(files_limit)s), ','), ']'),
-                     original_files_json)) AS original_files_json"""
+                     v.original_files_json)) AS original_files_json"""
         else:
-            files_expr = "original_files_json"
+            files_expr = "v.original_files_json AS original_files_json"
 
+        # Recursive last_modified comes from directory_recursive_sizes so the
+        # UI can encode "age" (cold data). The right side is bounded by the
+        # same prefix + a slash-count cap so the join stays small.
         subtree_query = f"""
-        SELECT node_id, name, path, size, is_directory, depth,
-               children_json, file_count, is_synthetic, {files_expr}
-        FROM voronoi_precomputed
-        WHERE snapshot_date = %(snapshot_date)s
-          AND (path = %(root_path)s OR path LIKE %(path_prefix)s)
-          AND depth <= %(max_depth)s
-          AND (depth <= %(full_depth)s OR size >= %(min_size)s OR file_count >= %(min_files)s)
-        ORDER BY depth, path
+        SELECT v.node_id, v.name, v.path, v.size, v.is_directory, v.depth,
+               v.children_json, v.file_count, v.is_synthetic, {files_expr},
+               r.last_modified
+        FROM voronoi_precomputed AS v
+        LEFT JOIN (
+            SELECT path, max(last_modified) AS last_modified
+            FROM directory_recursive_sizes
+            WHERE snapshot_date = %(snapshot_date)s
+              AND (path = %(root_path)s OR path LIKE %(path_prefix)s)
+              AND (length(path) - length(replaceAll(path, '/', ''))) <= %(max_slashes)s
+            GROUP BY path
+        ) AS r ON r.path = v.path
+        WHERE v.snapshot_date = %(snapshot_date)s
+          AND (v.path = %(root_path)s OR v.path LIKE %(path_prefix)s)
+          AND v.depth <= %(max_depth)s
+          AND (v.depth <= %(full_depth)s OR v.size >= %(min_size)s OR v.file_count >= %(min_files)s)
+        ORDER BY v.depth, v.path
         """
         results = self.client.execute(
             subtree_query,
@@ -237,6 +249,7 @@ class VoronoiStore:
                 "min_size": min_size,
                 "min_files": min_files,
                 "files_limit": files_limit,
+                "max_slashes": root_path.count("/") + max_relative_depth,
             },
         )
 
@@ -260,6 +273,7 @@ class VoronoiStore:
                 "file_count": row[7],
                 "is_synthetic": row[8],
                 "original_files": original_files,
+                "last_modified": row[10] or 0,
             }
 
         return nodes_dict
