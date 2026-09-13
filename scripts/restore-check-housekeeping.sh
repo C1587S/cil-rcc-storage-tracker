@@ -19,17 +19,28 @@ exec > >(tee -a "$LOG") 2>&1
 echo "=== restore check $(date '+%F %T') ==="
 
 cd "$PROJECT_ROOT"
-[ -f .env ] && set -a && . ./.env && set +a
+ENV_FILE="$PROJECT_ROOT/.env"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "ERROR: env file not found: $ENV_FILE"; exit 1
+fi
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
 
 # --- pick the dump: R2 first (tests the real recovery path), else local ---
 DUMP="$BACKUP_DIR/.restore-check.sql"
 if [ -n "${R2_ENDPOINT:-}" ] && [ -n "${R2_BUCKET:-}" ]; then
-  LATEST_KEY=$(AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
-    aws s3 ls --endpoint-url "$R2_ENDPOINT" "s3://$R2_BUCKET/postgres/" | sort | tail -1 | awk '{print $4}')
+  R2="python3 $PROJECT_ROOT/scripts/r2util.py"
+  LATEST_KEY=""
+  for PREFIX in hourly daily monthly; do
+    LATEST_KEY=$($R2 latest "$PREFIX/housekeeping-" 2>/dev/null) && [ -n "$LATEST_KEY" ] && break
+  done
+  if [ -z "$LATEST_KEY" ]; then
+    echo "FAIL: R2 configured but no dump found under hourly/, daily/ or monthly/"; exit 1
+  fi
   echo "Pulling from R2: $LATEST_KEY"
-  AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
-    aws s3 cp --endpoint-url "$R2_ENDPOINT" --only-show-errors \
-    "s3://$R2_BUCKET/postgres/$LATEST_KEY" "$DUMP"
+  $R2 get "$LATEST_KEY" "$DUMP"
 else
   LOCAL=$(ls -t "$BACKUP_DIR"/housekeeping-2*.sql 2>/dev/null | head -1)
   if [ -z "$LOCAL" ]; then

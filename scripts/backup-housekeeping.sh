@@ -6,19 +6,22 @@
 # nowhere else; daily_rollup in ClickHouse is permanent history that rides
 # this same backup ("ClickHouse is disposable EXCEPT daily_rollup").
 #
-# Layers:
-#   - The API also dumps on every state change (dump-on-write, same lock).
-#   - This script: full timestamped dump + daily_rollup CSV, then upload to
-#     S3-compatible object storage (Cloudflare R2) when configured.
-#   - Run hourly from cron:  0 * * * *  /path/to/backup-housekeeping.sh
+# Object keys are prefixed to match the bucket's lifecycle rules:
+#   hourly/   every run              (bucket expires these after 7 days)
+#   daily/    first run of each day  (expires after 90 days)
+#   monthly/  first run of each month (kept indefinitely — this prefix must
+#             NEVER gain an expiry rule)
 #
-# Concurrency-safe: flock serializes against the API's on-write dumps and
-# overlapping cron runs; everything is written to a temp name and renamed.
+# Every upload is verified with a HEAD on the key just written; a zero exit
+# from the uploader is not treated as proof.
 #
-# R2 config (optional, in .env):
-#   R2_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+# Env (in <repo>/.env, loaded explicitly — never relies on the shell):
+#   R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 #   R2_BUCKET=cil-housekeeping-backups
-#   R2_ACCESS_KEY_ID=... / R2_SECRET_ACCESS_KEY=...
+#   R2_ACCESS_KEY_ID=...
+#   R2_SECRET_ACCESS_KEY=...
+#
+# Cron: 0 * * * *  (hourly). Concurrency-safe via flock + temp-then-rename.
 # =============================================================================
 set -e
 
@@ -26,7 +29,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BACKUP_DIR="${PROJECT_ROOT}/backups"
 LOCK_FILE="${BACKUP_DIR}/.dump.lock"
+ENV_FILE="${PROJECT_ROOT}/.env"
 STAMP=$(date +%Y%m%d-%H%M%S)
+TODAY=$(date +%Y%m%d)
+MONTH=$(date +%Y%m)
 QUIET=false
 [ "$1" = "--quiet" ] && QUIET=true
 
@@ -35,8 +41,16 @@ log() { [ "$QUIET" = false ] && echo "$(date '+%F %T') $*"; }
 cd "$PROJECT_ROOT"
 mkdir -p "$BACKUP_DIR"
 
-# Load env for passwords and R2 credentials
-[ -f .env ] && set -a && . ./.env && set +a
+# --- 0. Environment: loaded explicitly, independent of the caller's shell ---
+if [ ! -f "$ENV_FILE" ]; then
+    echo "ERROR: env file not found: $ENV_FILE"
+    echo "The backup cannot read database or R2 credentials without it."
+    exit 1
+fi
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
 
 # --- 1. Postgres dump (flock-serialized with the API's on-write dumps) ---
 log "Dumping Postgres..."
@@ -45,7 +59,7 @@ flock "$LOCK_FILE" bash -c "
     > '$BACKUP_DIR/housekeeping-$STAMP.sql.tmp' &&
   mv '$BACKUP_DIR/housekeeping-$STAMP.sql.tmp' '$BACKUP_DIR/housekeeping-$STAMP.sql'
 "
-ln -sf "housekeeping-$STAMP.sql" "$BACKUP_DIR/housekeeping-latest-hourly.sql"
+PG_DUMP_FILE="$BACKUP_DIR/housekeeping-$STAMP.sql"
 
 # --- 2. daily_rollup CSV (permanent history — not disposable) ---
 log "Dumping daily_rollup..."
@@ -53,19 +67,31 @@ docker compose exec -T clickhouse clickhouse-client --password "${CLICKHOUSE_PAS
   --query "SELECT * FROM filesystem.daily_rollup FINAL FORMAT CSVWithNames" \
   > "$BACKUP_DIR/daily_rollup-$STAMP.csv.tmp"
 mv "$BACKUP_DIR/daily_rollup-$STAMP.csv.tmp" "$BACKUP_DIR/daily_rollup-$STAMP.csv"
-ln -sf "daily_rollup-$STAMP.csv" "$BACKUP_DIR/daily_rollup-latest.csv"
+ROLLUP_FILE="$BACKUP_DIR/daily_rollup-$STAMP.csv"
 
-# --- 3. Ship to object storage (R2) when configured ---
+# --- 3. Ship to R2 under lifecycle-matched prefixes, verifying each key ---
 if [ -n "${R2_ENDPOINT:-}" ] && [ -n "${R2_BUCKET:-}" ]; then
-  log "Uploading to R2..."
-  AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
-    aws s3 cp --endpoint-url "$R2_ENDPOINT" --only-show-errors \
-    "$BACKUP_DIR/housekeeping-$STAMP.sql" "s3://$R2_BUCKET/postgres/housekeeping-$STAMP.sql"
-  AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
-    aws s3 cp --endpoint-url "$R2_ENDPOINT" --only-show-errors \
-    "$BACKUP_DIR/daily_rollup-$STAMP.csv" "s3://$R2_BUCKET/rollup/daily_rollup-$STAMP.csv"
+    R2="python3 ${SCRIPT_DIR}/r2util.py"
+
+    upload_pair() {
+        local prefix="$1"
+        log "Uploading to ${prefix}..."
+        $R2 put "$PG_DUMP_FILE" "${prefix}/housekeeping-$STAMP.sql"
+        $R2 put "$ROLLUP_FILE" "${prefix}/daily_rollup-$STAMP.csv"
+    }
+
+    upload_pair "hourly"
+
+    # Promote the first run of the day / month. Objects meant to live longer
+    # never sit under a prefix with a shorter expiry.
+    if ! $R2 exists "daily/housekeeping-${TODAY}" >/dev/null 2>&1; then
+        upload_pair "daily"
+    fi
+    if ! $R2 exists "monthly/housekeeping-${MONTH}" >/dev/null 2>&1; then
+        upload_pair "monthly"
+    fi
 else
-  log "WARNING: R2 not configured (R2_ENDPOINT/R2_BUCKET unset) — backup is LOCAL ONLY."
+    log "WARNING: R2 not configured (R2_ENDPOINT/R2_BUCKET unset in $ENV_FILE) — backup is LOCAL ONLY."
 fi
 
 # --- 4. Local retention: keep 7 days of hourly dumps ---
