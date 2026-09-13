@@ -82,6 +82,45 @@ function toEChartsTree(
     ? childDirs.map((c: any) => toEChartsTree(c, mode, depthLimit, depth + 1, rw, pruneFrac))
     : undefined
 
+  // The children never sum to the parent: direct files have no child node
+  // and small subdirectories are pruned server-side. Without an explicit
+  // residual cell that difference renders as confusing blank space.
+  let allChildren = children
+  if (children && children.length > 0) {
+    const childBytes = children.reduce((a, c) => a + (c.bytes || 0), 0)
+    const childFiles = children.reduce((a, c) => a + (c.fileCount || 0), 0)
+    const residBytes = Math.max(0, bytes - childBytes)
+    const residFiles = Math.max(0, fileCount - childFiles)
+    const residValue = mode === 'files' ? residFiles : residBytes
+    if (residValue > value * 0.005) {
+      allChildren = [...children, {
+        name: 'other',
+        value: residValue,
+        path: '',
+        bytes: residBytes,
+        fileCount: residFiles,
+        directFiles: 0,
+        directDirs: 0,
+        isDirectory: false,
+        raw: undefined,
+        // Hatched neutral cell: clearly "aggregate of small things",
+        // visually distinct from both data cells and empty canvas
+        itemStyle: {
+          color: '#d3d7dc',
+          decal: {
+            symbol: 'rect',
+            symbolSize: 1,
+            dashArrayX: [1, 0],
+            dashArrayY: [2, 5],
+            rotation: Math.PI / 4,
+            color: 'rgba(55, 65, 81, 0.22)',
+          },
+        },
+        label: { fontStyle: 'italic', color: '#4b5563' },
+      } as EChartsNode]
+    }
+  }
+
   return {
     name: node.name,
     value,
@@ -91,7 +130,7 @@ function toEChartsTree(
     directFiles: node.originalFiles?.length ?? 0,
     directDirs: childDirs.length,
     isDirectory: true,
-    children: children && children.length > 0 ? children : undefined,
+    children: allChildren && allChildren.length > 0 ? allChildren : undefined,
     raw: node,
     // Dual encoding: AREA carries the selected metric, COLOR carries the
     // complementary one (area=size -> color=file count, area=files -> color=size).
@@ -294,9 +333,11 @@ export function TreemapView() {
             formatter: (p: any) => {
               const d = p.data as EChartsNode | undefined
               if (!d || !d.name) return ''
-              // Always show BOTH metrics: area encodes the selected one,
-              // the label keeps the other visible.
-              return `${d.name}\n${formatBytes(d.bytes || 0)} | ${compactCount(d.fileCount || 0)} files`
+              // Show both metrics when both exist; omit zeros
+              const parts = []
+              if (d.bytes) parts.push(formatBytes(d.bytes))
+              if (d.fileCount) parts.push(`${compactCount(d.fileCount)} files`)
+              return parts.length ? `${d.name}\n${parts.join(' | ')}` : d.name
             },
             fontSize: 11,
             fontFamily: "'Courier New', monospace",
@@ -309,7 +350,7 @@ export function TreemapView() {
             fontSize: 11,
             fontFamily: "'Courier New', monospace",
             color: '#1a1a1a',
-            backgroundColor: 'transparent',
+            backgroundColor: 'rgba(255,255,255,0.35)',
           },
           itemStyle: {
             borderColor: borderColor,
@@ -319,10 +360,11 @@ export function TreemapView() {
           // Node colors come from per-node itemStyle (size severity);
           // levels only fade deeper cells slightly for hierarchy depth cues.
           levels: [
-            { itemStyle: { borderWidth: 0, gapWidth: 3, colorAlpha: [0.85, 0.85] } },
-            { itemStyle: { borderWidth: 2, gapWidth: 2, colorAlpha: [0.7, 0.7] } },
-            { itemStyle: { borderWidth: 1, gapWidth: 1, colorAlpha: [0.55, 0.55] } },
+            { itemStyle: { borderWidth: 0, gapWidth: 5, colorAlpha: [0.85, 0.85] } },
+            { itemStyle: { borderWidth: 3, gapWidth: 3, colorAlpha: [0.7, 0.7] } },
+            { itemStyle: { borderWidth: 1.5, gapWidth: 1.5, colorAlpha: [0.55, 0.55] } },
             { itemStyle: { borderWidth: 1, gapWidth: 1, colorAlpha: [0.45, 0.45] } },
+            { itemStyle: { borderWidth: 0.5, gapWidth: 0.5, colorAlpha: [0.4, 0.4] } },
           ],
           universalTransition: true,
           animationDurationUpdate: 1000,
@@ -374,6 +416,7 @@ export function TreemapView() {
     chart.on('mouseover', (params: any) => {
       const d = params.data as EChartsNode | undefined
       if (!d || !d.name) return
+      if (!d.path) { setHoverInfo({ name: d.name, bytes: d.bytes || 0, fileCount: d.fileCount || 0, pct: 0 }); return }
       const primary = weightMode === 'files' ? (d.fileCount || 0) : (d.bytes || 0)
       setHoverInfo({
         name: d.name,
@@ -389,7 +432,7 @@ export function TreemapView() {
     chart.on('contextmenu', (params: any) => {
       params.event?.event?.preventDefault?.()
       const d = params.data as EChartsNode | undefined
-      if (!d || !d.name) return
+      if (!d || !d.name || !d.path) return
       setActivePartition(toPartitionInfo(d))
       setIsPartitionFixed(true)
     })
@@ -463,36 +506,6 @@ export function TreemapView() {
         <span className="ml-auto px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[10px] uppercase tracking-wide">
           In development
         </span>
-      </div>
-
-      {/* Legend: what area and color encode, with the color scale */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground border border-border/60 rounded-md px-3 py-1.5">
-          <span className="font-medium text-foreground/80">
-            Area = {weightMode === 'size' ? 'storage size' : 'file count'}
-          </span>
-          <span className="text-muted-foreground/50">|</span>
-          <span className="font-medium text-foreground/80">
-            Color = {weightMode === 'size' ? 'file count' : 'storage size'}:
-          </span>
-          {(weightMode === 'size'
-            ? [
-                { c: '#4ade80', l: '<10K files' },
-                { c: '#facc15', l: '10K–100K' },
-                { c: '#fb923c', l: '100K–1M' },
-                { c: '#ef4444', l: '>1M' },
-              ]
-            : [
-                { c: '#4ade80', l: '<10 GB' },
-                { c: '#facc15', l: '10–20 GB' },
-                { c: '#fb923c', l: '20–50 GB' },
-                { c: '#ef4444', l: '>50 GB' },
-              ]
-          ).map(s => (
-            <span key={s.l} className="inline-flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded-sm border border-black/10" style={{ background: s.c }} />
-              {s.l}
-            </span>
-          ))}
       </div>
 
       {/* Shared navigation bar (same component as the Voronoi view) */}
@@ -572,6 +585,42 @@ export function TreemapView() {
             <p className="text-sm text-red-500">Failed to load data: {String(error)}</p>
           </div>
         )}
+      </div>
+
+      {/* Legend: caption strip directly under the canvas */}
+      <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground border border-border/60 bg-card rounded-md px-4 py-1.5 -mt-1">
+        <span className="font-medium text-foreground/80">
+          Area = {weightMode === 'size' ? 'storage size' : 'file count'}
+        </span>
+        <span className="text-muted-foreground/50">|</span>
+        <span className="font-medium text-foreground/80">
+          Color = {weightMode === 'size' ? 'file count' : 'storage size'}:
+        </span>
+        {(weightMode === 'size'
+          ? [
+              { c: '#4ade80', l: '<10K files' },
+              { c: '#facc15', l: '10K–100K' },
+              { c: '#fb923c', l: '100K–1M' },
+              { c: '#ef4444', l: '>1M' },
+            ]
+          : [
+              { c: '#4ade80', l: '<10 GB' },
+              { c: '#facc15', l: '10–20 GB' },
+              { c: '#fb923c', l: '20–50 GB' },
+              { c: '#ef4444', l: '>50 GB' },
+            ]
+        ).map(s => (
+          <span key={s.l} className="inline-flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-sm border border-black/10" style={{ background: s.c }} />
+            {s.l}
+          </span>
+        ))}
+        <span className="text-muted-foreground/50">|</span>
+        <span className="inline-flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-sm border border-black/20"
+                style={{ background: 'repeating-linear-gradient(45deg, #d3d7dc, #d3d7dc 2px, #9aa1a9 2px, #9aa1a9 3px)' }} />
+          other (files & small dirs)
+        </span>
       </div>
 
       <p className="text-[11px] text-muted-foreground">

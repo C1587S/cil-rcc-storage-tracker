@@ -197,9 +197,10 @@ if [ "$KEEP_OLD" = false ]; then
   fi
 fi
 if [ "$KEEP_OLD" = false ]; then
-  # Get all snapshot dates except the one we just imported
+  # Keep the newest previous snapshot (one-day retention: needed by the
+  # nightly snapshot_diff job) and delete everything older.
   OLD_DATES=$(docker compose exec -T clickhouse ${CH_CLIENT} --query \
-    "SELECT snapshot_date FROM filesystem.snapshots WHERE snapshot_date != '${NEW_DATE}' ORDER BY snapshot_date" 2>/dev/null | tr -d '\r')
+    "SELECT snapshot_date FROM filesystem.snapshots WHERE snapshot_date != '${NEW_DATE}' ORDER BY snapshot_date DESC LIMIT 1000 OFFSET 1" 2>/dev/null | tr -d '\r')
 
   if [ -n "$OLD_DATES" ]; then
     echo ""
@@ -232,6 +233,11 @@ elif [ "$KEEP_OLD" = true ]; then
   echo ""
   echo "--- Step 3/3: Skipped (--keep-old) ---"
 fi
+
+# Pre-warm the API caches so the first visitor doesn't pay the cold scans
+echo ""
+echo "--- Warming visualization caches ---"
+"${SCRIPT_DIR}/warm-cache.sh" || true
 
 echo ""
 echo "======================================================"

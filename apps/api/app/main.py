@@ -1,8 +1,9 @@
 """CIL-rcc-tracker FastAPI application."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from app.settings import get_settings
-from app.routers import snapshots, browse, contents, search, query, voronoi, nl_to_sql, computing, projections, auth, feedback
+from app.routers import housekeeping, snapshots, browse, contents, search, query, voronoi, nl_to_sql, computing, projections, auth, feedback
 
 # Get settings
 settings = get_settings()
@@ -18,6 +19,9 @@ app = FastAPI(
 
 # Configure CORS
 cors_list = settings.get_cors_origins_list()
+# Subtree/report payloads are multi-MB JSON full of repetitive paths —
+# gzip cuts them ~4x through the tunnel.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_list,
@@ -37,6 +41,7 @@ app.include_router(nl_to_sql.router)
 app.include_router(computing.router)
 app.include_router(projections.router)
 app.include_router(auth.router)
+app.include_router(housekeeping.router)
 app.include_router(feedback.router)
 
 
