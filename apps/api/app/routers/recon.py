@@ -467,7 +467,9 @@ def _ensure_list_schema(conn):
 
 def _actor(conn, x_user: str | None) -> str:
     if not x_user:
-        raise HTTPException(status_code=401, detail="X-User header required")
+        raise HTTPException(status_code=401, detail=(
+            "Your session has no identity attached — reload the page or sign in"
+            " again. If it keeps happening, log out and back in."))
     u = x_user.strip().lower()
     conn.execute("INSERT INTO person (username) VALUES (%s) ON CONFLICT DO NOTHING", (u,))
     return u

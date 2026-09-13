@@ -22,7 +22,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAppStore } from "@/lib/store";
 import { API_BASE_URL } from "@/lib/api";
-import { activeList, setActiveList, toast } from "@/lib/hk";
+import { activeList, setActiveList, toast, currentIdentity } from "@/lib/hk";
 import { GridLoader } from "@/components/ui/grid-loader";
 import { formatBytes } from "@/lib/utils/formatters";
 import { cn } from "@/lib/utils";
@@ -30,16 +30,20 @@ import { cn } from "@/lib/utils";
 type Tab = "age" | "dirs" | "owners" | "largest" | "dups" | "files";
 
 async function rapi(path: string, opts: RequestInit = {}, user?: string | null) {
+  const uid = user ?? currentIdentity();
   const res = await fetch(`${API_BASE_URL}/api/housekeeping/recon${path}`, {
     ...opts,
     headers: {
       "Content-Type": "application/json",
-      ...(user ? { "X-User": user } : {}),
       ...(opts.headers || {}),
+      ...(uid ? { "X-User": uid } : {}),
     },
   });
   const d = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(d?.detail || String(res.status));
+  if (!res.ok) {
+    console.error(`recon API ${res.status} ${path}:`, d?.detail || d);
+    throw new Error(d?.detail || `Request failed (${res.status})`);
+  }
   return d;
 }
 

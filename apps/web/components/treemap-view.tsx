@@ -356,13 +356,15 @@ export function TreemapView() {
   // Front door of the campaign: any pinned directory becomes a housekeeping
   // target pre-filled with root, path and its current rollup.
   const createTargetFromPartition = useCallback(async () => {
-    if (!activePartition?.path || !currentUser) return
+    const uid = currentUser ?? currentIdentity()
+    if (!activePartition?.path) return
+    if (!uid) { toast('Your session has no identity — reload the page or sign in again.', 'error'); return }
     const root = KNOWN_ROOTS.find(r => activePartition.path === r || activePartition.path.startsWith(r + '/'))
     if (!root) { toast('Path is outside the known storage roots', 'error'); return }
     try {
       const res = await fetch(`${API_BASE_URL}/api/housekeeping/targets`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User': currentUser },
+        headers: { 'Content-Type': 'application/json', 'X-User': uid },
         body: JSON.stringify({
           name: activePartition.name,
           root,
@@ -754,7 +756,7 @@ export function TreemapView() {
             >
               Unpin partition info
             </button>
-            {activePartition?.path && currentUser && (
+            {activePartition?.path && (
               <>
                 <button
                   className="text-[11px] text-primary hover:underline"

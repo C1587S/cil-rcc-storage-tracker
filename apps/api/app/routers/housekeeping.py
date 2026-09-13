@@ -34,7 +34,9 @@ ARCHIVE_MIN_HEADROOM_BYTES = 5 * 1024**4  # need at least 5 TiB free to offer ar
 
 def _actor(x_user: str | None, conn) -> str:
     if not x_user:
-        raise HTTPException(status_code=401, detail="X-User header required")
+        raise HTTPException(status_code=401, detail=(
+            "Your session has no identity attached — reload the page or sign in"
+            " again. If it keeps happening, log out and back in."))
     username = x_user.strip().lower()
     row = conn.execute("SELECT username FROM person WHERE username = %s", (username,)).fetchone()
     if not row:

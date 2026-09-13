@@ -2,6 +2,14 @@
 
 import { API_BASE_URL } from "@/lib/api";
 
+/** THE identity source for every housekeeping call. Read at call time from
+ *  the login gate's storage — never threaded through props/state, so a
+ *  component mounted before store hydration can't silently drop it. */
+export function currentIdentity(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  return localStorage.getItem("cil-user");
+}
+
 export function activeList(): { id: number; name: string } | null {
   try {
     const raw = localStorage.getItem("hk-active-list");
@@ -21,10 +29,10 @@ export async function addToActiveList(paths: string[], source: string): Promise<
     return ("No list is active yet. Lists collect paths you want to act on: "
       + "open the Housekeeping tab, pick or create one under Custom lists, then retry.");
   }
-  const user = localStorage.getItem("cil-user");
+  const user = currentIdentity();
   const res = await fetch(`${API_BASE_URL}/api/housekeeping/recon/lists/${list.id}/items`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(user ? { "X-User": user } : {}) },
+    headers: { "Content-Type": "application/json", ...(user ? { "X-User": user } : {}) }, // user = currentIdentity() above
     body: JSON.stringify({ paths, source }),
   });
   const d = await res.json().catch(() => ({}));

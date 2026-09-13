@@ -20,7 +20,7 @@ import { API_BASE_URL } from "@/lib/api";
 import { formatBytes } from "@/lib/utils/formatters";
 import { cn } from "@/lib/utils";
 import { ReconPanel } from "@/components/housekeeping-recon";
-import { toast } from "@/lib/hk";
+import { toast, currentIdentity } from "@/lib/hk";
 import { GridLoader } from "@/components/ui/grid-loader";
 
 const ROOTS = ["/cds3/cil", "/project/cil"];
@@ -29,17 +29,23 @@ const VERDICTS = ["keep", "delete", "quarantine", "archive", "compress", "needs_
 type Row = Record<string, any>;
 
 async function api(path: string, opts: RequestInit = {}, user?: string | null) {
+  // Identity is resolved HERE, at call time — the per-call `user` argument
+  // is only a fallback for tests. No call site can forget it.
+  const uid = user ?? currentIdentity();
   const res = await fetch(`${API_BASE_URL}/api/housekeeping${path}`, {
     ...opts,
     headers: {
       "Content-Type": "application/json",
-      ...(user ? { "X-User": user } : {}),
       ...(opts.headers || {}),
+      ...(uid ? { "X-User": uid } : {}),
     },
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
-    throw new Error(detail?.detail || `${res.status}`);
+    // Internal detail goes to the console; the thrown message is what the
+    // panel shows the person.
+    console.error(`housekeeping API ${res.status} ${path}:`, detail?.detail || detail);
+    throw new Error(detail?.detail || `Request failed (${res.status})`);
   }
   return res.json();
 }
@@ -138,7 +144,7 @@ export function HousekeepingView() {
   const downloadCsv = async () => {
     const res = await fetch(
       `${API_BASE_URL}/api/housekeeping/report.csv${rootFilter ? `?root=${encodeURIComponent(rootFilter)}` : ""}`,
-      { headers: currentUser ? { "X-User": currentUser } : {} },
+      { headers: (currentUser ?? currentIdentity()) ? { "X-User": (currentUser ?? currentIdentity())! } : {} },
     );
     const blob = await res.blob();
     const a = document.createElement("a");
