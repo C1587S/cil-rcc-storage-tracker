@@ -1,16 +1,25 @@
-"""ClickHouse database connection and query utilities."""
-from functools import lru_cache
+"""ClickHouse database connection and query utilities.
+
+clickhouse_driver.Client is NOT thread-safe, and FastAPI serves sync
+endpoints from a thread pool. A shared client corrupts its socket under
+concurrent requests and every later query dies with "Bad file descriptor"
+(found live once the recon panel started issuing parallel queries).
+Clients are therefore THREAD-LOCAL, wrapped with one reconnect-and-retry
+for dead sockets — safe because everything here is a read (readonly=1).
+"""
+import threading
 from typing import Any
+
 from clickhouse_driver import Client
+from clickhouse_driver.errors import NetworkError
 
 from app.settings import get_settings
 
+_tls = threading.local()
 
-@lru_cache
-def get_client() -> Client:
-    """Get cached ClickHouse client with strict settings."""
+
+def _new_client() -> Client:
     settings = get_settings()
-
     return Client(
         host=settings.clickhouse_host,
         port=settings.clickhouse_port,
@@ -24,6 +33,51 @@ def get_client() -> Client:
             "readonly": 1,  # Enforce read-only mode
         },
     )
+
+
+_RETRYABLE = (OSError, EOFError, NetworkError, BrokenPipeError)
+
+
+class SafeClient:
+    """Thread-local, self-healing ClickHouse client facade."""
+
+    def _client(self) -> Client:
+        c = getattr(_tls, "client", None)
+        if c is None:
+            c = _new_client()
+            _tls.client = c
+        return c
+
+    def _reset(self) -> Client:
+        try:
+            getattr(_tls, "client", None) and _tls.client.disconnect()
+        except Exception:
+            pass
+        _tls.client = _new_client()
+        return _tls.client
+
+    def execute(self, *args, **kwargs):
+        try:
+            return self._client().execute(*args, **kwargs)
+        except _RETRYABLE:
+            return self._reset().execute(*args, **kwargs)
+
+    def execute_iter(self, *args, **kwargs):
+        try:
+            return self._client().execute_iter(*args, **kwargs)
+        except _RETRYABLE:
+            return self._reset().execute_iter(*args, **kwargs)
+
+    def disconnect(self) -> None:  # compat no-op; lifecycle is per-thread
+        pass
+
+
+_safe = SafeClient()
+
+
+def get_client() -> SafeClient:
+    """Thread-safe ClickHouse access — the only sanctioned entry point."""
+    return _safe
 
 
 def execute_query(query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:

@@ -7,8 +7,8 @@ Provides access to voronoi data stored in ClickHouse.
 import json
 from datetime import date
 from typing import Any, Dict, Optional
-from clickhouse_driver import Client
-from app.settings import get_settings
+
+from app.db.clickhouse import get_client
 
 
 class VoronoiStore:
@@ -17,15 +17,9 @@ class VoronoiStore:
     """
 
     def __init__(self):
-        """Initialize voronoi store with API settings."""
-        settings = get_settings()
-        self.client = Client(
-            host=settings.clickhouse_host,
-            port=settings.clickhouse_port,
-            user=settings.clickhouse_user,
-            password=settings.clickhouse_password,
-            database=settings.clickhouse_database,
-        )
+        """Thread-safe shared facade — never a private raw Client (they are
+        not thread-safe under FastAPI's thread pool)."""
+        self.client = get_client()
 
     def get_node(
         self, snapshot_date: date, node_id: str, include_children: bool = True

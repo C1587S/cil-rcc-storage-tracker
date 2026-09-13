@@ -43,6 +43,8 @@ REQUIRED_PATHS=(
   apps/web/lib/hk.ts
   apps/api/tests/test_resolver.py
   apps/web/components/housekeeping-view.tsx
+  "apps/web/app/api/[...path]/route.ts"
+  scripts/e2e-identity.js
   docs/manifest-format.md
   scripts/backup-housekeeping.sh
   scripts/restore-check-housekeeping.sh

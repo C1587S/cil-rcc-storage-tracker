@@ -33,18 +33,52 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
   return <LoginScreen onLogin={handleLogin} />;
 }
 
-/** Logout button for the navbar */
+/** Logout button for the navbar.
+ *
+ * Shows the identity the API CLIENT will actually send (read from the same
+ * storage the client reads at call time), not merely the store's opinion.
+ * If the two ever disagree the chip turns red and says so — that exact
+ * disagreement once cost a debugging session. */
 export function LogoutButton() {
   const { currentUser, logout } = useAppStore();
+  const [apiIdentity, setApiIdentity] = useState<string | null>(null);
+
+  useEffect(() => {
+    const read = () => setApiIdentity(localStorage.getItem("cil-user"));
+    read();
+    window.addEventListener("focus", read);
+    window.addEventListener("storage", read);
+    const t = setInterval(read, 30000);
+    return () => {
+      window.removeEventListener("focus", read);
+      window.removeEventListener("storage", read);
+      clearInterval(t);
+    };
+  }, [currentUser]);
+
   if (!currentUser) return null;
+  const desynced = apiIdentity !== currentUser;
 
   return (
     <button
       onClick={logout}
-      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-      title={`Logged in as ${currentUser}`}
+      className={
+        "flex items-center gap-1.5 text-xs transition-colors " +
+        (desynced
+          ? "text-red-500 hover:text-red-400"
+          : "text-muted-foreground hover:text-foreground")
+      }
+      title={
+        desynced
+          ? `Identity desync: the page shows "${currentUser}" but API calls would send ` +
+            `"${apiIdentity ?? "nothing"}". Log out and back in to repair.`
+          : `Logged in as ${currentUser} — API calls send this identity`
+      }
     >
-      <span className="font-mono">{currentUser}</span>
+      <span className="font-mono">
+        {currentUser}
+        {desynced && " ⚠ identity desync"}
+      </span>
       <LogOut size={13} />
     </button>
   );
