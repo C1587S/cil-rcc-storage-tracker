@@ -189,6 +189,9 @@ export function HousekeepingView() {
       <CandidatesPanel root={rootFilter || "/project/cil"}
                        onAdopted={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
 
+      <SweepPanel root={rootFilter || "/project/cil"}
+                  onSwept={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
+
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex rounded-md border border-border overflow-hidden text-xs">
@@ -665,5 +668,119 @@ function StoryLookup() {
         </div>
       )}
     </div>
+  );
+}
+
+
+// ---------------- The sweep: whole-tree analysis, one action ----------------
+
+function SweepPanel({ root, onSwept }: { root: string; onSwept: () => void }) {
+  const { currentUser } = useAppStore();
+  const [campaign, setCampaign] = useState("");
+  const [minFiles, setMinFiles] = useState("100000");
+  const [minTiB, setMinTiB] = useState("5");
+  const [minAgeDays, setMinAgeDays] = useState("730");
+  const [depth, setDepth] = useState(2);
+  const [result, setResult] = useState<any | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const body: any = { root, campaign: campaign.trim(), group_depth: depth };
+      if (minFiles.trim()) body.min_files = parseInt(minFiles);
+      if (minTiB.trim()) body.min_bytes = Math.round(parseFloat(minTiB) * 1024 ** 4);
+      if (minAgeDays.trim()) body.min_age_days = parseInt(minAgeDays);
+      const d = await api("/sweep", { method: "POST", body: JSON.stringify(body) }, currentUser);
+      setResult(d);
+      onSwept();
+    } catch (e: any) { window.alert(e.message); }
+    setBusy(false);
+  };
+
+  const csvUrl = (assignee?: string) =>
+    `${API_BASE_URL}/api/housekeeping/report.csv?campaign=${encodeURIComponent(campaign.trim())}`
+    + (assignee ? `&assignee=${encodeURIComponent(assignee)}` : "");
+
+  return (
+    <details className="border border-border/60 rounded-md">
+      <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
+        Sweep <span className="text-muted-foreground">— whole-tree analysis by threshold, one worklist split by owner</span>
+      </summary>
+      <div className="p-3 space-y-2 border-t border-border/40 text-xs">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1">Campaign name
+            <input className="h-8 px-2 rounded border border-border bg-transparent w-44"
+                   placeholder="e.g. 2026Q3-cleanup"
+                   value={campaign} onChange={e => setCampaign(e.target.value)} />
+          </label>
+          <label className="flex flex-col gap-1" title="Directory groups with at least this many files (leave empty to skip)">
+            ≥ files
+            <input className="h-8 px-2 rounded border border-border bg-transparent w-28 font-mono"
+                   value={minFiles} onChange={e => setMinFiles(e.target.value)} />
+          </label>
+          <label className="flex flex-col gap-1" title="Directory groups of at least this size (leave empty to skip)">
+            ≥ TiB
+            <input className="h-8 px-2 rounded border border-border bg-transparent w-20 font-mono"
+                   value={minTiB} onChange={e => setMinTiB(e.target.value)} />
+          </label>
+          <label className="flex flex-col gap-1" title="Groups whose newest file is older than this (mtime — see the age tab caveat)">
+            unmodified ≥ days
+            <input className="h-8 px-2 rounded border border-border bg-transparent w-24 font-mono"
+                   value={minAgeDays} onChange={e => setMinAgeDays(e.target.value)} />
+          </label>
+          <label className="flex flex-col gap-1">Depth
+            <select className="h-8 px-2 rounded border border-border bg-transparent"
+                    value={depth} onChange={e => setDepth(Number(e.target.value))}>
+              {[1, 2, 3].map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </label>
+          <button className="h-8 px-4 rounded bg-primary text-primary-foreground disabled:opacity-50"
+                  disabled={busy || !campaign.trim() || !currentUser}
+                  onClick={run}>
+            {busy ? "Sweeping…" : "Run sweep"}
+          </button>
+          <span className="text-muted-foreground">
+            A group matching ANY threshold becomes a target, assigned to its majority
+            owner (≥60% confidence; otherwise left unassigned rather than guessed).
+            Re-running skips existing targets.
+          </span>
+        </div>
+
+        {result && (
+          <div className="space-y-1 pt-1">
+            <div className="font-medium">
+              {result.created.length} target(s) created
+              {result.skipped_existing > 0 && `, ${result.skipped_existing} already existed`}
+              {" — "}worklists per person:
+            </div>
+            <table className="w-full">
+              <tbody>
+                {Object.entries(result.by_owner)
+                  .sort((a: any, b: any) => b[1].bytes - a[1].bytes)
+                  .map(([owner, v]: [string, any]) => (
+                    <tr key={owner} className="border-b border-border/20">
+                      <td className="py-1 font-mono">{owner}</td>
+                      <td className="py-1 text-right font-mono">{v.targets} targets</td>
+                      <td className="py-1 text-right font-mono">{formatBytes(v.bytes)}</td>
+                      <td className="py-1 text-right font-mono">{v.files.toLocaleString()} files</td>
+                      <td className="py-1 pl-3">
+                        {!owner.startsWith("(") && (
+                          <a className="text-primary hover:underline" href={csvUrl(owner)} download>
+                            their CSV
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+            <a className="text-primary hover:underline" href={csvUrl()} download>
+              Download the full campaign CSV (everyone)
+            </a>
+          </div>
+        )}
+      </div>
+    </details>
   );
 }

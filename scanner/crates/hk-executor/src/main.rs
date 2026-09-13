@@ -38,6 +38,13 @@ struct Args {
     /// the whole cluster — keep this modest.
     #[arg(long, default_value_t = 16)]
     workers: usize,
+    /// Act on files you do NOT own, where directory permissions allow it
+    /// (POSIX: unlink is governed by the parent directory's write bit, not
+    /// file ownership). Files in non-writable directories are skipped and
+    /// reported as skipped_no_access. Without this flag the executor
+    /// refuses foreign-owned files outright.
+    #[arg(long)]
+    delegate: bool,
     /// Receipt output path (default: <manifest_id>.receipt.json)
     #[arg(long)]
     receipt: Option<PathBuf>,
@@ -104,23 +111,27 @@ fn main() {
         eprintln!("error: {confinement_violations} entries outside the declared root — refusing to run");
         std::process::exit(2);
     }
-    let foreign: Vec<&str> = manifest.entries.par_iter()
-        .filter_map(|e| match fs::symlink_metadata(&e.path) {
-            Ok(md) if md.uid() != me => Some(e.path.as_str()),
-            _ => None,
-        })
-        .collect();
-    if !foreign.is_empty() && !dry_run {
-        eprintln!("error: {} entries are not owned by uid {me} (first: {}) — refusing to run.",
-                  foreign.len(), foreign[0]);
-        eprintln!("This manifest belongs to '{}'; run it as that user.", manifest.owner_uname);
-        std::process::exit(2);
+    if !args.delegate {
+        let foreign: Vec<&str> = manifest.entries.par_iter()
+            .filter_map(|e| match fs::symlink_metadata(&e.path) {
+                Ok(md) if md.uid() != me => Some(e.path.as_str()),
+                _ => None,
+            })
+            .collect();
+        if !foreign.is_empty() && !dry_run {
+            eprintln!("error: {} entries are not owned by uid {me} (first: {}) — refusing to run.",
+                      foreign.len(), foreign[0]);
+            eprintln!("This manifest belongs to '{}'; run it as that user,", manifest.owner_uname);
+            eprintln!("or re-run with --delegate to act where directory permissions allow.");
+            std::process::exit(2);
+        }
     }
 
     // ---- File pass ----
+    let delegate = args.delegate;
     let outcomes = Mutex::new(Vec::with_capacity(manifest.entries.len()));
     manifest.entries.par_iter().for_each(|e| {
-        let out = process_entry(e, &manifest, dry_run, args.purge, me);
+        let out = process_entry(e, &manifest, dry_run, args.purge, me, delegate);
         outcomes.lock().unwrap().push(out);
     });
     let mut outcomes = outcomes.into_inner().unwrap();
@@ -181,6 +192,7 @@ fn main() {
         files_removed: removed,
         files_skipped_changed: outcomes.iter().filter(|o| o.outcome == Outcome::SkippedChanged).count() as u64,
         files_skipped_missing: outcomes.iter().filter(|o| o.outcome == Outcome::SkippedMissing).count() as u64,
+        files_skipped_no_access: outcomes.iter().filter(|o| o.outcome == Outcome::SkippedNoAccess).count() as u64,
         files_failed: outcomes.iter().filter(|o| o.outcome == Outcome::Failed).count() as u64,
         dirs_removed,
         outcomes,
@@ -197,8 +209,21 @@ fn main() {
     if receipt.files_failed > 0 { std::process::exit(1); }
 }
 
+fn parent_writable(path: &str) -> bool {
+    // What actually governs unlink/rename: w+x on the containing directory.
+    let parent = match Path::new(path).parent() {
+        Some(p) => p,
+        None => return false,
+    };
+    let c = match std::ffi::CString::new(parent.as_os_str().as_encoded_bytes()) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    unsafe { libc::access(c.as_ptr(), libc::W_OK | libc::X_OK) == 0 }
+}
+
 fn process_entry(e: &manifest_types::ManifestEntry, m: &Manifest, dry_run: bool,
-                 purge: bool, me: u32) -> ReceiptEntry {
+                 purge: bool, me: u32, delegate: bool) -> ReceiptEntry {
     let md = match fs::symlink_metadata(&e.path) {
         Err(_) => return ReceiptEntry { path: e.path.clone(), outcome: Outcome::SkippedMissing, errno: None, nlink: 0 },
         Ok(md) => md,
@@ -209,7 +234,11 @@ fn process_entry(e: &manifest_types::ManifestEntry, m: &Manifest, dry_run: bool,
     if md.file_type().is_symlink() || md.size() != e.size_bytes || md.mtime() != e.mtime_epoch {
         return ReceiptEntry { path: e.path.clone(), outcome: Outcome::SkippedChanged, errno: None, nlink };
     }
-    if md.uid() != me {
+    if delegate {
+        if !parent_writable(&e.path) {
+            return ReceiptEntry { path: e.path.clone(), outcome: Outcome::SkippedNoAccess, errno: Some(libc::EACCES), nlink };
+        }
+    } else if md.uid() != me {
         return ReceiptEntry { path: e.path.clone(), outcome: Outcome::Failed, errno: Some(libc::EPERM), nlink };
     }
     if dry_run {

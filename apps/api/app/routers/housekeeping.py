@@ -394,6 +394,105 @@ def upload_receipt(receipt: dict, x_user: str | None = Header(default=None)):
 
 
 
+# ---------- the sweep: whole-tree analysis in one action ----------
+
+class SweepIn(BaseModel):
+    root: str
+    campaign: str
+    min_files: int | None = None      # e.g. 100_000
+    min_bytes: int | None = None      # e.g. 5 TiB
+    min_age_days: int | None = None   # e.g. 365 — whole subtree unmodified
+    group_depth: int = 2              # granularity below root
+
+
+@router.post("/sweep")
+def sweep(body: SweepIn, x_user: str | None = Header(default=None)):
+    """One action, whole picture: every directory group beyond the chosen
+    thresholds (ANY of them), across all users, becomes a target assigned
+    to its majority owner. Output = one worklist, split per person at
+    export. Thresholds are yours, not the tool's."""
+    if body.root not in ("/project/cil", "/cds3/cil"):
+        raise HTTPException(status_code=422, detail="unknown root")
+    if not any([body.min_files, body.min_bytes, body.min_age_days]):
+        raise HTTPException(status_code=422, detail="set at least one threshold")
+    snap = _latest_snapshot()
+    ch = get_client()
+    take = body.root.count("/") + 1 + body.group_depth
+    import time as _time
+    cutoff = int(_time.time()) - (body.min_age_days or 0) * 86400
+
+    conds = []
+    if body.min_files:
+        conds.append(f"files >= {int(body.min_files)}")
+    if body.min_bytes:
+        conds.append(f"bytes >= {int(body.min_bytes)}")
+    if body.min_age_days:
+        conds.append(f"newest_mtime < {cutoff}")
+    sql = f"""
+    SELECT grp, argMax(owner, b) AS major_owner, sum(b) AS bytes, sum(c) AS files,
+           max(b) / sum(b) AS conf, max(mx) AS newest_mtime
+    FROM (
+        SELECT arrayStringConcat(arraySlice(splitByChar('/', path), 1, {take}), '/') AS grp,
+               owner, sum(size) AS b, count() AS c, max(modified_time) AS mx
+        FROM filesystem.entries
+        WHERE snapshot_date = %(snap)s
+          AND (path = %(root)s OR path LIKE %(rootpfx)s)
+          AND is_directory = 0 AND position(owner, char(0)) = 0
+        GROUP BY grp, owner
+    )
+    GROUP BY grp
+    HAVING {' OR '.join(conds)}
+    ORDER BY bytes DESC
+    LIMIT 500
+    """
+    groups = ch.execute(sql, {"snap": snap, "root": body.root, "rootpfx": body.root + "/%"},
+                        settings={"max_result_rows": 0, "max_result_bytes": 0,
+                                  "max_execution_time": 300})
+
+    created, by_owner = [], {}
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        for grp, owner, bytes_, files, conf, newest in groups:
+            conf = float(conf)
+            if conf != conf or conf == float("inf"):  # NaN/inf when bytes sum to 0
+                conf = 0.0
+            existing = conn.execute(
+                "SELECT id FROM target WHERE root = %s AND path = %s AND campaign = %s",
+                (body.root, grp, body.campaign)).fetchone()
+            if existing:
+                continue
+            path_hash = ch.execute("SELECT toString(cityHash64(%(p)s))", {"p": grp})[0][0]
+            row = conn.execute(
+                "INSERT INTO target (name, root, path, path_hash, scope, predicate, campaign,"
+                " created_by, cached_bytes, cached_files, cached_snapshot)"
+                " VALUES (%s, %s, %s, %s, 'subtree', '{}', %s, %s, %s, %s, %s) RETURNING id",
+                (f"sweep: {grp.split('/')[-1] or grp}", body.root, grp, path_hash,
+                 body.campaign, actor, int(bytes_), int(files), snap)).fetchone()
+            assignee = None
+            if conf >= 0.6 and owner and owner != "unknown":
+                assignee = owner
+                conn.execute("INSERT INTO person (username) VALUES (%s) ON CONFLICT DO NOTHING", (owner,))
+                conn.execute(
+                    "INSERT INTO assignment (target_id, assignee, assigned_by) VALUES (%s, %s, %s)",
+                    (row[0], owner, actor))
+            hk.write_with_event(conn, actor, "target_created", target_id=row[0],
+                                ref_table="target", ref_id=row[0],
+                                payload={"sweep": body.campaign, "path": grp,
+                                         "bytes": int(bytes_), "files": int(files),
+                                         "provisional_assignee": assignee})
+            created.append({"target_id": row[0], "path": grp, "bytes": int(bytes_),
+                            "files": int(files), "assignee": assignee,
+                            "owner_confidence": round(conf, 2)})
+            k = assignee or "(unassigned — owner unclear or unknown)"
+            agg = by_owner.setdefault(k, {"targets": 0, "bytes": 0, "files": 0})
+            agg["targets"] += 1
+            agg["bytes"] += int(bytes_)
+            agg["files"] += int(files)
+    _trigger_backup()
+    return {"campaign": body.campaign, "snapshot": snap, "created": created,
+            "skipped_existing": len(groups) - len(created), "by_owner": by_owner}
+
+
 # ---------- pilot: candidates, adoption, CSV round-trip, quarantine ----------
 
 @router.get("/candidates")
@@ -800,6 +899,8 @@ CROSS JOIN LATERAL (
     SELECT COALESCE(max(id), 0) AS row_version FROM event WHERE target_id = t.id
 ) v
 WHERE (%(root)s::text IS NULL OR t.root = %(root)s)
+  AND (%(campaign)s::text IS NULL OR t.campaign = %(campaign)s)
+  AND (%(assignee)s::text IS NULL OR a.assignee = %(assignee)s)
 ORDER BY t.cached_bytes DESC NULLS LAST
 """
 
@@ -810,15 +911,17 @@ COLUMNS = ["id", "name", "root", "path", "scope", "campaign", "bytes", "files",
            "verified_at", "verified_delta_bytes", "row_version"]
 
 
-def _report_rows(root: str | None):
+def _report_rows(root: str | None, campaign: str | None = None, assignee: str | None = None):
     with hk.tx() as conn:
-        rows = conn.execute(REPORT_SQL, {"root": root}).fetchall()
+        rows = conn.execute(REPORT_SQL, {"root": root, "campaign": campaign,
+                                         "assignee": assignee}).fetchall()
     return [dict(zip(COLUMNS, r)) for r in rows]
 
 
 @router.get("/report")
-def report(root: str | None = Query(default=None)):
-    rows = _report_rows(root)
+def report(root: str | None = Query(default=None), campaign: str | None = Query(default=None),
+           assignee: str | None = Query(default=None)):
+    rows = _report_rows(root, campaign, assignee)
     tb = 1024**4
     headline = {
         "targets": len(rows),
@@ -836,14 +939,15 @@ def report(root: str | None = Query(default=None)):
 
 
 @router.get("/report.csv")
-def report_csv(root: str | None = Query(default=None),
+def report_csv(root: str | None = Query(default=None), campaign: str | None = Query(default=None),
+               assignee: str | None = Query(default=None),
                x_user: str | None = Header(default=None)):
     """Round-trippable export. The metadata block + per-row row_version are
     the identity a future upload validates against: row_version is the
     target's latest event id at export time, so a later upload can detect
     that a row changed underneath the person who exported it."""
     from datetime import datetime, timezone
-    rows = _report_rows(root)
+    rows = _report_rows(root, campaign, assignee)
     with hk.tx() as conn:
         base_event = conn.execute("SELECT COALESCE(max(id), 0) FROM event").fetchone()[0]
     now = datetime.now(timezone.utc)
@@ -852,6 +956,7 @@ def report_csv(root: str | None = Query(default=None),
         "# rcc-housekeeping-worklist v1",
         f"# worklist: wl_{now:%Y-%m-%d}_{exported_by}",
         f"# root: {root or 'all'}",
+        f"# campaign: {campaign or 'all'}   assignee: {assignee or 'all'}",
         f"# base_event: {base_event}",
         f"# exported_by: {exported_by}   exported_at: {now:%Y-%m-%dT%H:%MZ}",
     ]

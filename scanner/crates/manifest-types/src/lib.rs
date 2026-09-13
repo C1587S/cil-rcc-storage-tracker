@@ -34,6 +34,10 @@ pub struct Manifest {
     /// Suggested quarantine directory (same filesystem as `root`).
     /// The executor's default action is rename-into-quarantine.
     pub quarantine_dir: String,
+    /// Human instructions embedded so the manifest is self-explanatory to
+    /// an owner who has never used the tool. Optional for old manifests.
+    #[serde(default)]
+    pub how_to_run: Vec<String>,
     pub generated_at: String,
     pub generated_by: String,
     pub total_bytes: u64,
@@ -70,6 +74,9 @@ pub enum Outcome {
     SkippedChanged,
     /// Path no longer exists.
     SkippedMissing,
+    /// Delegate mode: the parent directory is not writable by the invoking
+    /// user — the kernel would refuse; an owner (or RCC) must handle it.
+    SkippedNoAccess,
     /// Filesystem error; `errno` carries the detail.
     Failed,
 }
@@ -107,6 +114,9 @@ pub struct Receipt {
     pub files_removed: u64,
     pub files_skipped_changed: u64,
     pub files_skipped_missing: u64,
+    /// Delegate mode only: parent directory not writable by the executor.
+    #[serde(default)]
+    pub files_skipped_no_access: u64,
     pub files_failed: u64,
     /// Empty directories removed bottom-up after the file pass.
     pub dirs_removed: u64,
