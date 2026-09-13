@@ -176,6 +176,25 @@ class SnapshotImporter:
         # Read Parquet file with Polars (fast)
         df = pl.read_parquet(parquet_file)
 
+        # Reject-don't-repair: any string field containing a NUL byte means
+        # memory corruption upstream (the scanner's old getpwuid race wrote
+        # torn passwd records). Losing a row is safer than trusting a
+        # repaired one — drop it and say so loudly.
+        str_cols = [c for c, t in df.schema.items() if t == pl.Utf8]
+        if str_cols:
+            corrupt_mask = None
+            for c in str_cols:
+                m = pl.col(c).str.contains("\x00", literal=True).fill_null(False)
+                corrupt_mask = m if corrupt_mask is None else (corrupt_mask | m)
+            n_bad = df.filter(corrupt_mask).height
+            if n_bad:
+                bad_paths = df.filter(corrupt_mask)["path"].head(5).to_list()
+                logger.warning(
+                    f"REJECTED {n_bad} corrupted row(s) in {parquet_file.name} "
+                    f"(embedded NUL in a string field). Samples: {bad_paths}"
+                )
+                df = df.filter(~corrupt_mask)
+
         file_size = parquet_file.stat().st_size
         row_count = len(df)
 

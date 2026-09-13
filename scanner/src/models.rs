@@ -1,38 +1,87 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Get username from UID (Unix-specific)
 #[cfg(unix)]
-fn get_username(uid: u32) -> Option<String> {
-    use std::ffi::CStr;
-    unsafe {
-        let passwd = libc::getpwuid(uid);
-        if passwd.is_null() {
-            None
-        } else {
-            CStr::from_ptr((*passwd).pw_name)
-                .to_str()
-                .ok()
-                .map(|s| s.to_string())
-        }
-    }
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::sync::{Mutex, OnceLock};
+
+// uid/gid -> name caches. Lookups go through the REENTRANT *_r variants
+// with caller-owned buffers. The previous code used libc::getpwuid /
+// libc::getgrgid, which return a pointer into a process-wide static
+// buffer; concurrent scanner threads raced on it and occasionally copied
+// a torn passwd record (embedded NULs and all) into the owner column.
+// Never reintroduce the non-reentrant variants in this multithreaded code.
+#[cfg(unix)]
+fn uid_cache() -> &'static Mutex<HashMap<u32, Option<String>>> {
+    static C: OnceLock<Mutex<HashMap<u32, Option<String>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Get group name from GID (Unix-specific)
+#[cfg(unix)]
+fn gid_cache() -> &'static Mutex<HashMap<u32, Option<String>>> {
+    static C: OnceLock<Mutex<HashMap<u32, Option<String>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Validate a name that came out of NSS: plain, NUL-free UTF-8 or nothing.
+#[cfg(unix)]
+fn clean_name(raw: &std::ffi::CStr) -> Option<String> {
+    raw.to_str().ok()
+        .filter(|s| !s.is_empty() && !s.contains('\0'))
+        .map(str::to_string)
+}
+
+/// Get username from UID (Unix-specific, reentrant, cached)
+#[cfg(unix)]
+fn get_username(uid: u32) -> Option<String> {
+    if let Some(v) = uid_cache().lock().unwrap().get(&uid) {
+        return v.clone();
+    }
+    let mut buf = vec![0u8; 4096];
+    let resolved = loop {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        let rc = unsafe {
+            libc::getpwuid_r(uid, &mut pwd, buf.as_mut_ptr() as *mut libc::c_char,
+                             buf.len(), &mut result)
+        };
+        if rc == libc::ERANGE {
+            if buf.len() >= 1 << 20 { break None; }
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 || result.is_null() { break None; }
+        break clean_name(unsafe { std::ffi::CStr::from_ptr(pwd.pw_name) });
+    };
+    uid_cache().lock().unwrap().insert(uid, resolved.clone());
+    resolved
+}
+
+/// Get group name from GID (Unix-specific, reentrant, cached)
 #[cfg(unix)]
 fn get_groupname(gid: u32) -> Option<String> {
-    use std::ffi::CStr;
-    unsafe {
-        let group = libc::getgrgid(gid);
-        if group.is_null() {
-            None
-        } else {
-            CStr::from_ptr((*group).gr_name)
-                .to_str()
-                .ok()
-                .map(|s| s.to_string())
-        }
+    if let Some(v) = gid_cache().lock().unwrap().get(&gid) {
+        return v.clone();
     }
+    let mut buf = vec![0u8; 4096];
+    let resolved = loop {
+        let mut grp: libc::group = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::group = std::ptr::null_mut();
+        let rc = unsafe {
+            libc::getgrgid_r(gid, &mut grp, buf.as_mut_ptr() as *mut libc::c_char,
+                             buf.len(), &mut result)
+        };
+        if rc == libc::ERANGE {
+            if buf.len() >= 1 << 20 { break None; }
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 || result.is_null() { break None; }
+        break clean_name(unsafe { std::ffi::CStr::from_ptr(grp.gr_name) });
+    };
+    gid_cache().lock().unwrap().insert(gid, resolved.clone());
+    resolved
 }
 
 /// Stub for non-Unix systems
@@ -163,6 +212,23 @@ impl FileEntry {
         // Try to resolve uid/gid to names (may fail on some systems)
         let owner = get_username(uid);
         let group = get_groupname(gid);
+
+        // Reject-don't-repair: a NUL in any field means memory corruption
+        // somewhere upstream — losing the row is safer than trusting it.
+        for (field, value) in [
+            ("path", Some(path_str.as_str())),
+            ("parent_path", Some(parent_path.as_str())),
+            ("top_level_dir", Some(top_level_dir.as_str())),
+            ("file_type", Some(file_type.as_str())),
+            ("owner", owner.as_deref()),
+            ("group", group.as_deref()),
+        ] {
+            if let Some(v) = value {
+                if v.contains('\0') {
+                    anyhow::bail!("rejected row: embedded NUL in {field} for {path_str:?}");
+                }
+            }
+        }
 
         Ok(FileEntry {
             path: path_str,
@@ -319,5 +385,66 @@ mod tests {
         assert!(!options.follow_symlinks);
         assert_eq!(options.max_depth, None);
         assert!(options.batch_size > 0);
+    }
+}
+
+
+#[cfg(all(test, unix))]
+mod owner_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn current_uid_resolves_clean() {
+        let uid = unsafe { libc::getuid() };
+        let name = get_username(uid).expect("current uid must resolve");
+        assert!(!name.is_empty());
+        assert!(!name.contains('\0'));
+        assert!(name.is_ascii() || std::str::from_utf8(name.as_bytes()).is_ok());
+        // cached second call returns the identical value
+        assert_eq!(get_username(uid), Some(name));
+    }
+
+    #[test]
+    fn unknown_uid_is_none_not_garbage() {
+        assert_eq!(get_username(4_000_000_000), None);
+        assert_eq!(get_username(4_000_000_000), None); // cached None
+    }
+
+    #[test]
+    fn concurrent_lookups_never_produce_nuls() {
+        let handles: Vec<_> = (0..16)
+            .map(|t| {
+                std::thread::spawn(move || {
+                    for i in 0..500u32 {
+                        // mix resolvable and unresolvable uids across threads
+                        let uid = if i % 2 == 0 { unsafe { libc::getuid() } } else { 3_900_000_000 + t + i };
+                        if let Some(n) = get_username(uid) {
+                            assert!(!n.contains('\0'), "NUL leaked from lookup");
+                            assert!(n.len() < 64, "impossibly long uname: {n:?}");
+                        }
+                        if let Some(g) = get_groupname(unsafe { libc::getgid() }) {
+                            assert!(!g.contains('\0'));
+                        }
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn from_path_row_is_clean_or_rejected() {
+        let dir = std::env::temp_dir().join("hk_owner_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("probe.txt");
+        std::fs::write(&f, b"x").unwrap();
+        let md = std::fs::metadata(&f).unwrap();
+        let entry = FileEntry::from_path(&f, &md, &dir).expect("clean row accepted");
+        assert!(!entry.path.contains('\0'));
+        if let Some(o) = &entry.owner {
+            assert!(!o.contains('\0'));
+        }
     }
 }
