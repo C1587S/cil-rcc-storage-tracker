@@ -377,38 +377,62 @@ def dismissals(root: str = Query(...)):
 
 
 @router.get("/duplicates")
-def duplicates(root: str = Query(...), min_size: int = Query(1 << 30, ge=1 << 20)):
+def duplicates(root: str = Query(...), min_size: int = Query(1 << 30, ge=1 << 20),
+               max_diverge_level: int = Query(2, ge=1, le=6),
+               include_siblings: bool = Query(default=False)):
     """Probable duplicates: same basename AND same byte size, above a
-    threshold. Cheap heuristic, not a hash — but at 30 GB, same name +
-    same size across different trees is space that costs nothing to
-    reclaim. Ranked by wasted bytes (size x extra copies)."""
+    threshold — WITH a structural bar. On these trees, filename+size alone
+    drowns in scenario outputs (thirty legitimate damages.nc4 under sibling
+    batch dirs). A group counts only when its copies diverge close to the
+    root (structurally unrelated trees = mirror copies); groups whose
+    copies share a deep common ancestor are hidden as probable scenario
+    siblings. The common ancestor of the whole group is computed from the
+    lexicographic min/max paths — for prefix trees they bound the group."""
     _check_root(root)
     snap = _snap()
+    root_parts = len(root.split("/"))  # ['', 'project', 'cil'] -> 3
 
     def run():
         sql = f"""
-        SELECT name, size, count() AS copies, (count() - 1) * size AS wasted,
-               groupArray(8)(path) AS paths, groupArray(8)(owner) AS owners
-        FROM filesystem.entries
-        WHERE snapshot_date = %(snap)s
-          AND (path = %(root)s OR path LIKE %(rootpfx)s)
-          AND is_directory = 0 AND size >= %(min)s AND {CLEAN_OWNER}
-        GROUP BY name, size
-        HAVING copies > 1
+        SELECT name, size, copies, wasted, paths, owners,
+               (diverge_pos - {root_parts}) AS diverge_level
+        FROM (
+            SELECT name, size, count() AS copies, (count() - 1) * size AS wasted,
+                   groupArray(8)(path) AS paths, groupArray(8)(owner) AS owners,
+                   arrayFirstIndex(
+                       j -> arrayElement(splitByChar('/', min(path)), j)
+                            != arrayElement(splitByChar('/', max(path)), j),
+                       arrayEnumerate(splitByChar('/', min(path)))) AS diverge_pos
+            FROM filesystem.entries
+            WHERE snapshot_date = %(snap)s
+              AND (path = %(root)s OR path LIKE %(rootpfx)s)
+              AND is_directory = 0 AND size >= %(min)s AND {CLEAN_OWNER}
+            GROUP BY name, size
+            HAVING copies > 1
+        )
         ORDER BY wasted DESC
-        LIMIT 100
+        LIMIT 300
         """
         rows = get_client().execute(sql, {
             "snap": snap, "root": root, "rootpfx": root + "/%", "min": min_size,
         }, settings={"max_result_rows": 0, "max_result_bytes": 0})
         return [{"name": n, "bytes": int(sz), "copies": int(c), "wasted": int(w),
-                 "paths": list(ps), "owners": list(os_)}
-                for n, sz, c, w, ps, os_ in rows]
+                 "paths": list(ps), "owners": list(os_), "diverge_level": int(dl)}
+                for n, sz, c, w, ps, os_, dl in rows]
 
-    rows = run() if False else _cached(("dups", snap, root, min_size), run)
-    return {"snapshot": snap, "min_size": min_size, "rows": rows,
-            "caveat": ("Matched by basename + exact byte size, not content hash. "
-                       "Verify before deleting; identical-looking checkpoints can differ.")}
+    all_rows = _cached(("dups2", snap, root, min_size), run)
+    kept = [r for r in all_rows if r["diverge_level"] <= max_diverge_level]
+    siblings = [dict(r, sibling_group=True) for r in all_rows
+                if r["diverge_level"] > max_diverge_level]
+    rows = (kept + siblings) if include_siblings else kept
+    return {"snapshot": snap, "min_size": min_size,
+            "rows": rows[:100],
+            "hidden_sibling_groups": 0 if include_siblings else len(siblings),
+            "caveat": ("Matched by basename + exact byte size (not content hash), and only "
+                       f"where copies split within the top {max_diverge_level} directory levels "
+                       "— copies that differ only deep in sibling scenario/batch trees are "
+                       "hidden as probable legitimate outputs. Verify before deleting."),
+            }
 
 
 # ---------------- custom lists ----------------

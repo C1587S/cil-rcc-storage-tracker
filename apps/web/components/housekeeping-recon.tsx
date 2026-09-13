@@ -139,9 +139,10 @@ export function ReconPanel({ root }: { root: string }) {
     queryFn: () => rapi(`/largest?root=${encodeURIComponent(root)}`),
     enabled: enabled("largest"),
   });
+  const [showSiblingDups, setShowSiblingDups] = useState(false);
   const dups = useQuery({
-    queryKey: ["recon-dups", root],
-    queryFn: () => rapi(`/duplicates?root=${encodeURIComponent(root)}`),
+    queryKey: ["recon-dups", root, showSiblingDups],
+    queryFn: () => rapi(`/duplicates?root=${encodeURIComponent(root)}&include_siblings=${showSiblingDups}`),
     enabled: enabled("dups"),
   });
   const files = useQuery({
@@ -576,6 +577,17 @@ export function ReconPanel({ root }: { root: string }) {
               <div className="text-[11px] px-2.5 py-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
                 {dups.data?.caveat}
               </div>
+              {(dups.data?.hidden_sibling_groups ?? 0) > 0 && (
+                <button className="text-[11px] text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowSiblingDups(true)}>
+                  {dups.data.hidden_sibling_groups} group(s) hidden as probable scenario siblings
+                  (copies split only deep in the tree) — show them
+                </button>
+              )}
+              {showSiblingDups && (
+                <button className="text-[11px] text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowSiblingDups(false)}>hide sibling groups</button>
+              )}
               <table className="w-full text-xs">
                 <thead><tr className="text-left text-muted-foreground border-b border-border/40">
                   <th className="w-6"></th>
@@ -583,12 +595,15 @@ export function ReconPanel({ root }: { root: string }) {
                   {dupSort.TH({ k: "bytes", label: "Size each", right: true })}
                   {dupSort.TH({ k: "copies", label: "Copies", right: true })}
                   {dupSort.TH({ k: "wasted", label: "Wasted", right: true, title: "size × extra copies" })}
+                  {dupSort.TH({ k: "diverge_level", label: "Split at", right: true, title: "Directory level (below root) where the copies' trees separate — low = unrelated trees, high = scenario siblings" })}
                   <th className="px-2 py-1.5">Owners</th>
                 </tr></thead>
                 <tbody>
                   {dupSort.sorted.map((r: any) => (
                     <>
-                      <tr key={r.name + r.bytes} className="border-b border-border/20 hover:bg-muted/20">
+                      <tr key={r.name + r.bytes}
+                          className={cn("border-b border-border/20 hover:bg-muted/20",
+                            r.sibling_group && "opacity-50")}>
                         <td className="px-1 py-1">
                           <button className="text-muted-foreground hover:text-foreground"
                                   onClick={() => setExpanded(expanded === r.name + r.bytes ? null : r.name + r.bytes)}>
@@ -599,11 +614,12 @@ export function ReconPanel({ root }: { root: string }) {
                         <td className="px-2 py-1 text-right font-mono">{formatBytes(r.bytes)}</td>
                         <td className="px-2 py-1 text-right font-mono">×{r.copies}</td>
                         <td className="px-2 py-1 text-right font-mono font-semibold">{formatBytes(r.wasted)}</td>
+                        <td className="px-2 py-1 text-right font-mono">L{r.diverge_level}{r.sibling_group ? " (sibling)" : ""}</td>
                         <td className="px-2 py-1 font-mono">{[...new Set(r.owners)].join(", ")}</td>
                       </tr>
                       {expanded === r.name + r.bytes && (
                         <tr key={r.name + r.bytes + ":x"}>
-                          <td colSpan={6} className="border-b border-border/30 bg-muted/10 px-3 py-2">
+                          <td colSpan={7} className="border-b border-border/30 bg-muted/10 px-3 py-2">
                             {r.paths.map((p: string, i: number) => (
                               <div key={p} className="flex items-center gap-2 font-mono text-[11px]">
                                 <Check path={p} source={`recon:dup:${r.name}`} />

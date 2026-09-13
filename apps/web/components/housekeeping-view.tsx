@@ -12,7 +12,7 @@
  *   no batches, no optimistic state that can diverge from the server.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Download, Plus } from "lucide-react";
 import { useAppStore } from "@/lib/store";
@@ -59,9 +59,19 @@ function Headline({ label, tb, emphasize }: { label: string; tb: number; emphasi
 }
 
 export function HousekeepingView() {
-  const { currentUser } = useAppStore();
+  const { currentUser, referencePath } = useAppStore();
   const qc = useQueryClient();
-  const [rootFilter, setRootFilter] = useState<string | null>("/cds3/cil");
+  // ONE root for the whole page: the global root badge (snapshot bar).
+  // referencePath may point at a subdirectory (tree reference feature), so
+  // resolve it to its storage root.
+  const globalRoot =
+    ["/project/cil", "/cds3/cil"].find(r =>
+      (referencePath || "/project/cil") === r || (referencePath || "").startsWith(r + "/"))
+    ?? "/project/cil";
+  const [rootFilter, setRootFilter] = useState<string | null>(globalRoot);
+  // The table's root chips follow the global root when it changes; they
+  // remain a TABLE filter (incl. "all"), never the page's root.
+  useEffect(() => { setRootFilter(globalRoot); }, [globalRoot]);
   const [textFilter, setTextFilter] = useState("");
   const [sortKey, setSortKey] = useState<string>("bytes");
   const [sortDesc, setSortDesc] = useState(true);
@@ -185,13 +195,14 @@ export function HousekeepingView() {
 
       <StoryLookup />
 
-      {/* Reconnaissance first: see where the problem is before deciding */}
-      <ReconPanel root={rootFilter || "/project/cil"} />
+      {/* Reconnaissance first: see where the problem is before deciding.
+          All panels read the ONE global root from the snapshot-bar badge. */}
+      <ReconPanel root={globalRoot} />
 
-      <CandidatesPanel root={rootFilter || "/project/cil"}
+      <CandidatesPanel root={globalRoot}
                        onAdopted={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
 
-      <SweepPanel root={rootFilter || "/project/cil"}
+      <SweepPanel root={globalRoot}
                   onSwept={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
 
       {/* Controls */}
