@@ -376,6 +376,41 @@ def dismissals(root: str = Query(...)):
     return _active_dismissals(root)
 
 
+@router.get("/duplicates")
+def duplicates(root: str = Query(...), min_size: int = Query(1 << 30, ge=1 << 20)):
+    """Probable duplicates: same basename AND same byte size, above a
+    threshold. Cheap heuristic, not a hash — but at 30 GB, same name +
+    same size across different trees is space that costs nothing to
+    reclaim. Ranked by wasted bytes (size x extra copies)."""
+    _check_root(root)
+    snap = _snap()
+
+    def run():
+        sql = f"""
+        SELECT name, size, count() AS copies, (count() - 1) * size AS wasted,
+               groupArray(8)(path) AS paths, groupArray(8)(owner) AS owners
+        FROM filesystem.entries
+        WHERE snapshot_date = %(snap)s
+          AND (path = %(root)s OR path LIKE %(rootpfx)s)
+          AND is_directory = 0 AND size >= %(min)s AND {CLEAN_OWNER}
+        GROUP BY name, size
+        HAVING copies > 1
+        ORDER BY wasted DESC
+        LIMIT 100
+        """
+        rows = get_client().execute(sql, {
+            "snap": snap, "root": root, "rootpfx": root + "/%", "min": min_size,
+        }, settings={"max_result_rows": 0, "max_result_bytes": 0})
+        return [{"name": n, "bytes": int(sz), "copies": int(c), "wasted": int(w),
+                 "paths": list(ps), "owners": list(os_)}
+                for n, sz, c, w, ps, os_ in rows]
+
+    rows = run() if False else _cached(("dups", snap, root, min_size), run)
+    return {"snapshot": snap, "min_size": min_size, "rows": rows,
+            "caveat": ("Matched by basename + exact byte size, not content hash. "
+                       "Verify before deleting; identical-looking checkpoints can differ.")}
+
+
 # ---------------- custom lists ----------------
 
 LIST_SCHEMA = """

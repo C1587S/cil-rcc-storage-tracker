@@ -425,8 +425,9 @@ function TreeNode({
             className="h-6 w-6 p-0 transition-all opacity-40 hover:opacity-100 hover:text-primary"
             onClick={async (e) => {
               e.stopPropagation();
-              const { addToActiveList } = await import("@/lib/hk");
-              window.alert(await addToActiveList([path], "tree"));
+              const { addToActiveList, toast } = await import("@/lib/hk");
+              const m = await addToActiveList([path], "tree");
+              toast(m, m.startsWith("Added") ? "success" : "info");
             }}
             title="Add to the active housekeeping list"
           >

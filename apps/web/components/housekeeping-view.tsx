@@ -20,6 +20,8 @@ import { API_BASE_URL } from "@/lib/api";
 import { formatBytes } from "@/lib/utils/formatters";
 import { cn } from "@/lib/utils";
 import { ReconPanel } from "@/components/housekeeping-recon";
+import { toast } from "@/lib/hk";
+import { GridLoader } from "@/components/ui/grid-loader";
 
 const ROOTS = ["/cds3/cil", "/project/cil"];
 const VERDICTS = ["keep", "delete", "quarantine", "archive", "compress", "needs_info", "not_mine"];
@@ -79,18 +81,18 @@ export function HousekeepingView() {
 
   const decide = useMutation({
     mutationFn: ({ targetId, verdict }: { targetId: number; verdict: string }) => {
-      let destination_path: string | null = null;
       if (verdict === "archive") {
-        destination_path = window.prompt("Archive destination path (required):");
-        if (!destination_path) return Promise.reject(new Error("archive needs a destination"));
+        return Promise.reject(new Error(
+          "Archive needs a destination and is disabled while /cds3/cil has no headroom."));
       }
+      const destination_path: string | null = null;
       return api("/decisions", {
         method: "POST",
         body: JSON.stringify({ target_id: targetId, verdict, destination_path }),
       }, currentUser);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ["hk-report"] }),
-    onError: (e: Error) => window.alert(e.message),
+    onError: (e: Error) => toast(e.message, "error"),
   });
 
   const createTarget = useMutation({
@@ -103,7 +105,7 @@ export function HousekeepingView() {
       setNewTarget({ name: "", path: "", root: "/cds3/cil", scope: "subtree" });
       qc.invalidateQueries({ queryKey: ["hk-report"] });
     },
-    onError: (e: Error) => window.alert(e.message),
+    onError: (e: Error) => toast(e.message, "error"),
   });
 
   const rows: Row[] = useMemo(() => {
@@ -365,7 +367,7 @@ function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => v
     try {
       const d = await api(`/candidates?root=${encodeURIComponent(root)}&category=${category}&group_depth=2`);
       setGroups(d.groups); setLabel(d.label); setSelected(new Set());
-    } catch (e: any) { window.alert(e.message); }
+    } catch (e: any) { toast(e.message, "error"); }
     setBusy(false);
   };
 
@@ -376,11 +378,11 @@ function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => v
         method: "POST",
         body: JSON.stringify({ root, category, paths: [...selected], campaign: "pilot" }),
       }, currentUser);
-      window.alert(`${d.created.length} target(s) created` +
-        d.created.map((c: any) => `\n  #${c.target_id} ${c.path} -> ${c.assignee ?? "unassigned"}`).join(""));
+      toast(`${d.created.length} target(s) created` +
+        d.created.map((c: any) => `\n  #${c.target_id} ${c.path} -> ${c.assignee ?? "unassigned"}`).join(""), "success");
       setSelected(new Set());
       onAdopted();
-    } catch (e: any) { window.alert(e.message); }
+    } catch (e: any) { toast(e.message, "error"); }
     setBusy(false);
   };
 
@@ -468,7 +470,7 @@ function UploadPanel({ onApplied }: { onApplied: () => void }) {
       }, currentUser);
       setResult(d);
       if (commit) { setCsvText(null); onApplied(); }
-    } catch (e: any) { window.alert(e.message); }
+    } catch (e: any) { toast(e.message, "error"); }
     setBusy(false);
   };
 
@@ -563,7 +565,7 @@ function QuarantinePanel() {
                           title="Record that this file was renamed back to its original path"
                           onClick={async () => {
                             try { await api(`/quarantine/${q.id}/restored`, { method: "POST" }, currentUser); }
-                            catch (e: any) { window.alert(e.message); }
+                            catch (e: any) { toast(e.message, "error"); }
                             qc.invalidateQueries({ queryKey: ["hk-quarantine"] });
                           }}>
                     mark restored
@@ -615,7 +617,7 @@ function StoryLookup() {
       const res = await fetch(
         `${API_BASE_URL}/api/housekeeping/story?path=${encodeURIComponent(path.trim())}`);
       setStory(await res.json());
-    } catch (e: any) { window.alert(String(e)); }
+    } catch (e: any) { toast(String(e), "error"); }
     setBusy(false);
   };
 
@@ -642,10 +644,21 @@ function StoryLookup() {
              href={`${API_BASE_URL}/api/housekeeping/archive.csv`} download>ledger.csv</a>
         </span>
       </div>
-      {story && (
+      {busy && <div className="py-3 flex justify-center"><GridLoader label="Searching the record" /></div>}
+      {story && !busy && (
         <div className="text-xs space-y-1">
+          {story.state && !story.verdict && (
+            <div className={cn("px-2.5 py-1.5 rounded border",
+              story.exists_now ? "border-border/60 bg-muted/20 text-muted-foreground"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400")}>
+              {story.state}
+            </div>
+          )}
           {story.verdict ? (
-            <div className="px-2.5 py-1.5 rounded border border-border/60 bg-muted/20 text-muted-foreground">
+            <div className={cn("px-2.5 py-1.5 rounded border",
+              story.existed_previously && !story.exists_now
+                ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                : "border-border/60 bg-muted/20 text-muted-foreground")}>
               {story.verdict}
             </div>
           ) : (
@@ -694,7 +707,7 @@ function SweepPanel({ root, onSwept }: { root: string; onSwept: () => void }) {
       const d = await api("/sweep", { method: "POST", body: JSON.stringify(body) }, currentUser);
       setResult(d);
       onSwept();
-    } catch (e: any) { window.alert(e.message); }
+    } catch (e: any) { toast(e.message, "error"); }
     setBusy(false);
   };
 

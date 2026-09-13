@@ -865,12 +865,45 @@ def story(path: str = Query(..., min_length=1)):
             pass
 
     entries.sort(key=lambda e: e["at"])
+
+    # Existence is a separate question from history — answer both.
+    ch = get_client()
+    snaps = [str(r[0]) for r in ch.execute(
+        "SELECT DISTINCT snapshot_date FROM filesystem.snapshots ORDER BY snapshot_date DESC LIMIT 2")]
+
+    def presence(snap: str) -> dict | None:
+        r = ch.execute(
+            "SELECT countIf(path = %(p)s), countIf(path != %(p)s),"
+            " maxIf(is_directory, path = %(p)s), maxIf(size, path = %(p)s)"
+            " FROM filesystem.entries WHERE snapshot_date = %(s)s"
+            " AND (path = %(p)s OR path LIKE %(pfx)s)",
+            {"s": snap, "p": p, "pfx": p + "/%"})[0]
+        exact, under, is_dir, size = int(r[0]), int(r[1]), int(r[2] or 0), int(r[3] or 0)
+        if exact == 0 and under == 0:
+            return None
+        return {"snapshot": snap, "is_directory": bool(is_dir or under), "size": size,
+                "children": under}
+
+    cur = presence(snaps[0]) if snaps else None
+    prev = presence(snaps[1]) if len(snaps) > 1 else None
+
+    if cur:
+        what = ("directory" if cur["is_directory"] else "file")
+        state = f"Exists on disk ({what}, snapshot {cur['snapshot']})"
+    elif prev:
+        state = (f"GONE: present in snapshot {prev['snapshot']} but missing from "
+                 f"{snaps[0]}" + (" — and no housekeeping record explains why" if not entries else ""))
+    else:
+        state = "Never seen in any retained snapshot"
+
     return {
         "path": p,
+        "exists_now": bool(cur),
+        "existed_previously": bool(prev),
+        "state": state,
         "entries": entries,
-        "verdict": ("No record: nobody has reviewed, listed, decided on or executed "
-                    "against this path or anything above or below it.")
-                   if not entries else None,
+        "verdict": (f"{state}; never reviewed, listed, decided on or executed against."
+                    if not entries else None),
     }
 
 

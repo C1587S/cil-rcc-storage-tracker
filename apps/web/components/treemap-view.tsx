@@ -358,7 +358,7 @@ export function TreemapView() {
   const createTargetFromPartition = useCallback(async () => {
     if (!activePartition?.path || !currentUser) return
     const root = KNOWN_ROOTS.find(r => activePartition.path === r || activePartition.path.startsWith(r + '/'))
-    if (!root) { window.alert('Path is outside the known storage roots'); return }
+    if (!root) { toast('Path is outside the known storage roots', 'error'); return }
     try {
       const res = await fetch(`${API_BASE_URL}/api/housekeeping/targets`, {
         method: 'POST',
@@ -373,9 +373,9 @@ export function TreemapView() {
       })
       const j = await res.json()
       if (!res.ok) throw new Error(j?.detail || res.status)
-      window.alert(`Housekeeping target #${j.id} created: ${activePartition.name} — ${formatBytes(j.bytes)} / ${j.files.toLocaleString()} files. Manage it in the Housekeeping tab.`)
+      toast(`Housekeeping target #${j.id} created: ${activePartition.name} — ${formatBytes(j.bytes)} / ${j.files.toLocaleString()} files. Manage it in the Housekeeping tab.`, 'success')
     } catch (e: any) {
-      window.alert(`Could not create target: ${e.message || e}`)
+      toast(`Could not create target: ${e.message || e}`, 'error')
     }
   }, [activePartition, currentUser])
 
@@ -766,7 +766,7 @@ export function TreemapView() {
                 <button
                   className="text-[11px] text-primary hover:underline"
                   title="Add this directory to the active custom list (select one in Housekeeping)"
-                  onClick={async () => window.alert(await addToActiveList([activePartition.path], 'treemap'))}
+                  onClick={async () => { const m = await addToActiveList([activePartition.path], 'treemap'); toast(m, m.startsWith('Added') ? 'success' : 'info'); }}
                 >
                   + Add to list
                 </button>
