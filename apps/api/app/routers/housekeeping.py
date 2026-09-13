@@ -323,6 +323,27 @@ def generate_manifests(body: ManifestRequest, x_user: str | None = Header(defaul
     return {"decision_id": decision_id, "snapshot": snap, "manifests": summaries}
 
 
+@router.get("/targets/{target_id}/manifests")
+def target_manifests(target_id: int):
+    """All manifests ever generated for a target — re-downloadable forever
+    (they live in the backed-up manifests directory)."""
+    out = []
+    for f in sorted(mf.MANIFEST_DIR.glob(f"hk-t{target_id}-*.json")):
+        try:
+            m = json.loads(f.read_text())
+            out.append({
+                "manifest_id": m["manifest_id"],
+                "owner_uname": m.get("owner_uname"),
+                "files": m.get("total_files", 0),
+                "bytes": m.get("total_bytes", 0),
+                "generated_at": m.get("generated_at"),
+                "snapshot_date": m.get("snapshot_date"),
+            })
+        except Exception:
+            continue
+    return out
+
+
 @router.get("/manifests/{manifest_id}")
 def download_manifest(manifest_id: str):
     m = mf.load_manifest(manifest_id)

@@ -82,6 +82,7 @@ export function HousekeepingView() {
   const [sortKey, setSortKey] = useState<string>("bytes");
   const [sortDesc, setSortDesc] = useState(true);
   const [showNewTarget, setShowNewTarget] = useState(false);
+  const [execDrawer, setExecDrawer] = useState<number | null>(null);
   const [newTarget, setNewTarget] = useState({ name: "", path: "", root: "/cds3/cil", scope: "subtree" });
 
   const { data: headroom } = useQuery({
@@ -298,17 +299,18 @@ export function HousekeepingView() {
               <th className="px-3 py-2">{sortBtn("verdict", "Verdict")}</th>
               <th className="px-3 py-2">{sortBtn("executor", "Executed")}</th>
               <th className="px-3 py-2">{sortBtn("verified_at", "Verified")}</th>
+              <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody>
             {isLoading && (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
+              <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
             )}
             {error && (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-red-500">{String(error)}</td></tr>
+              <tr><td colSpan={9} className="px-3 py-6 text-center text-red-500">{String(error)}</td></tr>
             )}
             {!isLoading && rows.length === 0 && (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
+              <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
                 No targets yet — create one with “New target”.
               </td></tr>
             )}
@@ -359,8 +361,32 @@ export function HousekeepingView() {
                     ? <span className="text-emerald-600 dark:text-emerald-400">✓</span>
                     : <span className="text-muted-foreground/50">—</span>}
                 </td>
+                <td className="px-3 py-2">
+                  {r.decision_id && !["keep", "needs_info", "not_mine"].includes(r.verdict || "") && (
+                    <button
+                      className={cn("text-[11px] hover:underline",
+                        execDrawer === r.id ? "text-primary font-medium" : "text-primary/80")}
+                      title="Generate/download executor manifests and upload receipts"
+                      onClick={() => setExecDrawer(execDrawer === r.id ? null : r.id)}
+                    >
+                      {execDrawer === r.id ? "close" : "manifests"}
+                    </button>
+                  )}
+                </td>
               </tr>
-            ))}
+            )).flatMap((row: any, i: number) => {
+              const r = rows[i];
+              return execDrawer === r.id
+                ? [row, (
+                    <tr key={`exec-${r.id}`}>
+                      <td colSpan={9} className="border-b border-border/40 bg-muted/10 px-4 py-3">
+                        <ExecutionDrawer targetId={r.id} decisionId={r.decision_id}
+                                         onChanged={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
+                      </td>
+                    </tr>
+                  )]
+                : [row];
+            })}
           </tbody>
         </table>
       </div>
@@ -812,5 +838,119 @@ function SweepPanel({ root, onSwept }: { root: string; onSwept: () => void }) {
         )}
       </div>
     </details>
+  );
+}
+
+
+// ---------------- Execution drawer: manifests + receipts, per target ----------------
+// The handoff point between decisions (in here) and the executor (on the
+// cluster). Generate -> download -> run on a login node -> upload the
+// receipt back; the receipt creates the execution rows.
+
+function ExecutionDrawer({ targetId, decisionId, onChanged }:
+  { targetId: number; decisionId: number; onChanged: () => void }) {
+  const qc = useQueryClient();
+  const [genBusy, setGenBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [receiptBusy, setReceiptBusy] = useState(false);
+
+  const manifests = useQuery({
+    queryKey: ["hk-manifests", targetId],
+    queryFn: () => api(`/targets/${targetId}/manifests`),
+  });
+
+  const generate = async () => {
+    setGenBusy(true);
+    setStatus(null);
+    try {
+      const d = await api("/manifests", {
+        method: "POST", body: JSON.stringify({ decision_id: decisionId }),
+      });
+      const excluded = d.manifests.find((m: any) => m.manifest_id === null);
+      setStatus(`Generated ${d.manifests.filter((m: any) => m.manifest_id).length} manifest(s) from snapshot ${d.snapshot}`
+        + (excluded ? ` — ${excluded.note}` : ""));
+      qc.invalidateQueries({ queryKey: ["hk-manifests", targetId] });
+    } catch (e: any) {
+      setStatus(`Failed: ${e.message}`);
+    }
+    setGenBusy(false);
+  };
+
+  const uploadReceipt = async (file: File) => {
+    setReceiptBusy(true);
+    setStatus(null);
+    try {
+      const text = await file.text();
+      let receipt: any;
+      try { receipt = JSON.parse(text); }
+      catch { throw new Error(`${file.name} is not valid JSON — expected the executor's .receipt.json`); }
+      const d = await api("/receipts", { method: "POST", body: JSON.stringify(receipt) });
+      setStatus(d.dry_run
+        ? "Dry-run receipt recorded (no execution row — run without dry-run to execute)."
+        : `Receipt accepted — execution row(s) ${d.execution_ids.join(", ")} created.`);
+      onChanged();
+      qc.invalidateQueries({ queryKey: ["hk-quarantine"] });
+    } catch (e: any) {
+      setStatus(`Failed: ${e.message}`);
+    }
+    setReceiptBusy(false);
+  };
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <button className="h-7 px-3 rounded bg-primary text-primary-foreground disabled:opacity-50"
+                disabled={genBusy} onClick={generate}>
+          {genBusy ? "Resolving members…" : (manifests.data?.length ? "Regenerate manifests" : "Generate manifests")}
+        </button>
+        <label className="h-7 px-3 rounded border border-border flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground">
+          {receiptBusy ? "Uploading…" : "⇪ Upload receipt (.receipt.json)"}
+          <input type="file" accept=".json,application/json" className="hidden"
+                 disabled={receiptBusy}
+                 onChange={e => {
+                   const f = e.target.files?.[0];
+                   if (f) uploadReceipt(f);
+                   e.target.value = "";
+                 }} />
+        </label>
+        {status && (
+          <span className={status.startsWith("Failed") ? "text-red-500" : "text-emerald-600"}>{status}</span>
+        )}
+      </div>
+
+      {manifests.isLoading ? (
+        <span className="text-muted-foreground">loading manifests…</span>
+      ) : (manifests.data?.length ?? 0) === 0 ? (
+        <span className="text-muted-foreground">
+          No manifests yet. Generate resolves this decision's files against the current
+          snapshot and writes one manifest per file owner.
+        </span>
+      ) : (
+        <table className="w-auto">
+          <tbody>
+            {manifests.data!.map((m: any) => (
+              <tr key={m.manifest_id} className="border-b border-border/20">
+                <td className="py-1 pr-4 font-mono">{m.manifest_id}</td>
+                <td className="py-1 pr-4">{m.owner_uname}</td>
+                <td className="py-1 pr-4 text-right font-mono">{(m.files ?? 0).toLocaleString()} files</td>
+                <td className="py-1 pr-4 text-right font-mono">{formatBytes(m.bytes ?? 0)}</td>
+                <td className="py-1 pr-4 text-muted-foreground">{m.generated_at?.slice(0, 10)} (snap {m.snapshot_date})</td>
+                <td className="py-1">
+                  <a className="text-primary hover:underline"
+                     href={`${API_BASE_URL}/api/housekeeping/manifests/${m.manifest_id}`} download>
+                    download
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="text-[10px] text-muted-foreground">
+        On a Midway login node: <code>hk-executor --manifest &lt;file&gt;</code> (dry run) →
+        <code> --quarantine</code> (or <code>--delegate --quarantine</code> when running others'
+        manifests) → upload the receipt here. Full instructions are embedded in each manifest.
+      </div>
+    </div>
   );
 }
