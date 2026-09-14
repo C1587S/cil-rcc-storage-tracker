@@ -154,3 +154,29 @@ CREATE TABLE IF NOT EXISTS quarantine_item (
 );
 CREATE INDEX IF NOT EXISTS quarantine_expiry_idx ON quarantine_item (expires_at) WHERE restored_at IS NULL AND purged_at IS NULL;
 CREATE INDEX IF NOT EXISTS quarantine_original_idx ON quarantine_item (original_path);
+
+
+-- Receipt uploads process asynchronously: a 400K-entry receipt cannot be
+-- ingested inside one HTTP request. The job row is the progress the UI
+-- polls; re-uploading the same receipt is idempotent (see unique indexes).
+CREATE TABLE IF NOT EXISTS hk_receipt_job (
+    id          BIGSERIAL PRIMARY KEY,
+    manifest_id TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'uploaded'
+                CHECK (status IN ('uploaded','validating','processing','done','failed')),
+    processed   BIGINT NOT NULL DEFAULT 0,
+    total       BIGINT NOT NULL DEFAULT 0,
+    dry_run     BOOLEAN NOT NULL DEFAULT false,
+    error       TEXT,
+    note        TEXT,
+    execution_ids BIGINT[] NOT NULL DEFAULT '{}',
+    created_by  TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ
+);
+
+-- Idempotency: a retry after a partial failure must not double-count.
+CREATE UNIQUE INDEX IF NOT EXISTS quarantine_manifest_path_uniq
+    ON quarantine_item (manifest_id, original_path);
+CREATE UNIQUE INDEX IF NOT EXISTS execution_decision_manifest_uniq
+    ON execution (decision_id, manifest_ref);

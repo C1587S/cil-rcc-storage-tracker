@@ -853,6 +853,10 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
   const [genBusy, setGenBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [receiptBusy, setReceiptBusy] = useState(false);
+  // Upload phases: byte progress during transfer, then row progress while
+  // the server processes the job.
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [job, setJob] = useState<any | null>(null);
 
   const manifests = useQuery({
     queryKey: ["hk-manifests", targetId],
@@ -879,19 +883,61 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
   const uploadReceipt = async (file: File) => {
     setReceiptBusy(true);
     setStatus(null);
+    setJob(null);
+    setUploadPct(0);
     try {
-      const text = await file.text();
-      let receipt: any;
-      try { receipt = JSON.parse(text); }
-      catch { throw new Error(`${file.name} is not valid JSON — expected the executor's .receipt.json`); }
-      const d = await api("/receipts", { method: "POST", body: JSON.stringify(receipt) });
-      setStatus(d.dry_run
-        ? "Dry-run receipt recorded (no execution row — run without dry-run to execute)."
-        : `Receipt accepted — execution row(s) ${d.execution_ids.join(", ")} created.`);
-      onChanged();
-      qc.invalidateQueries({ queryKey: ["hk-quarantine"] });
+      // Compress plain receipts client-side: 109 MB over the tunnel is
+      // minutes; ~6 MB gzipped is seconds. Already-.gz files pass through.
+      let body: Blob = file;
+      if (!file.name.endsWith(".gz") && typeof CompressionStream !== "undefined") {
+        const stream = file.stream().pipeThrough(new CompressionStream("gzip"));
+        body = await new Response(stream).blob();
+      }
+
+      const jobId: number = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${API_BASE_URL}/api/housekeeping/receipts`);
+        xhr.setRequestHeader("Content-Type", "application/octet-stream");
+        const uid = currentIdentity();
+        if (uid) xhr.setRequestHeader("X-User", uid);
+        xhr.upload.onprogress = e => {
+          if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100));
+        };
+        xhr.onload = () => {
+          try {
+            const d = JSON.parse(xhr.responseText);
+            if (xhr.status >= 400) reject(new Error(d?.detail || `upload failed (${xhr.status})`));
+            else resolve(d.job_id);
+          } catch { reject(new Error(`upload failed (${xhr.status})`)); }
+        };
+        xhr.onerror = () => reject(new Error("network error during upload"));
+        xhr.send(body);
+      });
+      setUploadPct(null);
+
+      // Poll the job until it settles
+      for (;;) {
+        const st = await api(`/receipts/jobs/${jobId}`);
+        setJob(st);
+        if (st.status === "done" || st.status === "failed") {
+          if (st.status === "done") {
+            setStatus(st.note
+              ? st.note
+              : st.dry_run
+                ? "Dry-run receipt recorded (no execution rows — run without dry-run to execute)."
+                : `Receipt processed — execution row(s) ${st.execution_ids.join(", ")} created.`);
+            onChanged();
+            qc.invalidateQueries({ queryKey: ["hk-quarantine"] });
+          } else {
+            setStatus(`Failed: ${st.error}`);
+          }
+          break;
+        }
+        await new Promise(r => setTimeout(r, 1500));
+      }
     } catch (e: any) {
       setStatus(`Failed: ${e.message}`);
+      setUploadPct(null);
     }
     setReceiptBusy(false);
   };
@@ -904,8 +950,8 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
           {genBusy ? "Resolving members…" : (manifests.data?.length ? "Regenerate manifests" : "Generate manifests")}
         </button>
         <label className="h-7 px-3 rounded border border-border flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground">
-          {receiptBusy ? "Uploading…" : "⇪ Upload receipt (.receipt.json)"}
-          <input type="file" accept=".json,application/json" className="hidden"
+          {receiptBusy ? "Working…" : "⇪ Upload receipt (.json / .json.gz)"}
+          <input type="file" accept=".json,.gz,application/json,application/gzip" className="hidden"
                  disabled={receiptBusy}
                  onChange={e => {
                    const f = e.target.files?.[0];
@@ -913,6 +959,25 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
                    e.target.value = "";
                  }} />
         </label>
+        {uploadPct !== null && (
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="inline-block w-28 h-2 rounded bg-muted/30 overflow-hidden">
+              <span className="block h-full bg-primary transition-all" style={{ width: `${uploadPct}%` }} />
+            </span>
+            uploading {uploadPct}%
+          </span>
+        )}
+        {job && !["done", "failed"].includes(job.status) && uploadPct === null && (
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <span className="inline-block w-28 h-2 rounded bg-muted/30 overflow-hidden">
+              <span className="block h-full bg-primary transition-all"
+                    style={{ width: `${job.total ? Math.round((job.processed / job.total) * 100) : 5}%` }} />
+            </span>
+            {job.status === "processing"
+              ? `processing ${job.processed.toLocaleString()} of ${job.total.toLocaleString()}`
+              : job.status}
+          </span>
+        )}
         {status && (
           <span className={status.startsWith("Failed") ? "text-red-500" : "text-emerald-600"}>{status}</span>
         )}

@@ -7,6 +7,7 @@ One manifest per owner: execution on RCC is per-owner by construction.
 Entries carry size/mtime/inode from the snapshot so the executor can verify
 each file is still the one that was reviewed.
 """
+import gzip
 import json
 import pathlib
 import re
@@ -105,9 +106,12 @@ def generate_manifests(
                 for p, h, sz, mt, ino in entries
             ],
         }
-        out = MANIFEST_DIR / f"{manifest_id}.json"
-        tmp = out.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(manifest))
+        # Gzipped: a 400K-entry manifest is ~127 MB plain, ~10 MB gz —
+        # people scp these to the cluster.
+        out = MANIFEST_DIR / f"{manifest_id}.json.gz"
+        tmp = out.with_suffix(".tmp")
+        with gzip.open(tmp, "wt") as fh:
+            fh.write(json.dumps(manifest))
         tmp.rename(out)
         summaries.append({
             "manifest_id": manifest_id,
@@ -132,10 +136,23 @@ def load_manifest(manifest_id: str) -> dict | None:
     # manifest_id is generated server-side; still, never join user input
     # into a path without neutering separators
     safe = manifest_id.replace("/", "").replace("..", "")
-    f = MANIFEST_DIR / f"{safe}.json"
-    if not f.exists():
-        return None
-    return json.loads(f.read_text())
+    gz = MANIFEST_DIR / f"{safe}.json.gz"
+    if gz.exists():
+        with gzip.open(gz, "rt") as fh:
+            return json.loads(fh.read())
+    plain = MANIFEST_DIR / f"{safe}.json"
+    if plain.exists():
+        return json.loads(plain.read_text())
+    return None
+
+
+def manifest_file(manifest_id: str) -> pathlib.Path | None:
+    safe = manifest_id.replace("/", "").replace("..", "")
+    for name in (f"{safe}.json.gz", f"{safe}.json"):
+        f = MANIFEST_DIR / name
+        if f.exists():
+            return f
+    return None
 
 
 def validate_receipt(receipt: dict) -> list[str]:
@@ -151,4 +168,6 @@ def validate_receipt(receipt: dict) -> list[str]:
         problems.append(f"unknown action {receipt.get('action')!r}")
     if not isinstance(receipt.get("outcomes"), list):
         problems.append("outcomes must be a list")
+    if "succeeded_paths" in receipt and not isinstance(receipt["succeeded_paths"], list):
+        problems.append("succeeded_paths must be a list")
     return problems

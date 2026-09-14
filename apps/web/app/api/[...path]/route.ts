@@ -69,16 +69,17 @@ async function proxyRequest(request: NextRequest, pathSegments: string[]) {
         signal: controller.signal,
       }
 
-      // Include body for POST/PUT requests
+      // Include body for POST/PUT requests — as BYTES. text() corrupts
+      // binary bodies (gzipped receipt uploads).
       if (request.method !== 'GET' && request.method !== 'HEAD') {
-        options.body = await request.text()
+        options.body = Buffer.from(await request.arrayBuffer())
       }
 
       const response = await fetch(url, options)
       clearTimeout(timeoutId)
 
-      // Forward response
-      const data = await response.text()
+      // Forward response — as BYTES (manifest downloads are gzip)
+      const data = Buffer.from(await response.arrayBuffer())
 
       const respHeaders: Record<string, string> = {
         'content-type': response.headers.get('content-type') || 'application/json',

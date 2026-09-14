@@ -78,10 +78,23 @@ fn main() {
     let dry_run = !args.quarantine && !args.purge;
     let action = if args.purge { "purge" } else { "quarantine" };
 
-    let raw = fs::read_to_string(&args.manifest).unwrap_or_else(|e| {
+    // Manifests may be gzipped (.json.gz) — detect by magic, not name
+    let raw_bytes = fs::read(&args.manifest).unwrap_or_else(|e| {
         eprintln!("error: cannot read manifest: {e}");
         std::process::exit(2);
     });
+    let raw = if raw_bytes.starts_with(&[0x1f, 0x8b]) {
+        use std::io::Read;
+        let mut out = String::new();
+        flate2::read::GzDecoder::new(&raw_bytes[..]).read_to_string(&mut out)
+            .unwrap_or_else(|e| { eprintln!("error: bad gzip manifest: {e}"); std::process::exit(2) });
+        out
+    } else {
+        String::from_utf8(raw_bytes).unwrap_or_else(|_| {
+            eprintln!("error: manifest is neither gzip nor UTF-8 JSON");
+            std::process::exit(2);
+        })
+    };
     let manifest: Manifest = serde_json::from_str(&raw).unwrap_or_else(|e| {
         eprintln!("error: manifest does not parse as format v{FORMAT_VERSION}: {e}");
         std::process::exit(2);
@@ -180,6 +193,8 @@ fn main() {
         }
     }
 
+    let (succeeded, exceptional): (Vec<_>, Vec<_>) = outcomes.into_iter()
+        .partition(|o| matches!(o.outcome, Outcome::Quarantined | Outcome::Deleted));
     let receipt = Receipt {
         version: FORMAT_VERSION,
         manifest_id: manifest.manifest_id.clone(),
@@ -190,16 +205,27 @@ fn main() {
         finished_at: iso_now(),
         bytes_freed,
         files_removed: removed,
-        files_skipped_changed: outcomes.iter().filter(|o| o.outcome == Outcome::SkippedChanged).count() as u64,
-        files_skipped_missing: outcomes.iter().filter(|o| o.outcome == Outcome::SkippedMissing).count() as u64,
-        files_skipped_no_access: outcomes.iter().filter(|o| o.outcome == Outcome::SkippedNoAccess).count() as u64,
-        files_failed: outcomes.iter().filter(|o| o.outcome == Outcome::Failed).count() as u64,
+        files_skipped_changed: exceptional.iter().filter(|o| o.outcome == Outcome::SkippedChanged).count() as u64,
+        files_skipped_missing: exceptional.iter().filter(|o| o.outcome == Outcome::SkippedMissing).count() as u64,
+        files_skipped_no_access: exceptional.iter().filter(|o| o.outcome == Outcome::SkippedNoAccess).count() as u64,
+        files_failed: exceptional.iter().filter(|o| o.outcome == Outcome::Failed).count() as u64,
         dirs_removed,
-        outcomes,
+        outcomes: exceptional,
+        succeeded_paths: succeeded.into_iter().map(|o| o.path).collect(),
     };
 
-    let out_path = args.receipt.unwrap_or_else(|| PathBuf::from(format!("{}.receipt.json", manifest.manifest_id)));
-    fs::write(&out_path, serde_json::to_string_pretty(&receipt).unwrap()).expect("cannot write receipt");
+    // Gzipped by default: a 400K-file receipt is ~100 MB plain, ~5 MB gz.
+    let out_path = args.receipt.unwrap_or_else(|| PathBuf::from(format!("{}.receipt.json.gz", manifest.manifest_id)));
+    let json = serde_json::to_string(&receipt).unwrap();
+    if out_path.extension().map(|e| e == "gz").unwrap_or(false) {
+        use std::io::Write;
+        let f = fs::File::create(&out_path).expect("cannot write receipt");
+        let mut enc = flate2::write::GzEncoder::new(f, flate2::Compression::default());
+        enc.write_all(json.as_bytes()).expect("cannot write receipt");
+        enc.finish().expect("cannot finish receipt");
+    } else {
+        fs::write(&out_path, &json).expect("cannot write receipt");
+    }
 
     println!("{} run: {} removed ({} bytes freed), {} skipped-changed, {} skipped-missing, {} failed, {} dirs removed",
              if dry_run { "DRY" } else { action }, receipt.files_removed, receipt.bytes_freed,

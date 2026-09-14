@@ -11,7 +11,7 @@ import json
 import subprocess
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -19,6 +19,7 @@ from app.db.clickhouse import get_client
 from app.housekeeping import db as hk
 from app.housekeeping import manifests as mf
 from app.housekeeping import pilot
+from app.housekeeping import receipts as rcpt
 from app.housekeeping.resolver import (
     ResolverError, members_sql, resolve, rollup_sql,
 )
@@ -328,9 +329,16 @@ def target_manifests(target_id: int):
     """All manifests ever generated for a target — re-downloadable forever
     (they live in the backed-up manifests directory)."""
     out = []
-    for f in sorted(mf.MANIFEST_DIR.glob(f"hk-t{target_id}-*.json")):
+    seen = set()
+    for f in sorted(list(mf.MANIFEST_DIR.glob(f"hk-t{target_id}-*.json"))
+                    + list(mf.MANIFEST_DIR.glob(f"hk-t{target_id}-*.json.gz"))):
         try:
-            m = json.loads(f.read_text())
+            import gzip as _gz
+            m = (json.loads(_gz.open(f, "rt").read()) if f.name.endswith(".gz")
+                 else json.loads(f.read_text()))
+            if m["manifest_id"] in seen:
+                continue
+            seen.add(m["manifest_id"])
             out.append({
                 "manifest_id": m["manifest_id"],
                 "owner_uname": m.get("owner_uname"),
@@ -346,19 +354,40 @@ def target_manifests(target_id: int):
 
 @router.get("/manifests/{manifest_id}")
 def download_manifest(manifest_id: str):
-    m = mf.load_manifest(manifest_id)
-    if m is None:
+    f = mf.manifest_file(manifest_id)
+    if f is None:
         raise HTTPException(status_code=404, detail="manifest not found")
-    return JSONResponse(content=m, headers={
-        "Content-Disposition": f"attachment; filename={m['manifest_id']}.json",
-    })
+    from fastapi.responses import FileResponse
+    media = "application/gzip" if f.name.endswith(".gz") else "application/json"
+    return FileResponse(f, media_type=media, filename=f.name)
 
 
 @router.post("/receipts")
-def upload_receipt(receipt: dict, x_user: str | None = Header(default=None)):
-    """The executor's receipt closes the loop: it becomes the execution
-    row(s) — nobody clicks 'I did it'. Dry-run receipts are recorded in the
-    event log only."""
+async def upload_receipt(request: Request, x_user: str | None = Header(default=None)):
+    """Accepts the executor's receipt (.receipt.json or .json.gz), returns a
+    job id immediately, and processes in the background — a 400K-entry
+    receipt cannot be ingested inside one request. Poll /receipts/jobs/{id}."""
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+    raw = await request.body()
+    if not raw:
+        raise HTTPException(status_code=422, detail="empty upload — send the receipt file as the request body")
+    try:
+        return rcpt.start_job(raw, actor)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/receipts/jobs/{job_id}")
+def receipt_job(job_id: int):
+    st = rcpt.job_status(job_id)
+    if st is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return st
+
+
+def _legacy_upload_receipt(receipt: dict, x_user: str | None = Header(default=None)):
+    """Retained for reference; superseded by the async job pipeline."""
     problems = mf.validate_receipt(receipt)
     if problems:
         raise HTTPException(status_code=422, detail="; ".join(problems))

@@ -107,7 +107,13 @@ pub struct Receipt {
     pub dry_run: bool,
     pub started_at: String,
     pub finished_at: String,
+    /// Exceptional entries only (skipped_*, failed) — the interesting rows.
+    /// Successful paths live in `succeeded_paths` in compact form.
     pub outcomes: Vec<ReceiptEntry>,
+    /// Paths successfully quarantined/deleted, one string each. Compact on
+    /// purpose: 400K near-identical objects made receipts 100+ MB.
+    #[serde(default)]
+    pub succeeded_paths: Vec<String>,
     /// Bytes freed by the tool's own accounting: sum of sizes for
     /// deleted/quarantined entries, counting each inode ONCE.
     pub bytes_freed: u64,
