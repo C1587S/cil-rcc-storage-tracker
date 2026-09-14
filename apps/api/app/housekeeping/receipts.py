@@ -44,25 +44,29 @@ def start_job(raw: bytes, actor: str) -> dict:
 
     total = len(receipt.get("outcomes", [])) + len(receipt.get("succeeded_paths", []))
     dry = bool(receipt.get("dry_run"))
+    action = receipt["action"]
 
     with hk.tx() as conn:
+        # Idempotency keys on (manifest, ACTION): a quarantine receipt and
+        # its later purge_quarantine receipt are different lifecycle steps —
+        # only a true re-upload of the same step short-circuits.
         done = conn.execute(
             "SELECT id, execution_ids FROM hk_receipt_job"
-            " WHERE manifest_id = %s AND status = 'done' AND NOT dry_run LIMIT 1",
-            (manifest_id,)).fetchone()
+            " WHERE manifest_id = %s AND action = %s AND status = 'done' AND NOT dry_run LIMIT 1",
+            (manifest_id, action)).fetchone()
         if done and not dry:
             row = conn.execute(
-                "INSERT INTO hk_receipt_job (manifest_id, status, processed, total, dry_run,"
+                "INSERT INTO hk_receipt_job (manifest_id, action, status, processed, total, dry_run,"
                 " note, execution_ids, created_by, finished_at)"
-                " VALUES (%s, 'done', %s, %s, %s, %s, %s, %s, now()) RETURNING id",
-                (manifest_id, total, total, dry,
+                " VALUES (%s, %s, 'done', %s, %s, %s, %s, %s, %s, now()) RETURNING id",
+                (manifest_id, action, total, total, dry,
                  f"already processed by job #{done[0]} — nothing re-counted",
                  done[1], actor)).fetchone()
             return {"job_id": row[0], "already_processed": True}
         row = conn.execute(
-            "INSERT INTO hk_receipt_job (manifest_id, total, dry_run, created_by)"
-            " VALUES (%s, %s, %s, %s) RETURNING id",
-            (manifest_id, total, dry, actor)).fetchone()
+            "INSERT INTO hk_receipt_job (manifest_id, action, total, dry_run, created_by)"
+            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (manifest_id, action, total, dry, actor)).fetchone()
         job_id = row[0]
 
     RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -88,7 +92,25 @@ def _process(job_id: int, receipt: dict, actor: str) -> None:
         exec_ids: list[int] = []
         processed = 0
 
-        if not receipt.get("dry_run"):
+        if not receipt.get("dry_run") and receipt["action"] == "purge_quarantine":
+            # Second half of the lifecycle: the held copies are gone; the
+            # registry rows flip from restorable to purged. No new execution
+            # row — this completes the one the quarantine receipt created.
+            _set(job_id, status="processing")
+            purged = list(receipt.get("succeeded_paths", []))
+            purged += [o["path"] for o in receipt.get("outcomes", [])
+                       if o.get("outcome") == "deleted"]
+            for i in range(0, len(purged), BATCH):
+                chunk = purged[i:i + BATCH]
+                with hk.tx() as conn:
+                    conn.execute(
+                        "UPDATE quarantine_item SET purged_at = now()"
+                        " WHERE manifest_id = %s AND original_path = ANY(%s)"
+                        " AND purged_at IS NULL",
+                        (manifest["manifest_id"], chunk))
+                processed += len(chunk)
+                _set(job_id, processed=processed)
+        elif not receipt.get("dry_run"):
             _set(job_id, status="processing")
             with hk.tx() as conn:
                 executor = str(receipt["executor"]).lower()

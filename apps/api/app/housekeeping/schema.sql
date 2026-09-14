@@ -176,6 +176,8 @@ CREATE TABLE IF NOT EXISTS hk_receipt_job (
 );
 
 -- Idempotency: a retry after a partial failure must not double-count.
+ALTER TABLE hk_receipt_job ADD COLUMN IF NOT EXISTS action TEXT NOT NULL DEFAULT 'quarantine';
+
 CREATE UNIQUE INDEX IF NOT EXISTS quarantine_manifest_path_uniq
     ON quarantine_item (manifest_id, original_path);
 CREATE UNIQUE INDEX IF NOT EXISTS execution_decision_manifest_uniq

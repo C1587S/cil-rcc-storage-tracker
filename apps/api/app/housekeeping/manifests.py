@@ -164,7 +164,7 @@ def validate_receipt(receipt: dict) -> list[str]:
                   "finished_at", "outcomes"):
         if field not in receipt:
             problems.append(f"missing field: {field}")
-    if receipt.get("action") not in ("quarantine", "purge"):
+    if receipt.get("action") not in ("quarantine", "purge", "purge_quarantine"):
         problems.append(f"unknown action {receipt.get('action')!r}")
     if not isinstance(receipt.get("outcomes"), list):
         problems.append("outcomes must be a list")

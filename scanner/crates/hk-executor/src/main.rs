@@ -34,6 +34,17 @@ struct Args {
     /// Unlink files for real. Mutually exclusive with --quarantine.
     #[arg(long)]
     purge: bool,
+    /// Purge a QUARANTINE: unlink the held copies of this manifest's files
+    /// (at quarantine_dir + relative path — where --quarantine moved them).
+    /// Refuses before the 30-day grace expires unless --force.
+    #[arg(long)]
+    purge_quarantine: bool,
+    /// Override the grace-period refusal for --purge-quarantine.
+    #[arg(long)]
+    force: bool,
+    /// Preview any mode without touching the filesystem.
+    #[arg(long)]
+    dry_run: bool,
     /// Bounded parallelism. Unlink storms hurt the metadata servers for
     /// the whole cluster — keep this modest.
     #[arg(long, default_value_t = 16)]
@@ -71,12 +82,15 @@ fn iso_now() -> String {
 
 fn main() {
     let args = Args::parse();
-    if args.quarantine && args.purge {
-        eprintln!("error: --quarantine and --purge are mutually exclusive");
+    let modes = [args.quarantine, args.purge, args.purge_quarantine]
+        .iter().filter(|m| **m).count();
+    if modes > 1 {
+        eprintln!("error: --quarantine, --purge and --purge-quarantine are mutually exclusive");
         std::process::exit(2);
     }
-    let dry_run = !args.quarantine && !args.purge;
-    let action = if args.purge { "purge" } else { "quarantine" };
+    let dry_run = modes == 0 || args.dry_run;
+    let action = if args.purge_quarantine { "purge_quarantine" }
+                 else if args.purge { "purge" } else { "quarantine" };
 
     // Manifests may be gzipped (.json.gz) — detect by magic, not name
     let raw_bytes = fs::read(&args.manifest).unwrap_or_else(|e| {
@@ -126,9 +140,12 @@ fn main() {
     }
     if !args.delegate {
         let foreign: Vec<&str> = manifest.entries.par_iter()
-            .filter_map(|e| match fs::symlink_metadata(&e.path) {
-                Ok(md) if md.uid() != me => Some(e.path.as_str()),
-                _ => None,
+            .filter_map(|e| {
+                let p = if args.purge_quarantine { quarantine_path(&manifest, &e.path) } else { e.path.clone() };
+                match fs::symlink_metadata(&p) {
+                    Ok(md) if md.uid() != me => Some(e.path.as_str()),
+                    _ => None,
+                }
             })
             .collect();
         if !foreign.is_empty() && !dry_run {
@@ -140,11 +157,39 @@ fn main() {
         }
     }
 
+    // ---- Grace check for quarantine purges: ctime of the held files is
+    // the moment they were renamed in; the newest one starts the clock. ----
+    if args.purge_quarantine && !dry_run {
+        const GRACE_SECS: i64 = 30 * 86400;
+        let now = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let newest_ctime = manifest.entries.par_iter()
+            .filter_map(|e| {
+                let q = quarantine_path(&manifest, &e.path);
+                fs::symlink_metadata(&q).ok().map(|md| md.ctime())
+            })
+            .max();
+        if let Some(ct) = newest_ctime {
+            let expiry = ct + GRACE_SECS;
+            if now < expiry {
+                let days_left = (expiry - now + 86399) / 86400;
+                if args.force {
+                    eprintln!("WARNING: grace period has {days_left} day(s) left — \
+purging anyway because --force was given. These files become unrecoverable.");
+                } else {
+                    eprintln!("refusing: the 30-day grace period has {days_left} day(s) left \
+(newest quarantine write). Re-run with --force to purge anyway.");
+                    std::process::exit(2);
+                }
+            }
+        }
+    }
+
     // ---- File pass ----
     let delegate = args.delegate;
     let outcomes = Mutex::new(Vec::with_capacity(manifest.entries.len()));
     manifest.entries.par_iter().for_each(|e| {
-        let out = process_entry(e, &manifest, dry_run, args.purge, me, delegate);
+        let out = process_entry(e, &manifest, dry_run, args.purge, me, delegate, args.purge_quarantine);
         outcomes.lock().unwrap().push(out);
     });
     let mut outcomes = outcomes.into_inner().unwrap();
@@ -156,7 +201,14 @@ fn main() {
     if !dry_run {
         let mut dirs: Vec<PathBuf> = outcomes.iter()
             .filter(|o| matches!(o.outcome, Outcome::Quarantined | Outcome::Deleted))
-            .filter_map(|o| Path::new(&o.path).parent().map(|p| p.to_path_buf()))
+            .filter_map(|o| {
+                let acted_on = if args.purge_quarantine {
+                    PathBuf::from(quarantine_path(&manifest, &o.path))
+                } else {
+                    PathBuf::from(&o.path)
+                };
+                acted_on.parent().map(|p| p.to_path_buf())
+            })
             .collect::<HashSet<_>>().into_iter().collect();
         dirs.sort_by_key(|d| std::cmp::Reverse(d.components().count()));
         for d in dirs {
@@ -248,9 +300,16 @@ fn parent_writable(path: &str) -> bool {
     unsafe { libc::access(c.as_ptr(), libc::W_OK | libc::X_OK) == 0 }
 }
 
+fn quarantine_path(m: &Manifest, original: &str) -> String {
+    format!("{}{}", m.quarantine_dir, &original[m.root.len()..])
+}
+
 fn process_entry(e: &manifest_types::ManifestEntry, m: &Manifest, dry_run: bool,
-                 purge: bool, me: u32, delegate: bool) -> ReceiptEntry {
-    let md = match fs::symlink_metadata(&e.path) {
+                 purge: bool, me: u32, delegate: bool, purge_q: bool) -> ReceiptEntry {
+    // In purge-quarantine mode we act on the held copy; the receipt still
+    // names the ORIGINAL path, which is what the registry keys on.
+    let target = if purge_q { quarantine_path(m, &e.path) } else { e.path.clone() };
+    let md = match fs::symlink_metadata(&target) {
         Err(_) => return ReceiptEntry { path: e.path.clone(), outcome: Outcome::SkippedMissing, errno: None, nlink: 0 },
         Ok(md) => md,
     };
@@ -261,17 +320,18 @@ fn process_entry(e: &manifest_types::ManifestEntry, m: &Manifest, dry_run: bool,
         return ReceiptEntry { path: e.path.clone(), outcome: Outcome::SkippedChanged, errno: None, nlink };
     }
     if delegate {
-        if !parent_writable(&e.path) {
+        if !parent_writable(&target) {
             return ReceiptEntry { path: e.path.clone(), outcome: Outcome::SkippedNoAccess, errno: Some(libc::EACCES), nlink };
         }
     } else if md.uid() != me {
         return ReceiptEntry { path: e.path.clone(), outcome: Outcome::Failed, errno: Some(libc::EPERM), nlink };
     }
+    let deleting = purge || purge_q;
     if dry_run {
-        return ReceiptEntry { path: e.path.clone(), outcome: if purge { Outcome::Deleted } else { Outcome::Quarantined }, errno: None, nlink };
+        return ReceiptEntry { path: e.path.clone(), outcome: if deleting { Outcome::Deleted } else { Outcome::Quarantined }, errno: None, nlink };
     }
-    let result = if purge {
-        fs::remove_file(&e.path)
+    let result = if deleting {
+        fs::remove_file(&target)
     } else {
         let rel = &e.path[m.root.len()..];
         let dest = format!("{}{}", m.quarantine_dir, rel);
@@ -286,7 +346,7 @@ fn process_entry(e: &manifest_types::ManifestEntry, m: &Manifest, dry_run: bool,
     };
     match result {
         Ok(()) => ReceiptEntry { path: e.path.clone(),
-                                 outcome: if purge { Outcome::Deleted } else { Outcome::Quarantined },
+                                 outcome: if deleting { Outcome::Deleted } else { Outcome::Quarantined },
                                  errno: None, nlink },
         Err(err) => ReceiptEntry { path: e.path.clone(), outcome: Outcome::Failed,
                                    errno: err.raw_os_error(), nlink },

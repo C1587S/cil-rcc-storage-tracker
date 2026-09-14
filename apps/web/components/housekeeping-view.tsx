@@ -1013,8 +1013,10 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
       )}
       <div className="text-[10px] text-muted-foreground">
         On a Midway login node: <code>hk-executor --manifest &lt;file&gt;</code> (dry run) →
-        <code> --quarantine</code> (or <code>--delegate --quarantine</code> when running others'
-        manifests) → upload the receipt here. Full instructions are embedded in each manifest.
+        <code>--quarantine</code> (add <code>--delegate</code> when running others' manifests) →
+        upload the receipt here. After the 30-day grace: <code>--purge-quarantine</code> deletes
+        the held copies (refuses early unless <code>--force</code>) — upload that receipt too and
+        the registry marks them purged. Full instructions are embedded in each manifest.
       </div>
     </div>
   );

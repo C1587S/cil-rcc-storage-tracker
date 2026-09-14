@@ -35,8 +35,14 @@ sync with them; bump `FORMAT_VERSION` in both together.
 6. Files first; then empty directories bottom-up. `rmdir` only — never a
    recursive remove.
 7. Default action is rename-into-quarantine (same-filesystem rename:
-   instant, reversible, frees nothing). `--purge` unlinks for real and can
-   be pointed at an expired quarantine tree.
+   instant, reversible, frees nothing). `--purge` unlinks originals for
+   real. `--purge-quarantine` unlinks the HELD copies of a previously
+   quarantined manifest (mapped via quarantine_dir + relative path; rename
+   preserves size and mtime so verification still applies). It refuses
+   before the 30-day grace expires — measured from the held files' ctime,
+   i.e. the rename moment — unless `--force`, which warns with the days
+   remaining. Its receipt (action `purge_quarantine`, original paths)
+   flips the registry rows from restorable to purged on upload.
 8. Emits a JSON receipt; uploading it to the panel creates the execution
    row automatically and becomes the second measurement against passive
    snapshot verification.
