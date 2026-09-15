@@ -10,6 +10,31 @@ export function currentIdentity(): string | null {
   return localStorage.getItem("cil-user");
 }
 
+/** The one fetch wrapper for /api/housekeeping/*. Identity is resolved at
+ *  call time (per-call `user` only for tests); errors surface the server's
+ *  detail as the thrown message. */
+export async function hkApi(path: string, opts: RequestInit = {}, user?: string | null) {
+  const uid = user ?? currentIdentity();
+  const res = await fetch(`${API_BASE_URL}/api/housekeeping${path}`, {
+    ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      ...(opts.headers || {}),
+      ...(uid ? { "X-User": uid } : {}),
+    },
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.error(`housekeeping API ${res.status} ${path}:`, d?.detail || d);
+    throw new Error(d?.detail || `Request failed (${res.status})`);
+  }
+  return d;
+}
+
+/** Recon sub-API (candidate discovery, lists, dismissals). */
+export const reconApi = (path: string, opts: RequestInit = {}, user?: string | null) =>
+  hkApi(`/recon${path}`, opts, user);
+
 export function activeList(): { id: number; name: string } | null {
   try {
     const raw = localStorage.getItem("hk-active-list");
