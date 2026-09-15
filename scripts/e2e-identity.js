@@ -36,7 +36,12 @@ const USER = "cadavidsanchez";
     check(stored === USER, `login writes cil-user (= ${JSON.stringify(stored)})`);
 
     await page.goto(BASE + "#housekeeping", { waitUntil: "networkidle2" });
-    // Age tab loads by default; wait for a preview toggle
+    // Two-mode layout: dismissals live in Find (Age is its default method)
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll("button")].some(b => b.textContent.trim() === "Find"));
+    await page.evaluate(() =>
+      [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Find").click());
+    // wait for a preview toggle in the result table
     await page.waitForFunction(() =>
       [...document.querySelectorAll("button")].some(b => b.textContent.trim() === "▸"));
     await page.evaluate(() =>

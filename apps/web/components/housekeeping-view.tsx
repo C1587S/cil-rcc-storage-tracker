@@ -1,89 +1,115 @@
 "use client";
 
 /**
- * Housekeeping report table: the working surface of the review process.
+ * Housekeeping: two working modes plus the record, switched at the top.
  *
- * - Persistent headroom banner: nobody should have to attempt an archive
- *   to discover cds3 is full.
- * - Headline numbers include decided-but-not-executed explicitly — the gap
- *   someone chases weekly is a number on screen, not mental subtraction.
- * - CSV export = same query, round-trippable from day one.
- * - Inline verdict dropdown writes ONE event and nothing else: no drafts,
- *   no batches, no optimistic state that can diverge from the server.
+ *  Work   — what you open most days. Three numbers (mine, decided-not-
+ *           executed, quarantine), one targets table, the quarantine
+ *           section. If you have no pending work it is nearly empty, and
+ *           that is correct.
+ *  Find   — where new work comes from. Every candidate-producing method
+ *           lives there and nowhere else (housekeeping-find.tsx).
+ *  Record — the append-only history: per-path story, event log, archive
+ *           exports. Fits neither mode above; lives on its own switch.
+ *
+ * Root comes from the header badge next to the snapshot — the ONE root
+ * every panel reads. No panel has its own root control; the Work table
+ * spans both roots (work is work, wherever it lives) and shows root as a
+ * column.
+ *
+ * Manual target creation is a dialog behind a button, opened with the
+ * global root of the moment — never an expanded form idling with a stale
+ * default.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Download, Plus } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { API_BASE_URL } from "@/lib/api";
 import { formatBytes } from "@/lib/utils/formatters";
 import { cn } from "@/lib/utils";
-import { ReconPanel } from "@/components/housekeeping-recon";
-import { toast, currentIdentity } from "@/lib/hk";
+import { FindPanel } from "@/components/housekeeping-find";
+import { hkApi as api, toast, currentIdentity } from "@/lib/hk";
 import { GridLoader } from "@/components/ui/grid-loader";
 
-const ROOTS = ["/cds3/cil", "/project/cil"];
 const VERDICTS = ["keep", "delete", "quarantine", "archive", "compress", "needs_info", "not_mine"];
+const ACTIONABLE = (v: string | null | undefined) =>
+  !!v && !["keep", "needs_info", "not_mine"].includes(v);
 
 type Row = Record<string, any>;
+type Mode = "work" | "find" | "record";
 
-async function api(path: string, opts: RequestInit = {}, user?: string | null) {
-  // Identity is resolved HERE, at call time — the per-call `user` argument
-  // is only a fallback for tests. No call site can forget it.
-  const uid = user ?? currentIdentity();
-  const res = await fetch(`${API_BASE_URL}/api/housekeeping${path}`, {
-    ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      ...(opts.headers || {}),
-      ...(uid ? { "X-User": uid } : {}),
-    },
-  });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    // Internal detail goes to the console; the thrown message is what the
-    // panel shows the person.
-    console.error(`housekeeping API ${res.status} ${path}:`, detail?.detail || detail);
-    throw new Error(detail?.detail || `Request failed (${res.status})`);
-  }
-  return res.json();
-}
-
-function Headline({ label, tb, emphasize }: { label: string; tb: number; emphasize?: boolean }) {
-  return (
-    <div className={cn(
-      "px-4 py-2.5 rounded-md border",
-      emphasize ? "border-amber-500/50 bg-amber-500/10" : "border-border/60 bg-card"
-    )}>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className={cn("text-lg font-semibold font-mono", emphasize && "text-amber-600 dark:text-amber-400")}>
-        {tb.toFixed(2)} <span className="text-xs font-normal text-muted-foreground">TB</span>
-      </div>
-    </div>
-  );
-}
+const loadMode = (): Mode => {
+  try {
+    const m = localStorage.getItem("hk-mode");
+    return m === "find" || m === "record" ? m : "work";
+  } catch { return "work"; }
+};
 
 export function HousekeepingView() {
-  const { currentUser, referencePath } = useAppStore();
+  const { referencePath } = useAppStore();
   const qc = useQueryClient();
-  // ONE root for the whole page: the global root badge (snapshot bar).
+  const [mode, setMode] = useState<Mode>(loadMode);
+  // ONE root for everything: the header badge next to the snapshot.
   // referencePath may point at a subdirectory (tree reference feature), so
   // resolve it to its storage root.
   const globalRoot =
     ["/project/cil", "/cds3/cil"].find(r =>
       (referencePath || "/project/cil") === r || (referencePath || "").startsWith(r + "/"))
     ?? "/project/cil";
-  const [rootFilter, setRootFilter] = useState<string | null>(globalRoot);
-  // The table's root chips follow the global root when it changes; they
-  // remain a TABLE filter (incl. "all"), never the page's root.
-  useEffect(() => { setRootFilter(globalRoot); }, [globalRoot]);
+
+  const switchMode = (m: Mode) => {
+    setMode(m);
+    try { localStorage.setItem("hk-mode", m); } catch {}
+  };
+
+  const onTargetsCreated = () => qc.invalidateQueries({ queryKey: ["hk-report"] });
+
+  return (
+    <div className="space-y-4">
+      {/* Mode switch */}
+      <div className="flex items-center gap-1">
+        {([["work", "Work", "Your pending work: numbers, targets, quarantine"],
+           ["find", "Find", "Look for new work — every discovery method"],
+           ["record", "Record", "The append-only history: story lookup, events, exports"]] as [Mode, string, string][])
+          .map(([m, label, hint]) => (
+          <button key={m}
+                  className={cn("px-4 h-9 text-sm rounded-md border transition-colors",
+                    mode === m
+                      ? "border-primary/60 bg-primary/10 text-primary font-semibold"
+                      : "border-border/60 text-muted-foreground hover:text-foreground")}
+                  title={hint}
+                  onClick={() => switchMode(m)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Modes unmount when inactive: nothing hidden runs queries. */}
+      {mode === "work" && <WorkMode globalRoot={globalRoot} />}
+      {mode === "find" && (
+        <div className="border border-border/60 rounded-md p-3">
+          <FindPanel root={globalRoot} onTargetsCreated={onTargetsCreated} />
+        </div>
+      )}
+      {mode === "record" && <RecordMode />}
+    </div>
+  );
+}
+
+
+// ================= WORK =================
+
+function WorkMode({ globalRoot }: { globalRoot: string }) {
+  const { currentUser } = useAppStore();
+  const qc = useQueryClient();
+  const [chip, setChip] = useState<"mine" | "all" | "awaiting">("mine");
   const [textFilter, setTextFilter] = useState("");
   const [sortKey, setSortKey] = useState<string>("bytes");
   const [sortDesc, setSortDesc] = useState(true);
-  const [showNewTarget, setShowNewTarget] = useState(false);
   const [execDrawer, setExecDrawer] = useState<number | null>(null);
-  const [newTarget, setNewTarget] = useState({ name: "", path: "", root: "/cds3/cil", scope: "subtree" });
+  const [newTargetOpen, setNewTargetOpen] = useState(false);
 
   const { data: headroom } = useQuery({
     queryKey: ["hk-headroom"],
@@ -91,9 +117,15 @@ export function HousekeepingView() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // All roots — work is work, wherever it lives. Root is a column.
   const { data: report, isLoading, error } = useQuery({
-    queryKey: ["hk-report", rootFilter],
-    queryFn: () => api(`/report${rootFilter ? `?root=${encodeURIComponent(rootFilter)}` : ""}`),
+    queryKey: ["hk-report"],
+    queryFn: () => api("/report"),
+  });
+
+  const { data: quarantine } = useQuery({
+    queryKey: ["hk-quarantine"],
+    queryFn: () => api("/quarantine"),
   });
 
   const decide = useMutation({
@@ -102,35 +134,37 @@ export function HousekeepingView() {
         return Promise.reject(new Error(
           "Archive needs a destination and is disabled while /cds3/cil has no headroom."));
       }
-      const destination_path: string | null = null;
       return api("/decisions", {
         method: "POST",
-        body: JSON.stringify({ target_id: targetId, verdict, destination_path }),
+        body: JSON.stringify({ target_id: targetId, verdict, destination_path: null }),
       }, currentUser);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ["hk-report"] }),
     onError: (e: Error) => toast(e.message, "error"),
   });
 
-  const createTarget = useMutation({
-    mutationFn: () => api("/targets", {
-      method: "POST",
-      body: JSON.stringify({ ...newTarget, campaign: newTarget.root === "/cds3/cil" ? "cds3-clear" : null }),
-    }, currentUser),
-    onSuccess: () => {
-      setShowNewTarget(false);
-      setNewTarget({ name: "", path: "", root: "/cds3/cil", scope: "subtree" });
-      qc.invalidateQueries({ queryKey: ["hk-report"] });
-    },
-    onError: (e: Error) => toast(e.message, "error"),
-  });
+  const allRows: Row[] = report?.rows ?? [];
 
+  // ----- the three numbers -----
+  const me = currentUser?.toLowerCase();
+  const mine = allRows.filter(r => me && r.assignee === me && !r.executor);
+  const awaiting = allRows.filter(r => ACTIONABLE(r.verdict) && !r.executor);
+  const qActive = (quarantine ?? []).filter((g: any) => g.active > 0);
+  const qFiles = qActive.reduce((s: number, g: any) => s + g.active, 0);
+  const qBytes = qActive.reduce((s: number, g: any) => s + g.bytes, 0);
+  const qNextExpiry = qActive.length
+    ? qActive.map((g: any) => String(g.expires_at).slice(0, 10)).sort()[0]
+    : null;
+
+  const sum = (rows: Row[]) => rows.reduce((s, r) => s + (r.bytes || 0), 0);
+
+  // ----- table rows under the active chip -----
   const rows: Row[] = useMemo(() => {
-    let r = report?.rows ?? [];
+    let r = chip === "mine" ? mine : chip === "awaiting" ? awaiting : allRows;
     const t = textFilter.trim().toLowerCase();
     if (t) {
       r = r.filter((x: Row) =>
-        [x.name, x.path, x.assignee, x.verdict, x.created_by]
+        [x.name, x.path, x.assignee, x.verdict, x.created_by, x.campaign]
           .some(v => v && String(v).toLowerCase().includes(t)));
     }
     return [...r].sort((a, b) => {
@@ -140,13 +174,12 @@ export function HousekeepingView() {
         : String(av).localeCompare(String(bv));
       return sortDesc ? -cmp : cmp;
     });
-  }, [report, textFilter, sortKey, sortDesc]);
+  }, [allRows, chip, me, textFilter, sortKey, sortDesc]);
 
   const downloadCsv = async () => {
-    const res = await fetch(
-      `${API_BASE_URL}/api/housekeeping/report.csv${rootFilter ? `?root=${encodeURIComponent(rootFilter)}` : ""}`,
-      { headers: (currentUser ?? currentIdentity()) ? { "X-User": (currentUser ?? currentIdentity())! } : {} },
-    );
+    const res = await fetch(`${API_BASE_URL}/api/housekeeping/report.csv`, {
+      headers: (currentUser ?? currentIdentity()) ? { "X-User": (currentUser ?? currentIdentity())! } : {},
+    });
     const blob = await res.blob();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -164,11 +197,17 @@ export function HousekeepingView() {
     </button>
   );
 
-  const h = report?.headline;
+  const emptyMessage =
+    chip === "mine"
+      ? (me ? "Nothing assigned to you and unexecuted. An empty queue is a finished queue."
+            : "Sign in to see your assignments.")
+      : chip === "awaiting"
+        ? "Nothing decided is waiting on execution."
+        : "No targets yet — find some under Find, or create one manually.";
 
   return (
     <div className="space-y-4">
-      {/* Persistent headroom banner — visible regardless of what the user is doing */}
+      {/* Persistent headroom banner — it gates the archive verdict below */}
       {headroom && (
         <div className={cn(
           "flex items-center gap-2 px-3 py-2 rounded-md border text-xs",
@@ -185,44 +224,51 @@ export function HousekeepingView() {
         </div>
       )}
 
-      {/* Headline numbers */}
-      {h && (
-        <div className="flex flex-wrap gap-3">
-          <div className="px-4 py-2.5 rounded-md border border-border/60 bg-card">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Targets</div>
-            <div className="text-lg font-semibold font-mono">{h.targets}</div>
+      {/* The three numbers */}
+      <div className="flex flex-wrap gap-3">
+        <button className={cn("px-4 py-2.5 rounded-md border text-left transition-colors",
+                  chip === "mine" ? "border-primary/60 bg-primary/10" : "border-border/60 bg-card hover:border-primary/40")}
+                title="Targets assigned to you, not yet executed — click to filter the table"
+                onClick={() => setChip("mine")}>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Assigned to me</div>
+          <div className="text-lg font-semibold font-mono">
+            {me ? mine.length : "—"}
+            <span className="text-xs font-normal text-muted-foreground"> · {formatBytes(sum(mine))}</span>
           </div>
-          <Headline label="Assigned" tb={h.assigned_tb} />
-          <Headline label="Decided" tb={h.decided_tb} />
-          <Headline label="Decided, not executed" tb={h.decided_not_executed_tb} emphasize />
-          <Headline label="Executed" tb={h.executed_tb} />
-          <Headline label="Verified" tb={h.verified_tb} />
+        </button>
+        <button className={cn("px-4 py-2.5 rounded-md border text-left transition-colors",
+                  chip === "awaiting" ? "border-amber-500/60 bg-amber-500/10" : "border-amber-500/40 bg-amber-500/5 hover:border-amber-500/60")}
+                title="Decided but not executed — the gap someone chases weekly. Click to filter."
+                onClick={() => setChip("awaiting")}>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Decided, not executed</div>
+          <div className="text-lg font-semibold font-mono text-amber-600 dark:text-amber-400">
+            {awaiting.length}
+            <span className="text-xs font-normal text-muted-foreground"> · {formatBytes(sum(awaiting))}</span>
+          </div>
+        </button>
+        <div className="px-4 py-2.5 rounded-md border border-border/60 bg-card"
+             title="Held copies still restorable; details in the quarantine section below">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">In quarantine</div>
+          <div className="text-lg font-semibold font-mono">
+            {qFiles.toLocaleString()}
+            <span className="text-xs font-normal text-muted-foreground">
+              {" "}· {formatBytes(qBytes)}{qNextExpiry ? ` · first expiry ${qNextExpiry}` : ""}
+            </span>
+          </div>
         </div>
-      )}
-
-      <StoryLookup />
-
-      {/* Reconnaissance first: see where the problem is before deciding.
-          All panels read the ONE global root from the snapshot-bar badge. */}
-      <ReconPanel root={globalRoot} />
-
-      <CandidatesPanel root={globalRoot}
-                       onAdopted={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
-
-      <SweepPanel root={globalRoot}
-                  onSwept={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
+      </div>
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex rounded-md border border-border overflow-hidden text-xs">
-          {[null, ...ROOTS].map(r => (
+          {([["mine", "mine"], ["all", "all"], ["awaiting", "awaiting execution"]] as const).map(([c, label]) => (
             <button
-              key={r ?? "all"}
+              key={c}
               className={cn("px-3 h-8 transition-colors",
-                rootFilter === r ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground")}
-              onClick={() => setRootFilter(r)}
+                chip === c ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground")}
+              onClick={() => setChip(c)}
             >
-              {r ? r.split("/")[1] : "all"}
+              {label}
             </button>
           ))}
         </div>
@@ -234,7 +280,8 @@ export function HousekeepingView() {
         />
         <button
           className="h-8 px-3 text-xs rounded-md border border-border flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
-          onClick={() => setShowNewTarget(v => !v)}
+          title="Manual target creation — the rare case; most targets come from Find"
+          onClick={() => setNewTargetOpen(true)}
         >
           <Plus size={13} /> New target
         </button>
@@ -249,44 +296,16 @@ export function HousekeepingView() {
         </div>
       </div>
 
-      {/* Minimal target creation (hand-created targets, step 3) */}
-      {showNewTarget && (
-        <div className="flex flex-wrap items-end gap-2 p-3 rounded-md border border-border/60 bg-card text-xs">
-          <label className="flex flex-col gap-1">Name
-            <input className="h-8 px-2 rounded border border-border bg-transparent w-52"
-                   value={newTarget.name} onChange={e => setNewTarget({ ...newTarget, name: e.target.value })} />
-          </label>
-          <label className="flex flex-col gap-1">Root
-            <select className="h-8 px-2 rounded border border-border bg-transparent"
-                    value={newTarget.root}
-                    onChange={e => setNewTarget({ ...newTarget, root: e.target.value, path: "" })}>
-              {ROOTS.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1">Path (under root)
-            <input className="h-8 px-2 rounded border border-border bg-transparent w-80 font-mono"
-                   placeholder={`${newTarget.root}/...`}
-                   value={newTarget.path} onChange={e => setNewTarget({ ...newTarget, path: e.target.value })} />
-          </label>
-          <label className="flex flex-col gap-1">Scope
-            <select className="h-8 px-2 rounded border border-border bg-transparent"
-                    value={newTarget.scope} onChange={e => setNewTarget({ ...newTarget, scope: e.target.value })}>
-              <option value="subtree">subtree</option>
-              <option value="shallow">shallow</option>
-              <option value="single_file">single file</option>
-            </select>
-          </label>
-          <button
-            className="h-8 px-4 rounded bg-primary text-primary-foreground disabled:opacity-50"
-            disabled={!newTarget.name || !newTarget.path || createTarget.isPending}
-            onClick={() => createTarget.mutate()}
-          >
-            {createTarget.isPending ? "Resolving…" : "Create"}
-          </button>
-        </div>
+      {newTargetOpen && (
+        <NewTargetDialog globalRoot={globalRoot}
+                         onClose={() => setNewTargetOpen(false)}
+                         onCreated={() => {
+                           setNewTargetOpen(false);
+                           qc.invalidateQueries({ queryKey: ["hk-report"] });
+                         }} />
       )}
 
-      {/* Table */}
+      {/* The targets table */}
       <div className="border border-border/60 rounded-md overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -309,9 +328,9 @@ export function HousekeepingView() {
             {error && (
               <tr><td colSpan={9} className="px-3 py-6 text-center text-red-500">{String(error)}</td></tr>
             )}
-            {!isLoading && rows.length === 0 && (
+            {!isLoading && !error && rows.length === 0 && (
               <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
-                No targets yet — create one with “New target”.
+                {emptyMessage}
               </td></tr>
             )}
             {rows.map((r: Row) => (
@@ -352,7 +371,7 @@ export function HousekeepingView() {
                 <td className="px-3 py-2">
                   {r.executor
                     ? <span>{r.executor}</span>
-                    : r.verdict && !["keep", "needs_info", "not_mine"].includes(r.verdict)
+                    : ACTIONABLE(r.verdict)
                       ? <span className="text-amber-600 dark:text-amber-400">pending</span>
                       : <span className="text-muted-foreground/50">—</span>}
                 </td>
@@ -362,7 +381,7 @@ export function HousekeepingView() {
                     : <span className="text-muted-foreground/50">—</span>}
                 </td>
                 <td className="px-3 py-2">
-                  {r.decision_id && !["keep", "needs_info", "not_mine"].includes(r.verdict || "") && (
+                  {r.decision_id && ACTIONABLE(r.verdict) && (
                     <button
                       className={cn("text-[11px] hover:underline mr-2",
                         execDrawer === r.id ? "text-primary font-medium" : "text-primary/80")}
@@ -394,304 +413,82 @@ export function HousekeepingView() {
           </tbody>
         </table>
       </div>
+
+      <QuarantineSection />
     </div>
   );
 }
 
 
-// ---------------- Pilot: candidate discovery ----------------
-
-function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => void }) {
+/** Manual target creation: a dialog, not a resident form. Root is the
+ *  global root of the moment it opens — switch roots in the header. */
+function NewTargetDialog({ globalRoot, onClose, onCreated }:
+  { globalRoot: string; onClose: () => void; onCreated: () => void }) {
   const { currentUser } = useAppStore();
-  const [include, setInclude] = useState(".log, .err");
-  const [exclude, setExclude] = useState("");
-  const [sizeMinMB, setSizeMinMB] = useState("");
-  const [sizeMaxMB, setSizeMaxMB] = useState("100");
-  const [minAgeDays, setMinAgeDays] = useState("180");
-  const [dirSegment, setDirSegment] = useState("");
-  const [scan, setScan] = useState<any | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [name, setName] = useState("");
+  const [path, setPath] = useState("");
+  const [scope, setScope] = useState("subtree");
   const [busy, setBusy] = useState(false);
-  const [samplePath, setSamplePath] = useState<string | null>(null);
-  const [sample, setSample] = useState<any | null>(null);
-  const [campaign, setCampaign] = useState("");
-  const presets = useQuery({ queryKey: ["hk-presets"], queryFn: () => api("/candidates/presets") });
 
-  const mb = (v: string): number | null => {
-    const t = v.trim();
-    if (t === "") return null;
-    const n = parseFloat(t);
-    return Number.isFinite(n) && n >= 0 ? Math.round(n * 1024 * 1024) : null;
-  };
-  const findBody = () => ({
-    root,
-    include, exclude,
-    size_min: mb(sizeMinMB),
-    size_max: mb(sizeMaxMB),
-    min_age_days: parseInt(minAgeDays) > 0 ? parseInt(minAgeDays) : null,
-    dir_segment: dirSegment,
-  });
-
-  const applyPreset = (pr: any) => {
-    setInclude(pr.include); setExclude(pr.exclude);
-    setSizeMinMB(pr.size_min); setSizeMaxMB(pr.size_max_mb);
-    setMinAgeDays(pr.min_age_days); setDirSegment(pr.dir_segment);
-    setScan(null); setSelected(new Set()); setSamplePath(null);
-  };
-
-  const run = async () => {
-    setBusy(true);
-    setSamplePath(null);
-    try {
-      const d = await api("/candidates/find", { method: "POST", body: JSON.stringify(findBody()) });
-      setScan(d);
-      setSelected(new Set());
-    } catch (e: any) { toast(e.message, "error"); }
-    setBusy(false);
-  };
-
-  const toggleSample = async (path: string) => {
-    if (samplePath === path) { setSamplePath(null); return; }
-    setSamplePath(path);
-    setSample(null);
-    try {
-      const d = await api("/candidates/sample", {
-        method: "POST", body: JSON.stringify({ ...findBody(), path }) });
-      setSample(d);
-    } catch (e: any) { toast(e.message, "error"); setSamplePath(null); }
-  };
-
-  const adopt = async () => {
+  const create = async () => {
     setBusy(true);
     try {
-      const d = await api("/candidates/adopt", {
+      await api("/targets", {
         method: "POST",
-        body: JSON.stringify({ ...findBody(), paths: [...selected],
-                               campaign: campaign.trim() || null }),
+        body: JSON.stringify({
+          name, path, scope,
+          root: globalRoot,
+          campaign: globalRoot === "/cds3/cil" ? "cds3-clear" : null,
+        }),
       }, currentUser);
-      const parts = [];
-      if (d.created.length) parts.push(`${d.created.length} target(s) created`);
-      if (d.existing.length) parts.push(
-        `${d.existing.length} already existed (${d.existing.map((e: any) => `#${e.target_id}`).join(", ")}) — pointed at, not duplicated`);
-      toast(parts.join("; ") || "nothing to adopt", d.created.length ? "success" : "info");
-      setSelected(new Set());
-      onAdopted();
+      toast(`Target "${name}" created.`, "success");
+      onCreated();
     } catch (e: any) { toast(e.message, "error"); }
     setBusy(false);
   };
 
-  const emptyNoExcludes = mb(sizeMaxMB) === 0 && !exclude.trim();
-
   return (
-    <details className="border border-border/60 rounded-md">
-      <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
-        Find files that could be cleaned up
-      </summary>
-      <div className="p-3 space-y-2 border-t border-border/40 text-xs">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-muted-foreground">Presets:</span>
-          {(presets.data ?? []).map((pr: any) => (
-            <button key={pr.key}
-                    className="h-7 px-2 rounded border border-border text-muted-foreground hover:text-foreground hover:border-primary/50"
-                    onClick={() => applyPreset(pr)}>
-              {pr.label}
-            </button>
-          ))}
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-card border border-border rounded-lg p-4 w-full max-w-xl text-xs space-y-3"
+           onClick={e => e.stopPropagation()}>
+        <div className="font-medium text-sm">New target</div>
+        <div className="text-muted-foreground">
+          Under <code className="font-mono">{globalRoot}</code> — to target the other root,
+          switch it in the header first. Most targets should come from Find; this is for the
+          case where you already know the exact path.
         </div>
-
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">Include names <span title="Comma-separated. .ext = extension; exact name; * = wildcard (e.g. slurm-*.out). Empty = everything.">ⓘ</span></span>
-            <input className="h-8 w-56 px-2 rounded border border-border bg-transparent font-mono"
-                   placeholder=".log, .err, slurm-*.out"
-                   value={include} onChange={e => setInclude(e.target.value)} />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">Exclude names</span>
-            <input className="h-8 w-64 px-2 rounded border border-border bg-transparent font-mono"
-                   placeholder="__init__.py, .gitkeep, _SUCCESS"
-                   value={exclude} onChange={e => setExclude(e.target.value)} />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-muted-foreground">Size MB (min–max)</span>
-            <span className="flex items-center gap-1">
-              <input className="h-8 w-16 px-2 rounded border border-border bg-transparent font-mono"
-                     placeholder="min" value={sizeMinMB} onChange={e => setSizeMinMB(e.target.value)} />
-              <span className="text-muted-foreground">–</span>
-              <input className="h-8 w-16 px-2 rounded border border-border bg-transparent font-mono"
-                     placeholder="max" value={sizeMaxMB} onChange={e => setSizeMaxMB(e.target.value)} />
-            </span>
-          </label>
-          <label className="flex flex-col gap-1" title="Only files unmodified for at least this many days (mtime)">
-            <span className="text-muted-foreground">Unmodified ≥ days</span>
-            <input className="h-8 w-20 px-2 rounded border border-border bg-transparent font-mono"
-                   value={minAgeDays} onChange={e => setMinAgeDays(e.target.value)} />
-          </label>
-          <label className="flex flex-col gap-1" title="Only files inside directories with exactly this name (e.g. __pycache__)">
-            <span className="text-muted-foreground">Inside dirs named</span>
-            <input className="h-8 w-32 px-2 rounded border border-border bg-transparent font-mono"
-                   value={dirSegment} onChange={e => setDirSegment(e.target.value)} />
-          </label>
+        <label className="flex flex-col gap-1">Name
+          <input className="h-8 px-2 rounded border border-border bg-transparent"
+                 autoFocus value={name} onChange={e => setName(e.target.value)} />
+        </label>
+        <label className="flex flex-col gap-1">Path (under {globalRoot})
+          <input className="h-8 px-2 rounded border border-border bg-transparent font-mono"
+                 placeholder={`${globalRoot}/...`}
+                 value={path} onChange={e => setPath(e.target.value)} />
+        </label>
+        <label className="flex flex-col gap-1">Scope
+          <select className="h-8 px-2 rounded border border-border bg-transparent w-40"
+                  value={scope} onChange={e => setScope(e.target.value)}>
+            <option value="subtree">subtree</option>
+            <option value="shallow">shallow</option>
+            <option value="single_file">single file</option>
+          </select>
+        </label>
+        <div className="flex gap-2 pt-1">
           <button className="h-8 px-4 rounded bg-primary text-primary-foreground disabled:opacity-50"
-                  disabled={busy} onClick={run}>{busy ? "Searching…" : "Find"}</button>
-          {scan && selected.size > 0 && (
-            <>
-              <input className="h-8 w-36 px-2 rounded border border-border bg-transparent"
-                     placeholder="campaign name"
-                     value={campaign} onChange={e => setCampaign(e.target.value)} />
-              <button className="h-8 px-3 rounded border border-primary text-primary disabled:opacity-50"
-                      disabled={busy || !currentUser} onClick={adopt}>
-                Adopt {selected.size} into worklist
-              </button>
-            </>
-          )}
+                  disabled={!name || !path || busy || !currentUser}
+                  onClick={create}>
+            {busy ? "Resolving…" : "Create"}
+          </button>
+          <button className="h-8 px-3 rounded border border-border" onClick={onClose}>Cancel</button>
         </div>
-
-        {emptyNoExcludes && (
-          <div className="px-2.5 py-1.5 rounded border border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400">
-            You are including empty files with no exclusions. Zero-byte pipeline sentinels
-            look identical to zero-byte garbage — exclude the sentinel names you know
-            (the "Empty files" preset fills them in).
-          </div>
-        )}
-
-        {busy && !scan && <div className="py-6 flex justify-center"><GridLoader label="Searching" /></div>}
-
-        {scan && (
-          <>
-            <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 px-3 py-2 rounded-md border border-border/60 bg-muted/10">
-              <span className="text-base font-semibold font-mono">{scan.total_files.toLocaleString()} files</span>
-              <span className="text-base font-semibold font-mono">{formatBytes(scan.total_bytes)}</span>
-              <span className="text-muted-foreground">
-                across {scan.groups_shown} group(s){scan.groups_truncated ? " (list truncated at 200 — totals cover everything)" : ""}
-              </span>
-            </div>
-            <div className="max-h-80 overflow-y-auto border border-border/40 rounded">
-              <table className="w-full">
-                <thead><tr className="text-left text-muted-foreground border-b border-border/40">
-                  <th className="px-2 py-1.5 w-6"></th>
-                  <th className="px-2 py-1.5 w-6"></th>
-                  <th className="px-2 py-1.5">Path</th>
-                  <th className="px-2 py-1.5 text-right">Files</th>
-                  <th className="px-2 py-1.5 text-right">Size</th>
-                  <th className="px-2 py-1.5">Suggested owner</th>
-                </tr></thead>
-                <tbody>
-                  {scan.groups.map((g: any) => (
-                    <>
-                      <tr key={g.path} className="border-b border-border/20 hover:bg-muted/20">
-                        <td className="px-2 py-1">
-                          <input type="checkbox" checked={selected.has(g.path)}
-                                 onChange={e => {
-                                   const n = new Set(selected);
-                                   e.target.checked ? n.add(g.path) : n.delete(g.path);
-                                   setSelected(n);
-                                 }} />
-                        </td>
-                        <td className="px-1 py-1">
-                          <button className="text-muted-foreground hover:text-foreground"
-                                  title="Sample: 20 real paths, subtree and extension breakdown"
-                                  onClick={() => toggleSample(g.path)}>
-                            {samplePath === g.path ? "▾" : "▸"}
-                          </button>
-                        </td>
-                        <td className="px-2 py-1 font-mono truncate max-w-[360px]" title={g.path}>{g.path}</td>
-                        <td className="px-2 py-1 text-right font-mono">{g.files.toLocaleString()}</td>
-                        <td className="px-2 py-1 text-right font-mono">{formatBytes(g.bytes)}</td>
-                        <td className="px-2 py-1">
-                          {g.suggest_assignment
-                            ? <span>{g.suggested_owner} <span className="text-muted-foreground">({Math.round(g.owner_confidence * 100)}%)</span></span>
-                            : <span className="text-muted-foreground/60">— below 60%, no suggestion</span>}
-                        </td>
-                      </tr>
-                      {samplePath === g.path && (
-                        <tr key={g.path + ":s"}>
-                          <td colSpan={6} className="border-b border-border/30 bg-muted/10 px-4 py-2">
-                            {!sample ? <span className="text-muted-foreground">sampling…</span> : (
-                              <div className="grid gap-4 md:grid-cols-3">
-                                <div>
-                                  <div className="text-muted-foreground mb-1">By subtree — surprises here belong on the protection list:</div>
-                                  {sample.subtrees.map((r: any) => (
-                                    <div key={r.path} className="flex gap-3 font-mono">
-                                      <span className="w-20 text-right">{r.files.toLocaleString()}</span>
-                                      <span className="w-16 text-right">{formatBytes(r.bytes)}</span>
-                                      <span className="truncate" title={r.path}>{r.path.slice(g.path.length + 1) || "(direct)"}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div>
-                                  <div className="text-muted-foreground mb-1">By extension:</div>
-                                  {sample.extensions.map((r: any) => (
-                                    <div key={r.ext} className="flex gap-3 font-mono">
-                                      <span className="w-20 text-right">{r.files.toLocaleString()}</span>
-                                      <span className="w-16 text-right">{formatBytes(r.bytes)}</span>
-                                      <span>.{r.ext}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div>
-                                  <div className="text-muted-foreground mb-1">20 real paths (largest):</div>
-                                  {sample.samples.map((r: any) => (
-                                    <div key={r.path} className="font-mono truncate" title={r.path}>
-                                      {r.path.slice(g.path.length + 1) || r.path}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </>
-                  ))}
-                  {scan.groups.length === 0 && <tr><td colSpan={6} className="px-2 py-3 text-center text-muted-foreground">No matches.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-            <ProtectionsLine segments={scan.protected_segments} onChanged={run} />
-          </>
-        )}
       </div>
-    </details>
-  );
-}
-
-/** The protection list, visible where it acts. Data-driven; edits recorded. */
-function ProtectionsLine({ segments, onChanged }: { segments: string[]; onChanged: () => void }) {
-  const { currentUser } = useAppStore();
-  const [adding, setAdding] = useState(false);
-  const [seg, setSeg] = useState("");
-  const [reason, setReason] = useState("");
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-      <span>Never swept (protection list):</span>
-      {segments.map(x => <code key={x} className="px-1 rounded bg-muted/30">{x}/</code>)}
-      {!adding ? (
-        <button className="text-primary hover:underline" onClick={() => setAdding(true)}>+ add</button>
-      ) : (
-        <span className="inline-flex items-center gap-1">
-          <input className="h-6 w-28 px-1.5 rounded border border-border bg-transparent font-mono"
-                 placeholder="dirname" value={seg} onChange={e => setSeg(e.target.value)} />
-          <input className="h-6 w-48 px-1.5 rounded border border-border bg-transparent"
-                 placeholder="why it must never be swept" value={reason}
-                 onChange={e => setReason(e.target.value)} />
-          <button className="text-primary hover:underline"
-                  onClick={async () => {
-                    try {
-                      await api("/protections", { method: "POST",
-                        body: JSON.stringify({ segment: seg, reason }) }, currentUser);
-                      setSeg(""); setReason(""); setAdding(false);
-                      onChanged();
-                    } catch (e: any) { toast(e.message, "error"); }
-                  }}>save</button>
-          <button className="hover:text-foreground" onClick={() => setAdding(false)}>cancel</button>
-        </span>
-      )}
     </div>
   );
 }
 
-// ---------------- Pilot: worklist upload (return leg of the Drive round trip) ----------------
+
+// ---------------- worklist upload (return leg of the Drive round trip) ----------------
 
 function UploadPanel({ onApplied }: { onApplied: () => void }) {
   const { currentUser } = useAppStore();
@@ -775,9 +572,9 @@ function UploadPanel({ onApplied }: { onApplied: () => void }) {
   );
 }
 
-// ---------------- Pilot: quarantine registry + history ----------------
+// ---------------- quarantine registry ----------------
 
-function QuarantinePanel() {
+function QuarantineSection() {
   const { currentUser } = useAppStore();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["hk-quarantine"], queryFn: () => api("/quarantine") });
@@ -792,11 +589,11 @@ function QuarantinePanel() {
 
   if (isLoading || !data?.length) return null;
   return (
-    <details open className="border border-border/60 rounded-md">
-      <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
+    <div className="border border-border/60 rounded-md">
+      <div className="px-3 py-2 text-xs font-medium border-b border-border/40">
         Quarantine <span className="text-muted-foreground">— {data.length} batch(es); status checked against the latest snapshot</span>
-      </summary>
-      <div className="p-3 border-t border-border/40 space-y-2 text-xs">
+      </div>
+      <div className="p-3 space-y-2 text-xs">
         {data.map((g: any) => (
           <div key={g.manifest_id} className="border border-border/40 rounded">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
@@ -893,18 +690,32 @@ function QuarantinePanel() {
           </div>
         ))}
       </div>
-    </details>
+    </div>
+  );
+}
+
+
+// ================= RECORD =================
+// The append-only history. Fits neither Work nor Find — it is not pending
+// work and produces no candidates — so it lives on its own switch.
+
+function RecordMode() {
+  return (
+    <div className="space-y-4">
+      <StoryLookup />
+      <HistoryPanel />
+    </div>
   );
 }
 
 function HistoryPanel() {
   const { data } = useQuery({ queryKey: ["hk-events"], queryFn: () => api("/events?limit=100") });
   return (
-    <details className="border border-border/60 rounded-md">
-      <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
-        History <span className="text-muted-foreground">— every state change, append-only</span>
-      </summary>
-      <div className="p-3 border-t border-border/40 max-h-72 overflow-y-auto space-y-1 text-xs font-mono">
+    <div className="border border-border/60 rounded-md">
+      <div className="px-3 py-2 text-xs font-medium border-b border-border/40">
+        History <span className="text-muted-foreground">— every state change, append-only (latest 100)</span>
+      </div>
+      <div className="p-3 max-h-96 overflow-y-auto space-y-1 text-xs font-mono">
         {(data ?? []).map((e: any) => (
           <div key={e.id} className="flex gap-2">
             <span className="text-muted-foreground shrink-0">{String(e.at).slice(0, 19).replace("T", " ")}</span>
@@ -915,7 +726,7 @@ function HistoryPanel() {
         ))}
         {data?.length === 0 && <div className="text-muted-foreground">No events yet.</div>}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -1002,124 +813,10 @@ function StoryLookup() {
 }
 
 
-// ---------------- The sweep: whole-tree analysis, one action ----------------
-
-function SweepPanel({ root, onSwept }: { root: string; onSwept: () => void }) {
-  const { currentUser } = useAppStore();
-  const [campaign, setCampaign] = useState("");
-  const [minFiles, setMinFiles] = useState("100000");
-  const [minTiB, setMinTiB] = useState("5");
-  const [minAgeDays, setMinAgeDays] = useState("730");
-  const [depth, setDepth] = useState(2);
-  const [result, setResult] = useState<any | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const run = async () => {
-    setBusy(true);
-    try {
-      const body: any = { root, campaign: campaign.trim(), group_depth: depth };
-      if (minFiles.trim()) body.min_files = parseInt(minFiles);
-      if (minTiB.trim()) body.min_bytes = Math.round(parseFloat(minTiB) * 1024 ** 4);
-      if (minAgeDays.trim()) body.min_age_days = parseInt(minAgeDays);
-      const d = await api("/sweep", { method: "POST", body: JSON.stringify(body) }, currentUser);
-      setResult(d);
-      onSwept();
-    } catch (e: any) { toast(e.message, "error"); }
-    setBusy(false);
-  };
-
-  const csvUrl = (assignee?: string) =>
-    `${API_BASE_URL}/api/housekeeping/report.csv?campaign=${encodeURIComponent(campaign.trim())}`
-    + (assignee ? `&assignee=${encodeURIComponent(assignee)}` : "");
-
-  return (
-    <details className="border border-border/60 rounded-md">
-      <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
-        Sweep <span className="text-muted-foreground">— whole-tree analysis by threshold, one worklist split by owner</span>
-      </summary>
-      <div className="p-3 space-y-2 border-t border-border/40 text-xs">
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="flex flex-col gap-1">Campaign name
-            <input className="h-8 px-2 rounded border border-border bg-transparent w-44"
-                   placeholder="e.g. 2026Q3-cleanup"
-                   value={campaign} onChange={e => setCampaign(e.target.value)} />
-          </label>
-          <label className="flex flex-col gap-1" title="Directory groups with at least this many files (leave empty to skip)">
-            ≥ files
-            <input className="h-8 px-2 rounded border border-border bg-transparent w-28 font-mono"
-                   value={minFiles} onChange={e => setMinFiles(e.target.value)} />
-          </label>
-          <label className="flex flex-col gap-1" title="Directory groups of at least this size (leave empty to skip)">
-            ≥ TiB
-            <input className="h-8 px-2 rounded border border-border bg-transparent w-20 font-mono"
-                   value={minTiB} onChange={e => setMinTiB(e.target.value)} />
-          </label>
-          <label className="flex flex-col gap-1" title="Groups whose newest file is older than this (mtime — see the age tab caveat)">
-            unmodified ≥ days
-            <input className="h-8 px-2 rounded border border-border bg-transparent w-24 font-mono"
-                   value={minAgeDays} onChange={e => setMinAgeDays(e.target.value)} />
-          </label>
-          <label className="flex flex-col gap-1">Depth
-            <select className="h-8 px-2 rounded border border-border bg-transparent"
-                    value={depth} onChange={e => setDepth(Number(e.target.value))}>
-              {[1, 2, 3].map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </label>
-          <button className="h-8 px-4 rounded bg-primary text-primary-foreground disabled:opacity-50"
-                  disabled={busy || !campaign.trim() || !currentUser}
-                  onClick={run}>
-            {busy ? "Sweeping…" : "Run sweep"}
-          </button>
-          <span className="text-muted-foreground">
-            A group matching ANY threshold becomes a target, assigned to its majority
-            owner (≥60% confidence; otherwise left unassigned rather than guessed).
-            Re-running skips existing targets.
-          </span>
-        </div>
-
-        {result && (
-          <div className="space-y-1 pt-1">
-            <div className="font-medium">
-              {result.created.length} target(s) created
-              {result.skipped_existing > 0 && `, ${result.skipped_existing} already existed`}
-              {" — "}worklists per person:
-            </div>
-            <table className="w-full">
-              <tbody>
-                {Object.entries(result.by_owner)
-                  .sort((a: any, b: any) => b[1].bytes - a[1].bytes)
-                  .map(([owner, v]: [string, any]) => (
-                    <tr key={owner} className="border-b border-border/20">
-                      <td className="py-1 font-mono">{owner}</td>
-                      <td className="py-1 text-right font-mono">{v.targets} targets</td>
-                      <td className="py-1 text-right font-mono">{formatBytes(v.bytes)}</td>
-                      <td className="py-1 text-right font-mono">{v.files.toLocaleString()} files</td>
-                      <td className="py-1 pl-3">
-                        {!owner.startsWith("(") && (
-                          <a className="text-primary hover:underline" href={csvUrl(owner)} download>
-                            their CSV
-                          </a>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-            <a className="text-primary hover:underline" href={csvUrl()} download>
-              Download the full campaign CSV (everyone)
-            </a>
-          </div>
-        )}
-      </div>
-    </details>
-  );
-}
-
-
 // ---------------- Execution drawer: manifests + receipts, per target ----------------
 // The handoff point between decisions (in here) and the executor (on the
-// cluster). Generate -> download -> run on a login node -> upload the
-// receipt back; the receipt creates the execution rows.
+// cluster). Generate -> copy command or download -> run on a login node ->
+// the receipt creates the execution rows.
 
 function ExecutionDrawer({ targetId, decisionId, onChanged }:
   { targetId: number; decisionId: number; onChanged: () => void }) {
@@ -1381,7 +1078,7 @@ function DeleteTargetButton({ targetId, onDeleted }: { targetId: number; onDelet
           toast(`Target #${targetId} deleted (${d.path}).`, "success");
           onDeleted();
         } catch (e: any) { toast(e.message, "error"); }
-        setArming(false);
+      setArming(false);
       }}
     >
       {arming ? "confirm delete" : "delete"}
