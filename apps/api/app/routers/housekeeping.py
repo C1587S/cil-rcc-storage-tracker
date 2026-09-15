@@ -310,7 +310,8 @@ def generate_manifests(body: ManifestRequest, x_user: str | None = Header(defaul
 
     snap = _latest_snapshot()
     try:
-        rq = resolve(root, snap, path, scope, predicate or {})
+        rq = resolve(root, snap, path, scope, predicate or {},
+                     exclude_segments=pilot.protected_segments())
     except ResolverError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -549,13 +550,29 @@ def sweep(body: SweepIn, x_user: str | None = Header(default=None)):
 
 @router.get("/candidates")
 def candidates(root: str = Query(...), category: str = Query(...),
-               group_depth: int = Query(2, ge=1, le=4)):
+               group_depth: int = Query(2, ge=1, le=4),
+               min_age_days: int | None = Query(default=None, ge=1)):
     if category not in pilot.CATEGORIES:
         raise HTTPException(status_code=422, detail=f"unknown category; known: {list(pilot.CATEGORIES)}")
     snap = _latest_snapshot()
-    groups = pilot.discover_candidates(root, category, snap, group_depth)
-    return {"snapshot": snap, "category": category,
-            "label": pilot.CATEGORIES[category]["label"], "groups": groups}
+    result = pilot.discover_candidates(root, category, snap, group_depth, min_age_days)
+    return {"snapshot": snap, "category": category, "min_age_days": min_age_days,
+            "label": pilot.CATEGORIES[category]["label"],
+            "protected_segments": pilot.protected_segments(), **result}
+
+
+@router.get("/candidates/preview")
+def candidates_preview(root: str = Query(...), category: str = Query(...),
+                       path: str = Query(...),
+                       min_age_days: int | None = Query(default=None, ge=1)):
+    """Per-subtree breakdown of what adopting this group would sweep —
+    shown BEFORE adoption so a stray envs/ shows up in the UI, not in a
+    directory listing afterwards."""
+    if category not in pilot.CATEGORIES:
+        raise HTTPException(status_code=422, detail="unknown category")
+    snap = _latest_snapshot()
+    return {"snapshot": snap,
+            "rows": pilot.preview_group(root, category, snap, path, min_age_days)}
 
 
 class AdoptRequest(BaseModel):
@@ -563,6 +580,7 @@ class AdoptRequest(BaseModel):
     category: str
     paths: list[str]
     campaign: str | None = None
+    min_age_days: int | None = None
 
 
 @router.post("/candidates/adopt")
@@ -573,16 +591,25 @@ def adopt_candidates(body: AdoptRequest, x_user: str | None = Header(default=Non
     if body.category not in pilot.CATEGORIES:
         raise HTTPException(status_code=422, detail="unknown category")
     snap = _latest_snapshot()
-    predicate = pilot.CATEGORIES[body.category]["predicate"]
-    groups = {g["path"]: g for g in pilot.discover_candidates(body.root, body.category, snap, 4)}
-    # re-discover at requested paths' own depth: fall back to fresh rollup per path
-    created = []
+    predicate = pilot.category_predicate(body.category, body.min_age_days)
+    segments = pilot.protected_segments()
+    created, existing = [], []
     ch = get_client()
     with hk.tx() as conn:
         actor = _actor(x_user, conn)
         for path in body.paths:
+            # Idempotent: same path + same campaign = the target you already
+            # have — point at it instead of minting a duplicate.
+            dup = conn.execute(
+                "SELECT id FROM target WHERE root = %s AND path = %s"
+                " AND campaign IS NOT DISTINCT FROM %s",
+                (body.root, path, body.campaign)).fetchone()
+            if dup:
+                existing.append({"target_id": dup[0], "path": path})
+                continue
             try:
-                rq = resolve(body.root, snap, path, "subtree", predicate)
+                rq = resolve(body.root, snap, path, "subtree", predicate,
+                             exclude_segments=segments)
             except ResolverError as e:
                 raise HTTPException(status_code=422, detail=f"{path}: {e}")
             files, bytes_ = ch.execute(rollup_sql(rq), rq.params)[0]
@@ -619,7 +646,7 @@ def adopt_candidates(body: AdoptRequest, x_user: str | None = Header(default=Non
             created.append({"target_id": target_id, "path": path, "bytes": bytes_ or 0,
                             "files": files or 0, "assignee": assignee})
     _trigger_backup()
-    return {"created": created, "snapshot": snap}
+    return {"created": created, "existing": existing, "snapshot": snap}
 
 
 class WorklistUpload(BaseModel):
@@ -713,18 +740,93 @@ def worklist_upload(body: WorklistUpload, x_user: str | None = Header(default=No
 
 
 @router.get("/quarantine")
-def quarantine_list(active_only: bool = Query(default=True)):
-    """Where everything went: original path, holding path, expiry."""
+def quarantine_groups():
+    """Quarantine state grouped by manifest, with a LIVE reality check:
+    for each active batch, count how many held copies the latest snapshot
+    actually shows under its quarantine directory. A batch whose contents
+    vanished without a purge receipt gets flagged — same reasoning as
+    passive execution verification."""
     with hk.tx() as conn:
-        q = ("SELECT id, manifest_id, original_path, quarantine_path, size_bytes,"
-             " quarantined_at, expires_at, restored_at, purged_at FROM quarantine_item")
-        if active_only:
-            q += " WHERE restored_at IS NULL AND purged_at IS NULL"
-        q += " ORDER BY expires_at ASC LIMIT 5000"
-        rows = conn.execute(q).fetchall()
-    cols = ["id", "manifest_id", "original_path", "quarantine_path", "size_bytes",
-            "quarantined_at", "expires_at", "restored_at", "purged_at"]
+        groups = conn.execute(
+            "SELECT manifest_id, count(*),"
+            " count(*) FILTER (WHERE restored_at IS NULL AND purged_at IS NULL),"
+            " count(*) FILTER (WHERE restored_at IS NOT NULL),"
+            " count(*) FILTER (WHERE purged_at IS NOT NULL),"
+            " sum(size_bytes), min(expires_at), max(quarantined_at)"
+            " FROM quarantine_item GROUP BY manifest_id ORDER BY max(quarantined_at) DESC"
+        ).fetchall()
+    snap = None
+    out = []
+    for mid, total, active, restored, purged, bytes_, expires, qat in groups:
+        g = {"manifest_id": mid, "total": total, "active": active,
+             "restored": restored, "purged": purged, "bytes": int(bytes_ or 0),
+             "expires_at": str(expires), "quarantined_at": str(qat),
+             "on_disk": None, "status": "purged" if active == 0 else "held"}
+        if active > 0:
+            m = mf.load_manifest(mid)
+            if m:
+                if snap is None:
+                    snap = _latest_snapshot()
+                g["checked_snapshot"] = snap
+                # The snapshot can only testify about quarantines that
+                # existed when it was taken — never claim VANISHED from a
+                # scan that predates the quarantine itself.
+                if str(qat)[:10] > snap:
+                    g["status"] = (f"held (not yet verifiable — latest snapshot {snap}"
+                                   " predates this quarantine; the next scan will check it)")
+                else:
+                    held = get_client().execute(
+                        "SELECT count() FROM filesystem.entries"
+                        " WHERE snapshot_date = %(d)s AND path LIKE %(q)s AND is_directory = 0",
+                        {"d": snap, "q": m["quarantine_dir"] + "/%"})[0][0]
+                    g["on_disk"] = int(held)
+                    if held == 0:
+                        g["status"] = ("VANISHED — registry says held, snapshot shows nothing;"
+                                       " reconcile or investigate")
+                    elif held < active:
+                        g["status"] = f"partial — {active} registered, {held} on disk"
+        out.append(g)
+    return out
+
+
+@router.get("/quarantine/items")
+def quarantine_items(manifest_id: str = Query(...), limit: int = Query(500, le=5000)):
+    with hk.tx() as conn:
+        rows = conn.execute(
+            "SELECT id, original_path, quarantine_path, size_bytes, expires_at,"
+            " restored_at, purged_at FROM quarantine_item WHERE manifest_id = %s"
+            " ORDER BY original_path LIMIT %s", (manifest_id, limit)).fetchall()
+    cols = ["id", "original_path", "quarantine_path", "size_bytes",
+            "expires_at", "restored_at", "purged_at"]
     return [dict(zip(cols, r)) for r in rows]
+
+
+class ReconcileIn(BaseModel):
+    note: str
+
+
+@router.post("/quarantine/{manifest_id}/reconcile")
+def reconcile_quarantine(manifest_id: str, body: ReconcileIn,
+                         x_user: str | None = Header(default=None)):
+    """Mark a whole batch purged OUT-OF-BAND — for quarantines cleaned up
+    by hand (e.g. before --purge-quarantine existed). Requires a note; the
+    event records that this was reconciliation, not a receipt."""
+    if not body.note.strip():
+        raise HTTPException(status_code=422, detail="reconciliation requires a note — say how the files were removed")
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        row = conn.execute(
+            "WITH u AS (UPDATE quarantine_item SET purged_at = now()"
+            " WHERE manifest_id = %s AND restored_at IS NULL AND purged_at IS NULL"
+            " RETURNING 1) SELECT count(*) FROM u", (manifest_id,)).fetchone()
+        n = row[0]
+        if n == 0:
+            raise HTTPException(status_code=404, detail="no active items under that manifest")
+        hk.write_with_event(conn, actor, "quarantine_reconciled",
+                            payload={"manifest_id": manifest_id, "items": n,
+                                     "note": body.note.strip(), "out_of_band": True})
+    _trigger_backup()
+    return {"reconciled": n}
 
 
 @router.post("/quarantine/{item_id}/restored")
@@ -742,6 +844,80 @@ def mark_restored(item_id: int, x_user: str | None = Header(default=None)):
                             ref_id=item_id, payload={"original_path": row[0]})
     _trigger_backup()
     return {"restored": row[0]}
+
+
+@router.delete("/targets/{target_id}")
+def delete_target(target_id: int, x_user: str | None = Header(default=None)):
+    """Remove a target created by mistake. Refused once anything was
+    EXECUTED against it — executed history is the record and stays."""
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        t = conn.execute("SELECT path, campaign FROM target WHERE id = %s", (target_id,)).fetchone()
+        if not t:
+            raise HTTPException(status_code=404, detail="target not found")
+        executed = conn.execute(
+            "SELECT count(*) FROM execution e JOIN decision d ON d.id = e.decision_id"
+            " WHERE d.target_id = %s", (target_id,)).fetchone()[0]
+        if executed:
+            raise HTTPException(status_code=409, detail=(
+                "This target has execution history — it is part of the record and"
+                " cannot be deleted. Supersede its decision instead."))
+        conn.execute("UPDATE decision SET superseded_by = NULL WHERE target_id = %s", (target_id,))
+        conn.execute("DELETE FROM decision WHERE target_id = %s", (target_id,))
+        conn.execute("DELETE FROM assignment WHERE target_id = %s", (target_id,))
+        conn.execute("DELETE FROM target WHERE id = %s", (target_id,))
+        hk.write_with_event(conn, actor, "target_deleted", target_id=target_id,
+                            payload={"path": t[0], "campaign": t[1]})
+    _trigger_backup()
+    return {"deleted": target_id, "path": t[0]}
+
+
+# ---------- protection list ----------
+
+class ProtectionIn(BaseModel):
+    segment: str
+    reason: str
+
+
+@router.get("/protections")
+def list_protections():
+    with hk.tx() as conn:
+        rows = conn.execute(
+            "SELECT id, segment, reason, added_by, active FROM hk_protection"
+            " ORDER BY segment").fetchall()
+    return [{"id": r[0], "segment": r[1], "reason": r[2], "added_by": r[3],
+             "active": r[4]} for r in rows]
+
+
+@router.post("/protections")
+def add_protection(body: ProtectionIn, x_user: str | None = Header(default=None)):
+    seg = body.segment.strip().strip("/")
+    if not seg or "/" in seg:
+        raise HTTPException(status_code=422, detail="segment must be a plain directory name")
+    if not body.reason.strip():
+        raise HTTPException(status_code=422, detail="a protection needs its reason recorded")
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        conn.execute(
+            "INSERT INTO hk_protection (segment, reason, added_by) VALUES (%s, %s, %s)"
+            " ON CONFLICT (segment) DO UPDATE SET active = true, reason = EXCLUDED.reason",
+            (seg, body.reason.strip(), actor))
+        hk.write_with_event(conn, actor, "protection_added",
+                            payload={"segment": seg, "reason": body.reason.strip()})
+    return {"segment": seg}
+
+
+@router.delete("/protections/{protection_id}")
+def remove_protection(protection_id: int, x_user: str | None = Header(default=None)):
+    with hk.tx() as conn:
+        actor = _actor(x_user, conn)
+        row = conn.execute(
+            "UPDATE hk_protection SET active = false WHERE id = %s AND active"
+            " RETURNING segment", (protection_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="not found or already inactive")
+        hk.write_with_event(conn, actor, "protection_removed", payload={"segment": row[0]})
+    return {"removed": row[0]}
 
 
 

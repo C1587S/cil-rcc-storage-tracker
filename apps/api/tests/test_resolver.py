@@ -98,6 +98,25 @@ class TestPathSegment(unittest.TestCase):
                     predicate={"path_segment": "a/b"})
 
 
+class TestProtectedSegments(unittest.TestCase):
+    def test_exclusions_become_negative_conditions(self):
+        rq = resolve("/project/cil", "2026-09-11", "/project/cil/home_dirs",
+                     predicate={"ext": [".log"]}, exclude_segments=["envs", "pkgs"])
+        self.assertIn("position(path, %(prot0)s) = 0", rq.where)
+        self.assertEqual(rq.params["prot0"], "/envs/")
+        self.assertEqual(rq.params["prot1"], "/pkgs/")
+
+    def test_bad_segment_rejected(self):
+        with self.assertRaises(ResolverError):
+            resolve("/project/cil", "2026-09-11", "/project/cil/x",
+                    exclude_segments=["a/b"])
+
+    def test_no_exclusions_changes_nothing(self):
+        a = resolve("/project/cil", "2026-09-11", "/project/cil/x")
+        b = resolve("/project/cil", "2026-09-11", "/project/cil/x", exclude_segments=[])
+        self.assertEqual(a.where, b.where)
+
+
 class TestInjectionSafety(unittest.TestCase):
     def test_no_user_value_ever_lands_in_sql_text(self):
         hostile = "/project/cil/x'; DROP TABLE filesystem.entries; --"

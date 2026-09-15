@@ -182,3 +182,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS quarantine_manifest_path_uniq
     ON quarantine_item (manifest_id, original_path);
 CREATE UNIQUE INDEX IF NOT EXISTS execution_decision_manifest_uniq
     ON execution (decision_id, manifest_ref);
+
+
+-- Protection list: path segments never swept by any category or manifest.
+-- Data, not hardcoded in categories — same reasoning as the empty-file
+-- sentinels: environment/package trees look like sweepable clutter and are
+-- functionally critical.
+CREATE TABLE IF NOT EXISTS hk_protection (
+    id BIGSERIAL PRIMARY KEY,
+    segment TEXT NOT NULL UNIQUE,        -- directory name matched anywhere in a path
+    reason TEXT NOT NULL,
+    added_by TEXT NOT NULL DEFAULT 'seed',
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO hk_protection (segment, reason) VALUES
+    ('envs',          'conda environments — live software, not clutter'),
+    ('pkgs',          'conda package cache — managed by conda, not by us'),
+    ('site-packages', 'installed python packages'),
+    ('node_modules',  'installed node packages'),
+    ('.cargo',        'rust toolchain and registry'),
+    ('.conda',        'conda state directory'),
+    ('miniconda3',    'conda prefix'),
+    ('anaconda3',     'conda prefix'),
+    ('.snakemake',    'workflow state — sentinels and locks live here')
+ON CONFLICT (segment) DO NOTHING;

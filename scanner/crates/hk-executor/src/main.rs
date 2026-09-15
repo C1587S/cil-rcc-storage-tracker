@@ -279,8 +279,16 @@ purging anyway because --force was given. These files become unrecoverable.");
         fs::write(&out_path, &json).expect("cannot write receipt");
     }
 
-    println!("{} run: {} removed ({} bytes freed), {} skipped-changed, {} skipped-missing, {} failed, {} dirs removed",
-             if dry_run { "DRY" } else { action }, receipt.files_removed, receipt.bytes_freed,
+    // The summary line is what someone reads before deciding to act —
+    // its verb must match the action, never a generic "removed".
+    let verb = match action {
+        "quarantine" => if dry_run { "would be quarantined (reversible move)" } else { "quarantined (reversible move)" },
+        "purge_quarantine" => if dry_run { "held copies would be permanently deleted" } else { "held copies permanently deleted" },
+        _ => if dry_run { "would be permanently deleted" } else { "permanently deleted" },
+    };
+    println!("{}: {} {}, {} bytes; {} skipped-changed, {} skipped-missing, {} failed, {} dirs removed",
+             if dry_run { format!("DRY RUN ({action})") } else { format!("{action} run") },
+             receipt.files_removed, verb, receipt.bytes_freed,
              receipt.files_skipped_changed, receipt.files_skipped_missing, receipt.files_failed,
              receipt.dirs_removed);
     println!("receipt: {}", out_path.display());

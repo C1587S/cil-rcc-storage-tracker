@@ -53,8 +53,15 @@ def resolve(
     path: str,
     scope: str = "subtree",
     predicate: dict[str, Any] | None = None,
+    exclude_segments: list[str] | None = None,
 ) -> ResolvedQuery:
-    """Build the WHERE clause selecting this target's member FILES."""
+    """Build the WHERE clause selecting this target's member FILES.
+
+    exclude_segments: protected directory names (from the hk_protection
+    table) that must never match, applied at RESOLUTION time so category
+    targets, sweeps and MANIFEST GENERATION all honor them — a protection
+    added after a target was adopted still protects its future manifests.
+    """
     if root not in KNOWN_ROOTS:
         raise ResolverError(f"Unknown root {root!r}; known: {KNOWN_ROOTS}")
     if not (path == root or path.startswith(root + "/")):
@@ -124,6 +131,12 @@ def resolve(
     if "mtime_after" in predicate:
         params["mtime_after"] = _to_epoch(predicate["mtime_after"])
         conds.append("modified_time > %(mtime_after)s")
+
+    for i, seg in enumerate(exclude_segments or []):
+        if not isinstance(seg, str) or "/" in seg or not seg:
+            raise ResolverError(f"protected segment {seg!r} must be a plain directory name")
+        params[f"prot{i}"] = f"/{seg}/"
+        conds.append(f"position(path, %(prot{i})s) = 0")
 
     return ResolvedQuery(where=" AND ".join(conds), params=params)
 

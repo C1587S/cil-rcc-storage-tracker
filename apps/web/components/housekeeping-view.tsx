@@ -364,13 +364,17 @@ export function HousekeepingView() {
                 <td className="px-3 py-2">
                   {r.decision_id && !["keep", "needs_info", "not_mine"].includes(r.verdict || "") && (
                     <button
-                      className={cn("text-[11px] hover:underline",
+                      className={cn("text-[11px] hover:underline mr-2",
                         execDrawer === r.id ? "text-primary font-medium" : "text-primary/80")}
                       title="Generate/download executor manifests and upload receipts"
                       onClick={() => setExecDrawer(execDrawer === r.id ? null : r.id)}
                     >
                       {execDrawer === r.id ? "close" : "manifests"}
                     </button>
+                  )}
+                  {!r.executor && (
+                    <DeleteTargetButton targetId={r.id}
+                      onDeleted={() => qc.invalidateQueries({ queryKey: ["hk-report"] })} />
                   )}
                 </td>
               </tr>
@@ -400,29 +404,57 @@ export function HousekeepingView() {
 function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => void }) {
   const { currentUser } = useAppStore();
   const [category, setCategory] = useState("logs");
-  const [groups, setGroups] = useState<any[] | null>(null);
-  const [label, setLabel] = useState("");
+  const [minAgeDays, setMinAgeDays] = useState("180");
+  const [scan, setScan] = useState<any | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [preview, setPreview] = useState<any[] | null>(null);
+  const [campaign, setCampaign] = useState("");
+
+  const ageParam = () => {
+    const n = parseInt(minAgeDays);
+    return Number.isFinite(n) && n > 0 ? `&min_age_days=${n}` : "";
+  };
 
   const load = async () => {
     setBusy(true);
+    setPreviewPath(null);
     try {
-      const d = await api(`/candidates?root=${encodeURIComponent(root)}&category=${category}&group_depth=2`);
-      setGroups(d.groups); setLabel(d.label); setSelected(new Set());
+      const d = await api(`/candidates?root=${encodeURIComponent(root)}&category=${category}&group_depth=2${ageParam()}`);
+      setScan(d);
+      setSelected(new Set());
     } catch (e: any) { toast(e.message, "error"); }
     setBusy(false);
+  };
+
+  const togglePreview = async (path: string) => {
+    if (previewPath === path) { setPreviewPath(null); return; }
+    setPreviewPath(path);
+    setPreview(null);
+    try {
+      const d = await api(`/candidates/preview?root=${encodeURIComponent(root)}&category=${category}&path=${encodeURIComponent(path)}${ageParam()}`);
+      setPreview(d.rows);
+    } catch (e: any) { toast(e.message, "error"); setPreviewPath(null); }
   };
 
   const adopt = async () => {
     setBusy(true);
     try {
+      const n = parseInt(minAgeDays);
       const d = await api("/candidates/adopt", {
         method: "POST",
-        body: JSON.stringify({ root, category, paths: [...selected], campaign: "pilot" }),
+        body: JSON.stringify({
+          root, category, paths: [...selected],
+          campaign: campaign.trim() || "pilot",
+          min_age_days: Number.isFinite(n) && n > 0 ? n : null,
+        }),
       }, currentUser);
-      toast(`${d.created.length} target(s) created` +
-        d.created.map((c: any) => `\n  #${c.target_id} ${c.path} -> ${c.assignee ?? "unassigned"}`).join(""), "success");
+      const parts = [];
+      if (d.created.length) parts.push(`${d.created.length} target(s) created`);
+      if (d.existing.length) parts.push(
+        `${d.existing.length} already existed (${d.existing.map((e: any) => `#${e.target_id}`).join(", ")}) — pointed at, not duplicated`);
+      toast(parts.join("; ") || "nothing to adopt", d.created.length ? "success" : "info");
       setSelected(new Set());
       onAdopted();
     } catch (e: any) { toast(e.message, "error"); }
@@ -436,57 +468,114 @@ function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => v
         Find candidates <span className="text-muted-foreground">— safe categories, grouped, with suggested owners</span>
       </summary>
       <div className="p-3 space-y-2 border-t border-border/40">
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
           <select className="h-8 px-2 rounded border border-border bg-transparent"
                   value={category} onChange={e => setCategory(e.target.value)}>
             <option value="logs">.log / .err under 100 MB</option>
             <option value="pycache">__pycache__ contents</option>
           </select>
+          <label className="flex items-center gap-1.5" title="Only files unmodified for at least this many days (mtime — see the Age tab caveat)">
+            <span className="text-muted-foreground">unmodified ≥</span>
+            <input className="h-8 w-16 px-2 rounded border border-border bg-transparent font-mono"
+                   value={minAgeDays} onChange={e => setMinAgeDays(e.target.value)} />
+            <span className="text-muted-foreground">days</span>
+          </label>
           <span className="text-muted-foreground font-mono">{root}</span>
           <button className="h-8 px-3 rounded bg-primary text-primary-foreground disabled:opacity-50"
                   disabled={busy} onClick={load}>{busy ? "Scanning…" : "Scan"}</button>
-          {groups && selected.size > 0 && (
-            <button className="h-8 px-3 rounded border border-primary text-primary disabled:opacity-50"
-                    disabled={busy || !currentUser} onClick={adopt}>
-              Adopt {selected.size} into worklist
-            </button>
+          {scan && selected.size > 0 && (
+            <>
+              <input className="h-8 w-36 px-2 rounded border border-border bg-transparent"
+                     placeholder="campaign (default: pilot)"
+                     value={campaign} onChange={e => setCampaign(e.target.value)} />
+              <button className="h-8 px-3 rounded border border-primary text-primary disabled:opacity-50"
+                      disabled={busy || !currentUser} onClick={adopt}>
+                Adopt {selected.size} into worklist
+              </button>
+            </>
           )}
         </div>
-        {groups && (
-          <div className="max-h-72 overflow-y-auto border border-border/40 rounded">
-            <table className="w-full text-xs">
-              <thead><tr className="text-left text-muted-foreground border-b border-border/40">
-                <th className="px-2 py-1.5 w-6"></th>
-                <th className="px-2 py-1.5">Path</th>
-                <th className="px-2 py-1.5 text-right">Size</th>
-                <th className="px-2 py-1.5 text-right">Files</th>
-                <th className="px-2 py-1.5">Suggested owner</th>
-              </tr></thead>
-              <tbody>
-                {groups.map(g => (
-                  <tr key={g.path} className="border-b border-border/20 hover:bg-muted/20">
-                    <td className="px-2 py-1">
-                      <input type="checkbox" checked={selected.has(g.path)}
-                             onChange={e => {
-                               const n = new Set(selected);
-                               e.target.checked ? n.add(g.path) : n.delete(g.path);
-                               setSelected(n);
-                             }} />
-                    </td>
-                    <td className="px-2 py-1 font-mono truncate max-w-[380px]" title={g.path}>{g.path}</td>
-                    <td className="px-2 py-1 text-right font-mono">{gb(g.bytes)} GB</td>
-                    <td className="px-2 py-1 text-right font-mono">{g.files.toLocaleString()}</td>
-                    <td className="px-2 py-1">
-                      {g.suggest_assignment
-                        ? <span>{g.suggested_owner} <span className="text-muted-foreground">({Math.round(g.owner_confidence * 100)}%)</span></span>
-                        : <span className="text-muted-foreground/60">— below 60%, no suggestion</span>}
-                    </td>
-                  </tr>
-                ))}
-                {groups.length === 0 && <tr><td colSpan={5} className="px-2 py-3 text-center text-muted-foreground">No matches.</td></tr>}
-              </tbody>
-            </table>
-          </div>
+
+        {busy && !scan && <div className="py-6 flex justify-center"><GridLoader label="Scanning category" /></div>}
+
+        {scan && (
+          <>
+            {/* The headline number — what you would report to anyone */}
+            <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 px-3 py-2 rounded-md border border-border/60 bg-muted/10">
+              <span className="text-base font-semibold font-mono">{scan.total_files.toLocaleString()} files</span>
+              <span className="text-base font-semibold font-mono">{formatBytes(scan.total_bytes)}</span>
+              <span className="text-xs text-muted-foreground">
+                across {scan.groups_shown} group(s){scan.groups_truncated ? " (list truncated at 200 — totals cover everything)" : ""}
+                {scan.min_age_days ? ` · unmodified ≥ ${scan.min_age_days} days` : " · no age filter"}
+              </span>
+            </div>
+            <div className="max-h-80 overflow-y-auto border border-border/40 rounded">
+              <table className="w-full text-xs">
+                <thead><tr className="text-left text-muted-foreground border-b border-border/40">
+                  <th className="px-2 py-1.5 w-6"></th>
+                  <th className="px-2 py-1.5 w-6"></th>
+                  <th className="px-2 py-1.5">Path</th>
+                  <th className="px-2 py-1.5 text-right">Size</th>
+                  <th className="px-2 py-1.5 text-right">Files</th>
+                  <th className="px-2 py-1.5">Suggested owner</th>
+                </tr></thead>
+                <tbody>
+                  {scan.groups.map((g: any) => (
+                    <>
+                      <tr key={g.path} className="border-b border-border/20 hover:bg-muted/20">
+                        <td className="px-2 py-1">
+                          <input type="checkbox" checked={selected.has(g.path)}
+                                 onChange={e => {
+                                   const n = new Set(selected);
+                                   e.target.checked ? n.add(g.path) : n.delete(g.path);
+                                   setSelected(n);
+                                 }} />
+                        </td>
+                        <td className="px-1 py-1">
+                          <button className="text-muted-foreground hover:text-foreground"
+                                  title="What adopting this group would sweep, by subtree"
+                                  onClick={() => togglePreview(g.path)}>
+                            {previewPath === g.path ? "▾" : "▸"}
+                          </button>
+                        </td>
+                        <td className="px-2 py-1 font-mono truncate max-w-[360px]" title={g.path}>{g.path}</td>
+                        <td className="px-2 py-1 text-right font-mono">{gb(g.bytes)} GB</td>
+                        <td className="px-2 py-1 text-right font-mono">{g.files.toLocaleString()}</td>
+                        <td className="px-2 py-1">
+                          {g.suggest_assignment
+                            ? <span>{g.suggested_owner} <span className="text-muted-foreground">({Math.round(g.owner_confidence * 100)}%)</span></span>
+                            : <span className="text-muted-foreground/60">— below 60%, no suggestion</span>}
+                        </td>
+                      </tr>
+                      {previewPath === g.path && (
+                        <tr key={g.path + ":pv"}>
+                          <td colSpan={6} className="border-b border-border/30 bg-muted/10 px-4 py-2">
+                            {!preview ? <span className="text-muted-foreground">loading breakdown…</span> : (
+                              <div className="space-y-0.5">
+                                <div className="text-muted-foreground mb-1">
+                                  What this sweep would take, by subtree — anything surprising here
+                                  belongs on the protection list, not in the sweep:
+                                </div>
+                                {preview.map((r: any) => (
+                                  <div key={r.path} className="flex gap-4 font-mono">
+                                    <span className="w-24 text-right">{r.files.toLocaleString()} files</span>
+                                    <span className="w-20 text-right">{formatBytes(r.bytes)}</span>
+                                    <span className="truncate" title={r.path}>{r.path.slice(g.path.length + 1) || "(direct)"}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  ))}
+                  {scan.groups.length === 0 && <tr><td colSpan={6} className="px-2 py-3 text-center text-muted-foreground">No matches.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <ProtectionsLine segments={scan.protected_segments} onChanged={load} />
+          </>
         )}
         <p className="text-[10px] text-muted-foreground">
           Empty files are deliberately excluded from every category: zero-byte pipeline
@@ -494,6 +583,41 @@ function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => v
         </p>
       </div>
     </details>
+  );
+}
+
+/** The protection list, visible where it acts. Data-driven; edits recorded. */
+function ProtectionsLine({ segments, onChanged }: { segments: string[]; onChanged: () => void }) {
+  const { currentUser } = useAppStore();
+  const [adding, setAdding] = useState(false);
+  const [seg, setSeg] = useState("");
+  const [reason, setReason] = useState("");
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+      <span>Never swept (protection list):</span>
+      {segments.map(x => <code key={x} className="px-1 rounded bg-muted/30">{x}/</code>)}
+      {!adding ? (
+        <button className="text-primary hover:underline" onClick={() => setAdding(true)}>+ add</button>
+      ) : (
+        <span className="inline-flex items-center gap-1">
+          <input className="h-6 w-28 px-1.5 rounded border border-border bg-transparent font-mono"
+                 placeholder="dirname" value={seg} onChange={e => setSeg(e.target.value)} />
+          <input className="h-6 w-48 px-1.5 rounded border border-border bg-transparent"
+                 placeholder="why it must never be swept" value={reason}
+                 onChange={e => setReason(e.target.value)} />
+          <button className="text-primary hover:underline"
+                  onClick={async () => {
+                    try {
+                      await api("/protections", { method: "POST",
+                        body: JSON.stringify({ segment: seg, reason }) }, currentUser);
+                      setSeg(""); setReason(""); setAdding(false);
+                      onChanged();
+                    } catch (e: any) { toast(e.message, "error"); }
+                  }}>save</button>
+          <button className="hover:text-foreground" onClick={() => setAdding(false)}>cancel</button>
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -586,38 +710,118 @@ function UploadPanel({ onApplied }: { onApplied: () => void }) {
 function QuarantinePanel() {
   const { currentUser } = useAppStore();
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ["hk-quarantine"], queryFn: () => api("/quarantine") });
-  if (!data?.length) return null;
+  const { data, isLoading } = useQuery({ queryKey: ["hk-quarantine"], queryFn: () => api("/quarantine") });
+  const [openManifest, setOpenManifest] = useState<string | null>(null);
+  const items = useQuery({
+    queryKey: ["hk-quarantine-items", openManifest],
+    queryFn: () => api(`/quarantine/items?manifest_id=${encodeURIComponent(openManifest!)}`),
+    enabled: !!openManifest,
+  });
+  const [reconciling, setReconciling] = useState<string | null>(null);
+  const [reconNote, setReconNote] = useState("");
+
+  if (isLoading || !data?.length) return null;
   return (
-    <details className="border border-border/60 rounded-md">
+    <details open className="border border-border/60 rounded-md">
       <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
-        Quarantine <span className="text-muted-foreground">— {data.length} item(s) in grace period</span>
+        Quarantine <span className="text-muted-foreground">— {data.length} batch(es); status checked against the latest snapshot</span>
       </summary>
-      <div className="p-3 border-t border-border/40 max-h-72 overflow-y-auto">
-        <table className="w-full text-xs">
-          <thead><tr className="text-left text-muted-foreground border-b border-border/40">
-            <th className="px-2 py-1">Original path</th><th className="px-2 py-1">Expires</th><th className="px-2 py-1"></th>
-          </tr></thead>
-          <tbody>
-            {data.map((q: any) => (
-              <tr key={q.id} className="border-b border-border/20">
-                <td className="px-2 py-1 font-mono truncate max-w-[480px]" title={`now at: ${q.quarantine_path}`}>{q.original_path}</td>
-                <td className="px-2 py-1 font-mono">{String(q.expires_at).slice(0, 10)}</td>
-                <td className="px-2 py-1">
-                  <button className="text-primary hover:underline"
-                          title="Record that this file was renamed back to its original path"
-                          onClick={async () => {
-                            try { await api(`/quarantine/${q.id}/restored`, { method: "POST" }, currentUser); }
-                            catch (e: any) { toast(e.message, "error"); }
-                            qc.invalidateQueries({ queryKey: ["hk-quarantine"] });
-                          }}>
-                    mark restored
+      <div className="p-3 border-t border-border/40 space-y-2 text-xs">
+        {data.map((g: any) => (
+          <div key={g.manifest_id} className="border border-border/40 rounded">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
+              <button className="text-muted-foreground hover:text-foreground"
+                      onClick={() => setOpenManifest(openManifest === g.manifest_id ? null : g.manifest_id)}>
+                {openManifest === g.manifest_id ? "▾" : "▸"}
+              </button>
+              <span className="font-mono">{g.manifest_id}</span>
+              <span className="font-mono">{g.active.toLocaleString()} held · {formatBytes(g.bytes)}</span>
+              {g.restored > 0 && <span className="text-emerald-600 font-mono">{g.restored} restored</span>}
+              {g.purged > 0 && <span className="text-muted-foreground font-mono">{g.purged.toLocaleString()} purged</span>}
+              <span className="text-muted-foreground">expires {String(g.expires_at).slice(0, 10)}</span>
+              <span className={cn("px-1.5 rounded text-[10px]",
+                g.status.startsWith("VANISHED") ? "bg-red-500/15 text-red-600 font-medium"
+                : g.status.startsWith("partial") ? "bg-amber-500/15 text-amber-600"
+                : "bg-muted/30 text-muted-foreground")}>
+                {g.status}
+              </span>
+              {g.active > 0 && (
+                reconciling === g.manifest_id ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <input className="h-7 w-72 px-2 rounded border border-border bg-transparent"
+                           placeholder="How were these removed? (required — goes in the record)"
+                           value={reconNote} onChange={e => setReconNote(e.target.value)} autoFocus />
+                    <button className="h-7 px-2 rounded bg-red-600 text-white disabled:opacity-50"
+                            disabled={!reconNote.trim()}
+                            onClick={async () => {
+                              try {
+                                const d = await api(`/quarantine/${encodeURIComponent(g.manifest_id)}/reconcile`,
+                                  { method: "POST", body: JSON.stringify({ note: reconNote }) }, currentUser);
+                                toast(`${d.reconciled.toLocaleString()} item(s) marked purged out-of-band.`, "success");
+                                setReconciling(null); setReconNote("");
+                                qc.invalidateQueries({ queryKey: ["hk-quarantine"] });
+                              } catch (e: any) { toast(e.message, "error"); }
+                            }}>
+                      Mark {g.active.toLocaleString()} purged
+                    </button>
+                    <button className="h-7 px-2 rounded border border-border"
+                            onClick={() => setReconciling(null)}>cancel</button>
+                  </span>
+                ) : (
+                  <button className="text-primary hover:underline text-[11px]"
+                          title="For quarantines removed outside the executor — records an out-of-band purge with your note"
+                          onClick={() => setReconciling(g.manifest_id)}>
+                    reconcile as purged (out-of-band)
                   </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                )
+              )}
+            </div>
+            {openManifest === g.manifest_id && (
+              <div className="border-t border-border/30 px-3 py-2 max-h-64 overflow-y-auto">
+                {items.isLoading ? <span className="text-muted-foreground">loading…</span> : (
+                  <table className="w-full">
+                    <tbody>
+                      {(items.data ?? []).map((q: any) => (
+                        <tr key={q.id} className="border-b border-border/20">
+                          <td className="px-1 py-1 font-mono truncate max-w-[380px]" title={q.original_path}>{q.original_path}</td>
+                          <td className="px-1 py-1 text-right font-mono">{formatBytes(q.size_bytes)}</td>
+                          <td className="px-1 py-1">
+                            {q.restored_at ? <span className="text-emerald-600">restored</span>
+                              : q.purged_at ? <span className="text-muted-foreground">purged</span>
+                              : (
+                                <span className="inline-flex gap-2">
+                                  <button className="text-primary hover:underline"
+                                          title={`Copies the exact reverse rename to your clipboard:\nmv '${q.quarantine_path}' '${q.original_path}'`}
+                                          onClick={async () => {
+                                            await navigator.clipboard.writeText(
+                                              `mv '${q.quarantine_path}' '${q.original_path}'`);
+                                            toast("Restore command copied — run it on a Midway login node, then click 'mark restored'.", "success");
+                                          }}>
+                                    copy restore cmd
+                                  </button>
+                                  <button className="text-primary hover:underline"
+                                          title="Record that this file was renamed back to its original path"
+                                          onClick={async () => {
+                                            try {
+                                              await api(`/quarantine/${q.id}/restored`, { method: "POST" }, currentUser);
+                                              qc.invalidateQueries({ queryKey: ["hk-quarantine"] });
+                                              qc.invalidateQueries({ queryKey: ["hk-quarantine-items"] });
+                                            } catch (e: any) { toast(e.message, "error"); }
+                                          }}>
+                                    mark restored
+                                  </button>
+                                </span>
+                              )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </details>
   );
@@ -1019,5 +1223,31 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
         the registry marks them purged. Full instructions are embedded in each manifest.
       </div>
     </div>
+  );
+}
+
+
+/** Two-step inline delete for mistake targets. The API refuses once
+ *  anything was executed — executed history is the record. */
+function DeleteTargetButton({ targetId, onDeleted }: { targetId: number; onDeleted: () => void }) {
+  const { currentUser } = useAppStore();
+  const [arming, setArming] = useState(false);
+  return (
+    <button
+      className={cn("text-[11px] hover:underline",
+        arming ? "text-red-600 font-medium" : "text-muted-foreground/60 hover:text-red-500")}
+      title="Delete this target (only possible before any execution; the deletion itself is recorded)"
+      onClick={async () => {
+        if (!arming) { setArming(true); setTimeout(() => setArming(false), 4000); return; }
+        try {
+          const d = await api(`/targets/${targetId}`, { method: "DELETE" }, currentUser);
+          toast(`Target #${targetId} deleted (${d.path}).`, "success");
+          onDeleted();
+        } catch (e: any) { toast(e.message, "error"); }
+        setArming(false);
+      }}
+    >
+      {arming ? "confirm delete" : "delete"}
+    </button>
   );
 }

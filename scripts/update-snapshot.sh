@@ -239,6 +239,25 @@ echo ""
 echo "--- Warming visualization caches ---"
 "${SCRIPT_DIR}/warm-cache.sh" || true
 
+# Passive quarantine verification against the fresh snapshot: any batch the
+# registry calls "held" whose files the new scan cannot see gets flagged
+# loudly here (and in the panel). Same reasoning as execution verification.
+echo ""
+echo "--- Quarantine reality check ---"
+curl -s --compressed http://localhost:8000/api/housekeeping/quarantine \
+  | python3 -c "
+import json, sys
+try:
+    groups = json.load(sys.stdin)
+except Exception:
+    print('  (quarantine check skipped — API unreachable)'); raise SystemExit
+flagged = [g for g in groups if g['status'].startswith(('VANISHED', 'partial'))]
+for g in flagged:
+    print(f\"  WARNING {g['manifest_id']}: {g['status']}\")
+if not flagged:
+    print(f'  ok — {len(groups)} batch(es) consistent with the snapshot')
+" || true
+
 echo ""
 echo "======================================================"
 echo "Done: dashboard updated to ${NEW_DATE}"
