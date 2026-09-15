@@ -21,6 +21,14 @@
 
 set -e
 
+# Slurm account for this chain — set once, redirects everything:
+#   CIL_SLURM_ACCOUNT overrides explicitly; otherwise the account THIS job
+#   is already running under propagates to every child submission and
+#   self-resubmission (so `sbatch --account=pi-mgreenst <script>` redirects
+#   the whole chain); the #SBATCH header above is only the cold-start
+#   default. One exhausted allocation must never require editing files.
+ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-cil}}"
+
 SCAN_SCRIPT="./scanner/scripts/scan_cil_parallel.sh"
 OUTPUT_DIR="/scratch/midway3/${USER}/cil_scans"
 FLAG_FILE="${OUTPUT_DIR}/.scan_complete"
@@ -38,7 +46,7 @@ rm -f "$FLAG_FILE"
 
 # Submit scan job array
 echo "Submitting scan job array..."
-JOB_ID=$(sbatch --parsable "$SCAN_SCRIPT")
+JOB_ID=$(sbatch --parsable --account="$ACCOUNT" "$SCAN_SCRIPT")
 echo "Submitted job array: $JOB_ID"
 
 # Wait for all jobs to finish
@@ -80,6 +88,6 @@ fi
 # Resubmit itself for tomorrow at 2am
 echo ""
 echo "Scheduling next scan for tomorrow at 2am..."
-sbatch --begin=$(date -d "tomorrow 02:00" +%Y-%m-%dT%H:%M:%S) "$0"
+sbatch --account="$ACCOUNT" --begin=$(date -d "tomorrow 02:00" +%Y-%m-%dT%H:%M:%S) "$0"
 
 echo "Pipeline finished at $(date)"

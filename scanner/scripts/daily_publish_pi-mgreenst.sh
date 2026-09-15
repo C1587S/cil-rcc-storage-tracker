@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=mgreenst_projection_publish
-#SBATCH --account=cil
+#SBATCH --account=pi-mgreenst
 #SBATCH --partition=broadwl
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1
@@ -24,6 +24,14 @@
 #   scancel <job_id>  # find it with: squeue -u $USER --name=mgreenst_projection_publish
 
 set -e
+
+# Slurm account for this chain — set once, redirects everything:
+#   CIL_SLURM_ACCOUNT overrides explicitly; otherwise the account THIS job
+#   is already running under propagates to every child submission and
+#   self-resubmission (so `sbatch --account=pi-mgreenst <script>` redirects
+#   the whole chain); the #SBATCH header above is only the cold-start
+#   default. One exhausted allocation must never require editing files.
+ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-pi-mgreenst}}"
 
 PUBLISH_SCRIPT="./scanner/scripts/publish_projections.sh"
 
@@ -52,6 +60,6 @@ fi
 
 echo ""
 echo "Scheduling next publish at $NEXT_TIME..."
-sbatch --begin="$NEXT_TIME" "$0"
+sbatch --account="$ACCOUNT" --begin="$NEXT_TIME" "$0"
 
 echo "Projection publish finished at $(date)"

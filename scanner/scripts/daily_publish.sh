@@ -21,6 +21,14 @@
 
 set -e
 
+# Slurm account for this chain — set once, redirects everything:
+#   CIL_SLURM_ACCOUNT overrides explicitly; otherwise the account THIS job
+#   is already running under propagates to every child submission and
+#   self-resubmission (so `sbatch --account=pi-mgreenst <script>` redirects
+#   the whole chain); the #SBATCH header above is only the cold-start
+#   default. One exhausted allocation must never require editing files.
+ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-cil}}"
+
 PUBLISH_SCRIPT="./scanner/scripts/publish_scans.sh"
 FLAG_FILE="/scratch/midway3/${USER}/cil_scans/.scan_complete"
 
@@ -42,6 +50,6 @@ fi
 # Resubmit itself for tomorrow at 4am
 echo ""
 echo "Scheduling next publish for tomorrow at 4am..."
-sbatch --begin=$(date -d "tomorrow 04:00" +%Y-%m-%dT%H:%M:%S) "$0"
+sbatch --account="$ACCOUNT" --begin=$(date -d "tomorrow 04:00" +%Y-%m-%dT%H:%M:%S) "$0"
 
 echo "Publish job finished at $(date)"

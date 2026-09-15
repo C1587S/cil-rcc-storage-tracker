@@ -79,7 +79,16 @@ echo "Published : ${NEW_DATE}"
 echo "In DB     : ${CURRENT_DATE:-none}"
 
 if [ "$NEW_DATE" = "$CURRENT_DATE" ] && [ "$FORCE" = false ]; then
-  echo "Already up to date. Nothing to do."
+  # "Up to date" can mean "the whole pipeline is stale" — say which it is.
+  AGE_DAYS=$(( ( $(date +%s) - $(date -d "$NEW_DATE" +%s) ) / 86400 ))
+  if [ "$AGE_DAYS" -ge 2 ]; then
+    echo "WARNING: 'up to date' but the newest PUBLISHED scan is ${AGE_DAYS} days old (${NEW_DATE})."
+    echo "WARNING: The RCC scan/publish chain has likely stopped (exhausted SU allocation,"
+    echo "WARNING: dead self-resubmission, or publish failure). Check squeue on Midway3/Midway2"
+    echo "WARNING: and resubmit daily_pipeline.sh / daily_publish.sh (CIL_SLURM_ACCOUNT redirects the account)."
+  else
+    echo "Already up to date. Nothing to do."
+  fi
   echo "(Use --force to re-import anyway, e.g. if a newer scan was published today)"
   exit 0
 fi

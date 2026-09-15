@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getSnapshots, API_BASE_URL } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import { Select } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 const formatTimestamp = (ts?: string) => {
   if (!ts) return null;
@@ -188,6 +189,36 @@ export function SnapshotSelector() {
           no snapshots available
         </span>
       )}
+
+      {/* Staleness is a PROBLEM, not a date: when the newest snapshot is
+          old, every tab says so, loudly, with the consequence spelled out.
+          A quiet badge already failed once — three days of dead pipeline
+          read as "up to date". */}
+      {selectedSnapshot && snapshots.length > 0 && (() => {
+        const newest = snapshots[0].snapshot_date;
+        const age = Math.floor((Date.now() - new Date(newest + "T00:00:00").getTime()) / 86400000);
+        if (age < 2) return null;
+        const severe = age >= 3;
+        return (
+          <div className={cn(
+            "basis-full flex items-start gap-2 px-3 py-2 rounded-md border text-xs",
+            severe
+              ? "border-red-500/60 bg-red-500/10 text-red-700 dark:text-red-400"
+              : "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+          )}>
+            <span className="font-semibold shrink-0">
+              {severe ? "⚠ Scan data is stale" : "Scan data is aging"}:
+            </span>
+            <span>
+              the newest snapshot is <strong>{age} days old</strong> ({newest}) — the RCC
+              scan pipeline is likely down (SU allocation, dead job chain, or publish failure).
+              Everything shown reflects {newest}, and the quarantine reality check and
+              passive execution verification cannot see anything newer. Check
+              {" "}<code>squeue -u $USER</code> on Midway and resubmit the chains.
+            </span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
