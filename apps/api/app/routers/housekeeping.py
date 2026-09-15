@@ -400,6 +400,25 @@ def target_manifests(target_id: int):
     return out
 
 
+@router.get("/manifests/{manifest_id}/command")
+def run_command(manifest_id: str, x_user: str | None = Header(default=None)):
+    """The complete pasteable command for a Midway login node. The token
+    rides an environment variable, not argv — argv is world-readable in
+    `ps` on shared nodes."""
+    import os as _os
+    with hk.tx() as conn:
+        _actor(x_user, conn)
+    if mf.manifest_file(manifest_id) is None:
+        raise HTTPException(status_code=404, detail="manifest not found")
+    token = _os.environ.get("HK_EXEC_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=503, detail="HK_EXEC_TOKEN is not set in the server .env")
+    return {"command": (
+        f"HK_TOKEN={token} ./scanner/target/release/hk-executor --manifest-id {manifest_id}"
+    ), "note": "dry run by default; add --quarantine (and --delegate for others' files) to act, "
+               "--no-upload to keep the receipt local"}
+
+
 @router.get("/manifests/{manifest_id}")
 def download_manifest(manifest_id: str):
     f = mf.manifest_file(manifest_id)
@@ -411,10 +430,24 @@ def download_manifest(manifest_id: str):
 
 
 @router.post("/receipts")
-async def upload_receipt(request: Request, x_user: str | None = Header(default=None)):
+async def upload_receipt(request: Request, x_user: str | None = Header(default=None),
+                         x_exec_token: str | None = Header(default=None)):
     """Accepts the executor's receipt (.receipt.json or .json.gz), returns a
-    job id immediately, and processes in the background — a 400K-entry
-    receipt cannot be ingested inside one request. Poll /receipts/jobs/{id}."""
+    job id immediately, and processes in the background. Poll
+    /receipts/jobs/{id}.
+
+    Two credentials, deliberately simple (single-operator model):
+    - the browser path sends X-User (the login-gate identity), as before;
+    - the executor path sends X-Exec-Token, compared against the one
+      HK_EXEC_TOKEN in the server's .env. One operator, one token; if this
+      ever becomes several operators, revisit — until then any more auth
+      is code maintained for nobody.
+    """
+    import os as _os
+    if x_exec_token is not None:
+        expected = _os.environ.get("HK_EXEC_TOKEN", "")
+        if not expected or x_exec_token != expected:
+            raise HTTPException(status_code=401, detail="invalid executor token — recopy the run command from the dashboard")
     with hk.tx() as conn:
         actor = _actor(x_user, conn)
     raw = await request.body()

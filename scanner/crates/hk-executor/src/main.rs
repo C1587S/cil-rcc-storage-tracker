@@ -25,9 +25,19 @@ use rayon::prelude::*;
 #[derive(Parser)]
 #[command(name = "hk-executor", about = "Execute a housekeeping manifest (dry-run by default)")]
 struct Args {
-    /// Manifest JSON produced by the housekeeping panel
+    /// Manifest JSON file produced by the housekeeping panel (offline path;
+    /// always works even when the tunnel or login-node network is down)
+    #[arg(long, conflicts_with = "manifest_id")]
+    manifest: Option<PathBuf>,
+    /// Fetch the manifest from the dashboard over HTTPS instead of a file,
+    /// and upload the receipt automatically on completion. Uses the system
+    /// curl. Env: HK_TOKEN (from the copied command), HK_SERVER (default
+    /// https://s-cs.dev/cil-rcc-tracker).
     #[arg(long)]
-    manifest: PathBuf,
+    manifest_id: Option<String>,
+    /// With --manifest-id: keep the receipt local instead of uploading it.
+    #[arg(long)]
+    no_upload: bool,
     /// Rename files into the manifest's quarantine directory (reversible)
     #[arg(long)]
     quarantine: bool,
@@ -92,8 +102,46 @@ fn main() {
     let action = if args.purge_quarantine { "purge_quarantine" }
                  else if args.purge { "purge" } else { "quarantine" };
 
+    let server = std::env::var("HK_SERVER")
+        .unwrap_or_else(|_| "https://s-cs.dev/cil-rcc-tracker".to_string());
+
+    // Resolve the manifest path: a local file, or fetch by id over HTTPS.
+    // The fetched copy is kept next to the receipt so later runs (purge
+    // after grace, offline retries) need no network.
+    let manifest_path: PathBuf = match (&args.manifest, &args.manifest_id) {
+        (Some(p), None) => p.clone(),
+        (None, Some(id)) => {
+            let local = PathBuf::from(format!("{id}.json.gz"));
+            if local.exists() {
+                println!("using previously fetched {}", local.display());
+            } else {
+                let url = format!("{server}/api/housekeeping/manifests/{id}");
+                println!("fetching manifest {id} from {server} ...");
+                let st = std::process::Command::new("curl")
+                    .args(["-sSf", "-m", "120", "-o"])
+                    .arg(&local)
+                    .arg(&url)
+                    .status();
+                match st {
+                    Ok(st) if st.success() => {}
+                    _ => {
+                        eprintln!("error: could not fetch the manifest (network down or bad id).");
+                        eprintln!("Offline fallback: download it in the dashboard drawer and run");
+                        eprintln!("  hk-executor --manifest {id}.json.gz");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            local
+        }
+        _ => {
+            eprintln!("error: give exactly one of --manifest <file> or --manifest-id <id>");
+            std::process::exit(2);
+        }
+    };
+
     // Manifests may be gzipped (.json.gz) — detect by magic, not name
-    let raw_bytes = fs::read(&args.manifest).unwrap_or_else(|e| {
+    let raw_bytes = fs::read(&manifest_path).unwrap_or_else(|e| {
         eprintln!("error: cannot read manifest: {e}");
         std::process::exit(2);
     });
@@ -292,6 +340,71 @@ purging anyway because --force was given. These files become unrecoverable.");
              receipt.files_skipped_changed, receipt.files_skipped_missing, receipt.files_failed,
              receipt.dirs_removed);
     println!("receipt: {}", out_path.display());
+
+    // With --manifest-id the loop closes itself: upload the receipt and
+    // watch the ingest job briefly. --no-upload keeps it local; the
+    // dashboard drawer accepts the file either way.
+    if args.manifest_id.is_some() && !args.no_upload {
+        let token = std::env::var("HK_TOKEN").unwrap_or_default();
+        if token.is_empty() {
+            eprintln!("HK_TOKEN not set — receipt NOT uploaded. Copy the run command from the");
+            eprintln!("dashboard drawer (it includes the token), or upload the receipt file there.");
+        } else {
+            let user = std::env::var("USER").unwrap_or_default();
+            let url = format!("{server}/api/housekeeping/receipts");
+            println!("uploading receipt ...");
+            let out = std::process::Command::new("curl")
+                .args(["-sS", "-m", "300", "-X", "POST",
+                       "-H", "Content-Type: application/octet-stream"])
+                .arg("-H").arg(format!("X-Exec-Token: {token}"))
+                .arg("-H").arg(format!("X-User: {user}"))
+                .arg("--data-binary").arg(format!("@{}", out_path.display()))
+                .arg(&url)
+                .output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    let body = String::from_utf8_lossy(&o.stdout);
+                    if let Some(job) = body.split("\"job_id\":").nth(1)
+                        .and_then(|t| t.trim_start().split(|c: char| !c.is_ascii_digit()).next())
+                        .filter(|t| !t.is_empty()) {
+                        println!("receipt accepted, ingest job {job} — watching...");
+                        for _ in 0..40 {
+                            std::thread::sleep(std::time::Duration::from_secs(3));
+                            let st = std::process::Command::new("curl")
+                                .args(["-sSf", "-m", "30"])
+                                .arg(format!("{url}/jobs/{job}"))
+                                .output();
+                            if let Ok(st) = st {
+                                let b = String::from_utf8_lossy(&st.stdout);
+                                if b.contains("\"status\":\"done\"") {
+                                    println!("ingested — the dashboard registry is up to date.");
+                                    return;
+                                }
+                                if b.contains("\"status\":\"failed\"") {
+                                    eprintln!("ingest FAILED server-side: {b}");
+                                    eprintln!("Re-uploading the same receipt is safe (idempotent).");
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                        println!("still processing — check the dashboard drawer for job {job}.");
+                    } else {
+                        eprintln!("unexpected server reply: {body}");
+                        eprintln!("Upload the receipt file in the dashboard drawer instead.");
+                    }
+                }
+                Ok(o) => {
+                    eprintln!("upload failed: {}{}", String::from_utf8_lossy(&o.stdout),
+                              String::from_utf8_lossy(&o.stderr));
+                    eprintln!("The receipt is safe at {} — upload it in the drawer.", out_path.display());
+                }
+                Err(e) => {
+                    eprintln!("could not run curl: {e}");
+                    eprintln!("The receipt is safe at {} — upload it in the drawer.", out_path.display());
+                }
+            }
+        }
+    }
     if receipt.files_failed > 0 { std::process::exit(1); }
 }
 

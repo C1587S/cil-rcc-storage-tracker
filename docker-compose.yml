@@ -274,6 +274,9 @@ services:
       CORS_ORIGINS: http://localhost:3000,http://localhost:3001
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       ALLOWED_USERS: ${ALLOWED_USERS:-}
+      # Single-operator executor credential (see /receipts): lives ONLY in
+      # the untracked .env, embedded into the copied run command.
+      HK_EXEC_TOKEN: ${HK_EXEC_TOKEN:-}
 
     depends_on:
       clickhouse:
