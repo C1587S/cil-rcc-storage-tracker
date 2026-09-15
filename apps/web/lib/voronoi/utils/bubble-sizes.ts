@@ -15,7 +15,7 @@ export interface BubbleSizeCategory {
  * 10 fixed bubble size categories (global, not partition-relative)
  * Radii chosen to be visually distinct and fit well in partitions
  */
-export const BUBBLE_SIZE_CATEGORIES: BubbleSizeCategory[] = [
+const BUBBLE_SIZE_CATEGORIES: BubbleSizeCategory[] = [
   {
     name: 'Tiny',
     minSize: 0,
@@ -101,21 +101,6 @@ export function getBubbleRadius(fileSize: number): number {
   }
   // Fallback to smallest category
   return BUBBLE_SIZE_CATEGORIES[0].radius
-}
-
-/**
- * Get bubble size category for a file
- * @param fileSize - File size in bytes
- * @returns The matching size category
- */
-export function getBubbleSizeCategory(fileSize: number): BubbleSizeCategory {
-  for (const category of BUBBLE_SIZE_CATEGORIES) {
-    if (fileSize >= category.minSize && fileSize < category.maxSize) {
-      return category
-    }
-  }
-  // Fallback to smallest category
-  return BUBBLE_SIZE_CATEGORIES[0]
 }
 
 /**

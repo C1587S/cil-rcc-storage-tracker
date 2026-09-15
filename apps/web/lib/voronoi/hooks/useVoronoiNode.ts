@@ -141,26 +141,5 @@ export function useVoronoiNode(
   }
 }
 
-/**
- * Hook for fetching multiple nodes in parallel
- * Useful for loading all children of a node at once
- */
-export function useVoronoiNodes(
-  snapshot: string | null,
-  nodeIds: string[],
-  enabled: boolean = true
-) {
-  const queries = nodeIds.map((nodeId) =>
-    useVoronoiNode(snapshot, nodeId, enabled)
-  )
-
-  return {
-    nodes: queries.map((q) => q.node).filter(Boolean) as VoronoiNodeExtended[],
-    isLoading: queries.some((q) => q.isLoading),
-    isFetching: queries.some((q) => q.isFetching),
-    errors: queries.map((q) => q.error).filter(Boolean),
-  }
-}
-
 // Re-export types for convenience
 export type { VoronoiNode, VoronoiNodeExtended }
