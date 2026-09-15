@@ -255,33 +255,15 @@ def create_decision(body: DecisionIn, x_user: str | None = Header(default=None))
     return {"id": row[0]}
 
 
-class ExecutionIn(BaseModel):
-    decision_id: int
-    owner_uname: str | None = None
-    destination_path: str | None = None
-    manifest_ref: str | None = None
-
-
 @router.post("/executions")
-def claim_execution(body: ExecutionIn, x_user: str | None = Header(default=None)):
-    """A person marks 'I did it'. Verification is passive: the nightly
-    rollup diff either shows the bytes gone or it doesn't."""
-    with hk.tx() as conn:
-        actor = _actor(x_user, conn)
-        drow = conn.execute("SELECT target_id FROM decision WHERE id = %s",
-                            (body.decision_id,)).fetchone()
-        if not drow:
-            raise HTTPException(status_code=404, detail="decision not found")
-        row = conn.execute(
-            "INSERT INTO execution (decision_id, executor, owner_uname, destination_path, manifest_ref)"
-            " VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (body.decision_id, actor, body.owner_uname, body.destination_path, body.manifest_ref),
-        ).fetchone()
-        hk.write_with_event(conn, actor, "execution_claimed", target_id=drow[0],
-                            ref_table="execution", ref_id=row[0],
-                            payload={"decision_id": body.decision_id})
-    _trigger_backup()
-    return {"id": row[0]}
+def claim_execution():
+    """Retired. Self-reported 'I did it' rows predate the receipt pipeline;
+    execution rows are now created only by receipt ingestion, so every
+    execution is backed by an executor receipt instead of a claim."""
+    raise HTTPException(
+        status_code=410,
+        detail=("superseded by /receipts — run hk-executor against a manifest and "
+                "upload (or auto-upload) its receipt; that creates the execution rows"))
 
 
 # ---------- manifests & receipts ----------

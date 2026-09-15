@@ -184,13 +184,3 @@ export async function deleteFeedback(feedbackId: string, username: string): Prom
     throw new Error(`API error: ${res.status} ${errorText}`);
   }
 }
-
-export const foldersApi = {
-  async getTree(path: string, snapshot: string) {
-    return getContents({
-      snapshot_date: snapshot,
-      parent_path: path,
-      limit: 5000
-    })
-  }
-}

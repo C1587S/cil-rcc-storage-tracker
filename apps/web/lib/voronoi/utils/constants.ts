@@ -15,24 +15,7 @@ export const TERMINAL_COLORS = {
   filesContainer: '#4a9eff',
 }
 
-// Highlight color options (masculine/bold colors)
-export const HIGHLIGHT_COLOR_OPTIONS = {
-  ELECTRIC_CYAN: '#00D9FF',      // Electric cyan - techy, sharp
-  DEEP_CRIMSON: '#DC143C',       // Deep crimson red - bold, strong
-  VIBRANT_PURPLE: '#9945ff',     // Vibrant purple - default
-} as const
-
 export const HOVER_HIGHLIGHT_COLOR = '#9945ff'  // Default: Vibrant purple (will be overridden dynamically)
-
-export const FILE_TYPE_COLORS: Record<string, string> = {
-  'sh': TERMINAL_COLORS.executable,
-  'exe': TERMINAL_COLORS.executable,
-  'zip': TERMINAL_COLORS.archive,
-  'tar': TERMINAL_COLORS.archive,
-  'gz': TERMINAL_COLORS.archive,
-  'rar': TERMINAL_COLORS.archive,
-  'default': TERMINAL_COLORS.file
-}
 
 export const STORAGE_QUOTA_TB = 500
 export const FILE_COUNT_QUOTA = 77_300_000

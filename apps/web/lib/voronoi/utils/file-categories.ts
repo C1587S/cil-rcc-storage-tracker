@@ -26,7 +26,7 @@ export interface CategoryInfo {
 /**
  * 10-color palette for file categories (dark mode)
  */
-export const CATEGORY_COLORS: Record<FileCategory, string> = {
+const CATEGORY_COLORS: Record<FileCategory, string> = {
   tabular: '#2c4875',      // Deep blue
   scientific: '#5b4c82',   // Purple
   image: '#8a508f',        // Magenta
@@ -43,7 +43,7 @@ export const CATEGORY_COLORS: Record<FileCategory, string> = {
  * Pastel color palette for file categories (light mode)
  * Vibrant pastel versions maintaining dark mode hues with better differentiation
  */
-export const CATEGORY_COLORS_LIGHT: Record<FileCategory, string> = {
+const CATEGORY_COLORS_LIGHT: Record<FileCategory, string> = {
   tabular: '#6b8ab8',      // Medium pastel blue
   scientific: '#9a85b3',   // Medium pastel purple
   image: '#c97fb5',        // Medium pastel magenta
