@@ -325,6 +325,53 @@ def generate_manifests(body: ManifestRequest, x_user: str | None = Header(defaul
     return {"decision_id": decision_id, "snapshot": snap, "manifests": summaries}
 
 
+@router.get("/manifests/{decision_id}/estimate")
+def manifest_estimate(decision_id: int):
+    """What generating would produce — path count, per-owner manifest
+    count, approximate file sizes, extension breakdown — BEFORE any large
+    file is written."""
+    with hk.tx() as conn:
+        row = conn.execute(
+            "SELECT d.verdict, t.root, t.path, t.scope, t.predicate"
+            " FROM decision d JOIN target t ON t.id = d.target_id WHERE d.id = %s",
+            (decision_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="decision not found")
+    verdict, root, path, scope, predicate = row
+    snap = _latest_snapshot()
+    try:
+        rq = resolve(root, snap, path, scope, predicate or {},
+                     exclude_segments=pilot.protected_segments())
+    except ResolverError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    ch = get_client()
+    files, bytes_, avg_len = ch.execute(
+        f"SELECT count(), sum(size), avg(length(path)) FROM filesystem.entries WHERE {rq.where}",
+        rq.params)[0]
+    owners = ch.execute(
+        f"SELECT owner, count() FROM filesystem.entries WHERE {rq.where}"
+        " GROUP BY owner ORDER BY count() DESC LIMIT 25", rq.params)
+    exts = ch.execute(f"""
+        SELECT if(match(name, '\\.[A-Za-z0-9_]+$'),
+                  lower(arrayElement(splitByChar('.', name), -1)), '(none)') AS ext,
+               count() FROM filesystem.entries WHERE {rq.where}
+        GROUP BY ext ORDER BY count() DESC LIMIT 6""", rq.params)
+    files = int(files or 0)
+    # one manifest entry ≈ path + hash + numbers + keys; gz ratio measured
+    # on real manifests ≈ 12:1
+    est_raw = int(files * ((avg_len or 60) + 110))
+    return {
+        "snapshot": snap, "verdict": verdict, "files": files,
+        "bytes": int(bytes_ or 0),
+        "manifest_count": len(owners),
+        "owners": [{"owner": o, "files": int(c)} for o, c in owners],
+        "extensions": [{"ext": e, "files": int(c)} for e, c in exts],
+        "est_raw_bytes": est_raw,
+        "est_gz_bytes": est_raw // 12,
+        "needs_confirmation": files > 100_000,
+    }
+
+
 @router.get("/targets/{target_id}/manifests")
 def target_manifests(target_id: int):
     """All manifests ever generated for a target — re-downloadable forever
@@ -548,58 +595,85 @@ def sweep(body: SweepIn, x_user: str | None = Header(default=None)):
 
 # ---------- pilot: candidates, adoption, CSV round-trip, quarantine ----------
 
-@router.get("/candidates")
-def candidates(root: str = Query(...), category: str = Query(...),
-               group_depth: int = Query(2, ge=1, le=4),
-               min_age_days: int | None = Query(default=None, ge=1)):
-    if category not in pilot.CATEGORIES:
-        raise HTTPException(status_code=422, detail=f"unknown category; known: {list(pilot.CATEGORIES)}")
+class FindParams(BaseModel):
+    root: str
+    include: str = ""        # comma-separated name patterns (OR)
+    exclude: str = ""        # comma-separated name patterns (NOT any)
+    size_min: int | None = None   # bytes, inclusive
+    size_max: int | None = None   # bytes, inclusive
+    min_age_days: int | None = None
+    dir_segment: str = ""    # only files inside directories with this name
+    group_depth: int = 2
+
+    def patterns(self) -> tuple[list[str], list[str]]:
+        inc = [x.strip() for x in self.include.split(",") if x.strip()]
+        exc = [x.strip() for x in self.exclude.split(",") if x.strip()]
+        return inc, exc
+
+    def predicate(self) -> dict:
+        inc, exc = self.patterns()
+        return pilot.build_find_predicate(
+            inc, exc, self.size_min, self.size_max,
+            self.min_age_days, self.dir_segment.strip() or None)
+
+
+@router.get("/candidates/presets")
+def find_presets():
+    return pilot.FIND_PRESETS
+
+
+@router.post("/candidates/find")
+def find_candidates(body: FindParams):
+    """Find files that could be cleaned up: include/exclude name patterns,
+    size range, age. Headline totals first; protections always apply."""
     snap = _latest_snapshot()
-    result = pilot.discover_candidates(root, category, snap, group_depth, min_age_days)
-    return {"snapshot": snap, "category": category, "min_age_days": min_age_days,
-            "label": pilot.CATEGORIES[category]["label"],
+    try:
+        pred = body.predicate()
+        result = pilot.find_candidates(body.root, snap, pred, body.group_depth)
+    except (ValueError, ResolverError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"snapshot": snap, "predicate": pred,
             "protected_segments": pilot.protected_segments(), **result}
 
 
-@router.get("/candidates/preview")
-def candidates_preview(root: str = Query(...), category: str = Query(...),
-                       path: str = Query(...),
-                       min_age_days: int | None = Query(default=None, ge=1)):
-    """Per-subtree breakdown of what adopting this group would sweep —
-    shown BEFORE adoption so a stray envs/ shows up in the UI, not in a
-    directory listing afterwards."""
-    if category not in pilot.CATEGORIES:
-        raise HTTPException(status_code=422, detail="unknown category")
+class SampleParams(FindParams):
+    path: str
+
+
+@router.post("/candidates/sample")
+def sample_candidates(body: SampleParams):
+    """20 real paths + subtree and extension breakdowns for one group —
+    judged BEFORE any target exists."""
     snap = _latest_snapshot()
-    return {"snapshot": snap,
-            "rows": pilot.preview_group(root, category, snap, path, min_age_days)}
+    try:
+        pred = body.predicate()
+        return {"snapshot": snap,
+                **pilot.sample_group(body.root, snap, pred, body.path)}
+    except (ValueError, ResolverError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
-class AdoptRequest(BaseModel):
-    root: str
-    category: str
+class AdoptRequest(FindParams):
     paths: list[str]
     campaign: str | None = None
-    min_age_days: int | None = None
 
 
 @router.post("/candidates/adopt")
 def adopt_candidates(body: AdoptRequest, x_user: str | None = Header(default=None)):
-    """Turn selected candidate groups into targets, provisionally assigned
-    to the majority byte owner (>= 60% confidence; otherwise unassigned —
-    a bad suggestion is worse than none)."""
-    if body.category not in pilot.CATEGORIES:
-        raise HTTPException(status_code=422, detail="unknown category")
+    """Turn selected groups into targets with the SAME predicate the find
+    used, provisionally assigned to the majority byte owner (>= 60%
+    confidence). Idempotent per (path, campaign)."""
     snap = _latest_snapshot()
-    predicate = pilot.category_predicate(body.category, body.min_age_days)
+    try:
+        predicate = body.predicate()
+    except (ValueError, ResolverError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
     segments = pilot.protected_segments()
     created, existing = [], []
     ch = get_client()
     with hk.tx() as conn:
         actor = _actor(x_user, conn)
         for path in body.paths:
-            # Idempotent: same path + same campaign = the target you already
-            # have — point at it instead of minting a duplicate.
             dup = conn.execute(
                 "SELECT id FROM target WHERE root = %s AND path = %s"
                 " AND campaign IS NOT DISTINCT FROM %s",
@@ -620,11 +694,10 @@ def adopt_candidates(body: AdoptRequest, x_user: str | None = Header(default=Non
                 "INSERT INTO target (name, root, path, path_hash, scope, predicate, campaign,"
                 " created_by, cached_bytes, cached_files, cached_snapshot)"
                 " VALUES (%s, %s, %s, %s, 'subtree', %s, %s, %s, %s, %s, %s) RETURNING id",
-                (f"{body.category}: {path.split('/')[-1] or path}", body.root, path, path_hash,
+                (f"find: {path.split('/')[-1] or path}", body.root, path, path_hash,
                  json.dumps(predicate), body.campaign, actor, bytes_ or 0, files or 0, snap),
             ).fetchone()
             target_id = row[0]
-            # provisional assignment from majority owner, when confident
             dist = ch.execute(
                 "SELECT owner, sum(size) AS b FROM filesystem.entries"
                 f" WHERE {rq.where} GROUP BY owner ORDER BY b DESC LIMIT 2", rq.params)
@@ -640,7 +713,7 @@ def adopt_candidates(body: AdoptRequest, x_user: str | None = Header(default=Non
                     (target_id, assignee, actor))
             hk.write_with_event(conn, actor, "target_created", target_id=target_id,
                                 ref_table="target", ref_id=target_id,
-                                payload={"category": body.category, "path": path,
+                                payload={"predicate": predicate, "path": path,
                                          "bytes": bytes_ or 0, "files": files or 0,
                                          "provisional_assignee": assignee})
             created.append({"target_id": target_id, "path": path, "bytes": bytes_ or 0,
@@ -703,19 +776,27 @@ def worklist_upload(body: WorklistUpload, x_user: str | None = Header(default=No
             changes.append({"target_id": tid, "from": current_verdict,
                             "to": new_verdict or current_verdict,
                             "assignee": new_assignee or None,
+                            # In the shared-sheet flow many people annotate one
+                            # file and one person uploads it: credit the row's
+                            # assignee (claimed; Drive cannot prove authorship),
+                            # record the uploader separately in the event.
+                            "attributed_to": (new_assignee or r.get("assignee") or "").lower() or None,
                             "rationale": r.get("new_rationale") or None})
 
         applied = []
         if body.commit:
             for c in changes:
                 if c["to"] and c["to"] != c["from"]:
+                    decider = c.get("attributed_to") or actor
+                    conn.execute("INSERT INTO person (username) VALUES (%s) ON CONFLICT DO NOTHING",
+                                 (decider,))
                     prev = conn.execute(
                         "SELECT id FROM decision WHERE target_id = %s AND superseded_by IS NULL",
                         (c["target_id"],)).fetchall()
                     row = conn.execute(
                         "INSERT INTO decision (target_id, verdict, rationale, decided_by)"
                         " VALUES (%s, %s, %s, %s) RETURNING id",
-                        (c["target_id"], c["to"], c["rationale"], actor)).fetchone()
+                        (c["target_id"], c["to"], c["rationale"], decider)).fetchone()
                     for (old_id,) in prev:
                         conn.execute("UPDATE decision SET superseded_by = %s WHERE id = %s",
                                      (row[0], old_id))
@@ -727,6 +808,7 @@ def worklist_upload(body: WorklistUpload, x_user: str | None = Header(default=No
                         (c["target_id"], c["assignee"], actor))
                 applied.append(c["target_id"])
             hk.write_with_event(conn, actor, "worklist_uploaded", payload={
+                "imported_by": actor,
                 "worklist": meta.get("worklist"), "base_event": meta.get("base_event"),
                 "applied": len(applied), "errors": len(errors),
                 "warnings": len(warnings), "unchanged": unchanged,

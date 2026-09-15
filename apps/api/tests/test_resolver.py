@@ -98,6 +98,41 @@ class TestPathSegment(unittest.TestCase):
                     predicate={"path_segment": "a/b"})
 
 
+class TestPatternFind(unittest.TestCase):
+    ROOT, SNAP, PATH = "/project/cil", "2026-09-11", "/project/cil/x"
+
+    def test_extension_suffix_and_exact_name(self):
+        rq = resolve(self.ROOT, self.SNAP, self.PATH,
+                     predicate={"include": [".log", "_SUCCESS"]})
+        self.assertIn("endsWith(name, %(inc0)s)", rq.where)
+        self.assertIn("name = %(inc1)s", rq.where)
+        self.assertEqual(rq.params["inc1"], "_SUCCESS")
+
+    def test_glob_translates_to_escaped_like(self):
+        rq = resolve(self.ROOT, self.SNAP, self.PATH,
+                     predicate={"include": ["slurm-*.out"]})
+        self.assertIn("name LIKE %(inc0)s", rq.where)
+        self.assertEqual(rq.params["inc0"], "slurm-%.out")
+        # literal % and _ must be escaped — they are LIKE wildcards
+        rq2 = resolve(self.ROOT, self.SNAP, self.PATH,
+                      predicate={"include": ["100%_done*"]})
+        self.assertEqual(rq2.params["inc0"], "100\\%\\_done%")
+
+    def test_empty_files_except_sentinels(self):
+        rq = resolve(self.ROOT, self.SNAP, self.PATH, predicate={
+            "size_min": 0, "size_max": 0,
+            "exclude": ["__init__.py", ".gitkeep", "_SUCCESS", ".snakemake_timestamp"],
+        })
+        self.assertIn("size >= %(size_min)s", rq.where)
+        self.assertIn("size <= %(size_max)s", rq.where)
+        self.assertIn("NOT (name = %(exc0)s)", rq.where)
+        self.assertIn("NOT (endsWith(name, %(exc1)s))", rq.where)
+
+    def test_path_in_pattern_rejected(self):
+        with self.assertRaises(ResolverError):
+            resolve(self.ROOT, self.SNAP, self.PATH, predicate={"include": ["a/b.log"]})
+
+
 class TestProtectedSegments(unittest.TestCase):
     def test_exclusions_become_negative_conditions(self):
         rq = resolve("/project/cil", "2026-09-11", "/project/cil/home_dirs",

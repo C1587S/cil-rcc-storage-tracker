@@ -24,7 +24,30 @@ ALLOWED_PREDICATE_KEYS = {
     # files living under a directory with this exact name anywhere in the
     # subtree (e.g. "__pycache__")
     "path_segment",
+    # pattern-based find: `include` (OR of name patterns), `exclude`
+    # (NOT any of them), inclusive size bounds. Pattern forms:
+    #   contains '*'    -> glob against the file name
+    #   starts with '.' -> suffix match (extensions; also dotfiles exactly)
+    #   otherwise       -> exact file name
+    "include", "exclude", "size_min", "size_max",
 }
+
+
+def _pattern_cond(pat: str, key: str, params: dict[str, Any]) -> str:
+    """One name-pattern to SQL, value always bound as a parameter."""
+    if not isinstance(pat, str) or not pat:
+        raise ResolverError(f"empty pattern in {key!r}")
+    if "/" in pat:
+        raise ResolverError(f"pattern {pat!r} must match a file NAME, not a path")
+    if "*" in pat:
+        like = pat.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("*", "%")
+        params[key] = like
+        return f"name LIKE %({key})s"
+    if pat.startswith("."):
+        params[key] = pat
+        return f"endsWith(name, %({key})s)"
+    params[key] = pat
+    return f"name = %({key})s"
 
 
 class ResolverError(ValueError):
@@ -131,6 +154,27 @@ def resolve(
     if "mtime_after" in predicate:
         params["mtime_after"] = _to_epoch(predicate["mtime_after"])
         conds.append("modified_time > %(mtime_after)s")
+
+    if "include" in predicate:
+        pats = predicate["include"]
+        if not isinstance(pats, list) or not pats:
+            raise ResolverError("include must be a non-empty list of name patterns")
+        ors = [_pattern_cond(pat, f"inc{i}", params) for i, pat in enumerate(pats)]
+        conds.append("(" + " OR ".join(ors) + ")")
+
+    if "exclude" in predicate:
+        pats = predicate["exclude"]
+        if not isinstance(pats, list):
+            raise ResolverError("exclude must be a list of name patterns")
+        for i, pat in enumerate(pats):
+            conds.append("NOT (" + _pattern_cond(pat, f"exc{i}", params) + ")")
+
+    if "size_min" in predicate:
+        params["size_min"] = int(predicate["size_min"])
+        conds.append("size >= %(size_min)s")
+    if "size_max" in predicate:
+        params["size_max"] = int(predicate["size_max"])
+        conds.append("size <= %(size_max)s")
 
     for i, seg in enumerate(exclude_segments or []):
         if not isinstance(seg, str) or "/" in seg or not seg:

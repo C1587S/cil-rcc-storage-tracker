@@ -403,52 +403,71 @@ export function HousekeepingView() {
 
 function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => void }) {
   const { currentUser } = useAppStore();
-  const [category, setCategory] = useState("logs");
+  const [include, setInclude] = useState(".log, .err");
+  const [exclude, setExclude] = useState("");
+  const [sizeMinMB, setSizeMinMB] = useState("");
+  const [sizeMaxMB, setSizeMaxMB] = useState("100");
   const [minAgeDays, setMinAgeDays] = useState("180");
+  const [dirSegment, setDirSegment] = useState("");
   const [scan, setScan] = useState<any | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [previewPath, setPreviewPath] = useState<string | null>(null);
-  const [preview, setPreview] = useState<any[] | null>(null);
+  const [samplePath, setSamplePath] = useState<string | null>(null);
+  const [sample, setSample] = useState<any | null>(null);
   const [campaign, setCampaign] = useState("");
+  const presets = useQuery({ queryKey: ["hk-presets"], queryFn: () => api("/candidates/presets") });
 
-  const ageParam = () => {
-    const n = parseInt(minAgeDays);
-    return Number.isFinite(n) && n > 0 ? `&min_age_days=${n}` : "";
+  const mb = (v: string): number | null => {
+    const t = v.trim();
+    if (t === "") return null;
+    const n = parseFloat(t);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n * 1024 * 1024) : null;
+  };
+  const findBody = () => ({
+    root,
+    include, exclude,
+    size_min: mb(sizeMinMB),
+    size_max: mb(sizeMaxMB),
+    min_age_days: parseInt(minAgeDays) > 0 ? parseInt(minAgeDays) : null,
+    dir_segment: dirSegment,
+  });
+
+  const applyPreset = (pr: any) => {
+    setInclude(pr.include); setExclude(pr.exclude);
+    setSizeMinMB(pr.size_min); setSizeMaxMB(pr.size_max_mb);
+    setMinAgeDays(pr.min_age_days); setDirSegment(pr.dir_segment);
+    setScan(null); setSelected(new Set()); setSamplePath(null);
   };
 
-  const load = async () => {
+  const run = async () => {
     setBusy(true);
-    setPreviewPath(null);
+    setSamplePath(null);
     try {
-      const d = await api(`/candidates?root=${encodeURIComponent(root)}&category=${category}&group_depth=2${ageParam()}`);
+      const d = await api("/candidates/find", { method: "POST", body: JSON.stringify(findBody()) });
       setScan(d);
       setSelected(new Set());
     } catch (e: any) { toast(e.message, "error"); }
     setBusy(false);
   };
 
-  const togglePreview = async (path: string) => {
-    if (previewPath === path) { setPreviewPath(null); return; }
-    setPreviewPath(path);
-    setPreview(null);
+  const toggleSample = async (path: string) => {
+    if (samplePath === path) { setSamplePath(null); return; }
+    setSamplePath(path);
+    setSample(null);
     try {
-      const d = await api(`/candidates/preview?root=${encodeURIComponent(root)}&category=${category}&path=${encodeURIComponent(path)}${ageParam()}`);
-      setPreview(d.rows);
-    } catch (e: any) { toast(e.message, "error"); setPreviewPath(null); }
+      const d = await api("/candidates/sample", {
+        method: "POST", body: JSON.stringify({ ...findBody(), path }) });
+      setSample(d);
+    } catch (e: any) { toast(e.message, "error"); setSamplePath(null); }
   };
 
   const adopt = async () => {
     setBusy(true);
     try {
-      const n = parseInt(minAgeDays);
       const d = await api("/candidates/adopt", {
         method: "POST",
-        body: JSON.stringify({
-          root, category, paths: [...selected],
-          campaign: campaign.trim() || "pilot",
-          min_age_days: Number.isFinite(n) && n > 0 ? n : null,
-        }),
+        body: JSON.stringify({ ...findBody(), paths: [...selected],
+                               campaign: campaign.trim() || null }),
       }, currentUser);
       const parts = [];
       if (d.created.length) parts.push(`${d.created.length} target(s) created`);
@@ -461,32 +480,64 @@ function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => v
     setBusy(false);
   };
 
-  const gb = (b: number) => (b / 1024 ** 3).toFixed(2);
+  const emptyNoExcludes = mb(sizeMaxMB) === 0 && !exclude.trim();
+
   return (
     <details className="border border-border/60 rounded-md">
       <summary className="px-3 py-2 text-xs font-medium cursor-pointer select-none">
-        Find candidates <span className="text-muted-foreground">— safe categories, grouped, with suggested owners</span>
+        Find files that could be cleaned up
       </summary>
-      <div className="p-3 space-y-2 border-t border-border/40">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <select className="h-8 px-2 rounded border border-border bg-transparent"
-                  value={category} onChange={e => setCategory(e.target.value)}>
-            <option value="logs">.log / .err under 100 MB</option>
-            <option value="pycache">__pycache__ contents</option>
-          </select>
-          <label className="flex items-center gap-1.5" title="Only files unmodified for at least this many days (mtime — see the Age tab caveat)">
-            <span className="text-muted-foreground">unmodified ≥</span>
-            <input className="h-8 w-16 px-2 rounded border border-border bg-transparent font-mono"
-                   value={minAgeDays} onChange={e => setMinAgeDays(e.target.value)} />
-            <span className="text-muted-foreground">days</span>
+      <div className="p-3 space-y-2 border-t border-border/40 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-muted-foreground">Presets:</span>
+          {(presets.data ?? []).map((pr: any) => (
+            <button key={pr.key}
+                    className="h-7 px-2 rounded border border-border text-muted-foreground hover:text-foreground hover:border-primary/50"
+                    onClick={() => applyPreset(pr)}>
+              {pr.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">Include names <span title="Comma-separated. .ext = extension; exact name; * = wildcard (e.g. slurm-*.out). Empty = everything.">ⓘ</span></span>
+            <input className="h-8 w-56 px-2 rounded border border-border bg-transparent font-mono"
+                   placeholder=".log, .err, slurm-*.out"
+                   value={include} onChange={e => setInclude(e.target.value)} />
           </label>
-          <span className="text-muted-foreground font-mono">{root}</span>
-          <button className="h-8 px-3 rounded bg-primary text-primary-foreground disabled:opacity-50"
-                  disabled={busy} onClick={load}>{busy ? "Scanning…" : "Scan"}</button>
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">Exclude names</span>
+            <input className="h-8 w-64 px-2 rounded border border-border bg-transparent font-mono"
+                   placeholder="__init__.py, .gitkeep, _SUCCESS"
+                   value={exclude} onChange={e => setExclude(e.target.value)} />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">Size MB (min–max)</span>
+            <span className="flex items-center gap-1">
+              <input className="h-8 w-16 px-2 rounded border border-border bg-transparent font-mono"
+                     placeholder="min" value={sizeMinMB} onChange={e => setSizeMinMB(e.target.value)} />
+              <span className="text-muted-foreground">–</span>
+              <input className="h-8 w-16 px-2 rounded border border-border bg-transparent font-mono"
+                     placeholder="max" value={sizeMaxMB} onChange={e => setSizeMaxMB(e.target.value)} />
+            </span>
+          </label>
+          <label className="flex flex-col gap-1" title="Only files unmodified for at least this many days (mtime)">
+            <span className="text-muted-foreground">Unmodified ≥ days</span>
+            <input className="h-8 w-20 px-2 rounded border border-border bg-transparent font-mono"
+                   value={minAgeDays} onChange={e => setMinAgeDays(e.target.value)} />
+          </label>
+          <label className="flex flex-col gap-1" title="Only files inside directories with exactly this name (e.g. __pycache__)">
+            <span className="text-muted-foreground">Inside dirs named</span>
+            <input className="h-8 w-32 px-2 rounded border border-border bg-transparent font-mono"
+                   value={dirSegment} onChange={e => setDirSegment(e.target.value)} />
+          </label>
+          <button className="h-8 px-4 rounded bg-primary text-primary-foreground disabled:opacity-50"
+                  disabled={busy} onClick={run}>{busy ? "Searching…" : "Find"}</button>
           {scan && selected.size > 0 && (
             <>
               <input className="h-8 w-36 px-2 rounded border border-border bg-transparent"
-                     placeholder="campaign (default: pilot)"
+                     placeholder="campaign name"
                      value={campaign} onChange={e => setCampaign(e.target.value)} />
               <button className="h-8 px-3 rounded border border-primary text-primary disabled:opacity-50"
                       disabled={busy || !currentUser} onClick={adopt}>
@@ -496,27 +547,33 @@ function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => v
           )}
         </div>
 
-        {busy && !scan && <div className="py-6 flex justify-center"><GridLoader label="Scanning category" /></div>}
+        {emptyNoExcludes && (
+          <div className="px-2.5 py-1.5 rounded border border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+            You are including empty files with no exclusions. Zero-byte pipeline sentinels
+            look identical to zero-byte garbage — exclude the sentinel names you know
+            (the "Empty files" preset fills them in).
+          </div>
+        )}
+
+        {busy && !scan && <div className="py-6 flex justify-center"><GridLoader label="Searching" /></div>}
 
         {scan && (
           <>
-            {/* The headline number — what you would report to anyone */}
             <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 px-3 py-2 rounded-md border border-border/60 bg-muted/10">
               <span className="text-base font-semibold font-mono">{scan.total_files.toLocaleString()} files</span>
               <span className="text-base font-semibold font-mono">{formatBytes(scan.total_bytes)}</span>
-              <span className="text-xs text-muted-foreground">
+              <span className="text-muted-foreground">
                 across {scan.groups_shown} group(s){scan.groups_truncated ? " (list truncated at 200 — totals cover everything)" : ""}
-                {scan.min_age_days ? ` · unmodified ≥ ${scan.min_age_days} days` : " · no age filter"}
               </span>
             </div>
             <div className="max-h-80 overflow-y-auto border border-border/40 rounded">
-              <table className="w-full text-xs">
+              <table className="w-full">
                 <thead><tr className="text-left text-muted-foreground border-b border-border/40">
                   <th className="px-2 py-1.5 w-6"></th>
                   <th className="px-2 py-1.5 w-6"></th>
                   <th className="px-2 py-1.5">Path</th>
-                  <th className="px-2 py-1.5 text-right">Size</th>
                   <th className="px-2 py-1.5 text-right">Files</th>
+                  <th className="px-2 py-1.5 text-right">Size</th>
                   <th className="px-2 py-1.5">Suggested owner</th>
                 </tr></thead>
                 <tbody>
@@ -533,36 +590,53 @@ function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => v
                         </td>
                         <td className="px-1 py-1">
                           <button className="text-muted-foreground hover:text-foreground"
-                                  title="What adopting this group would sweep, by subtree"
-                                  onClick={() => togglePreview(g.path)}>
-                            {previewPath === g.path ? "▾" : "▸"}
+                                  title="Sample: 20 real paths, subtree and extension breakdown"
+                                  onClick={() => toggleSample(g.path)}>
+                            {samplePath === g.path ? "▾" : "▸"}
                           </button>
                         </td>
                         <td className="px-2 py-1 font-mono truncate max-w-[360px]" title={g.path}>{g.path}</td>
-                        <td className="px-2 py-1 text-right font-mono">{gb(g.bytes)} GB</td>
                         <td className="px-2 py-1 text-right font-mono">{g.files.toLocaleString()}</td>
+                        <td className="px-2 py-1 text-right font-mono">{formatBytes(g.bytes)}</td>
                         <td className="px-2 py-1">
                           {g.suggest_assignment
                             ? <span>{g.suggested_owner} <span className="text-muted-foreground">({Math.round(g.owner_confidence * 100)}%)</span></span>
                             : <span className="text-muted-foreground/60">— below 60%, no suggestion</span>}
                         </td>
                       </tr>
-                      {previewPath === g.path && (
-                        <tr key={g.path + ":pv"}>
+                      {samplePath === g.path && (
+                        <tr key={g.path + ":s"}>
                           <td colSpan={6} className="border-b border-border/30 bg-muted/10 px-4 py-2">
-                            {!preview ? <span className="text-muted-foreground">loading breakdown…</span> : (
-                              <div className="space-y-0.5">
-                                <div className="text-muted-foreground mb-1">
-                                  What this sweep would take, by subtree — anything surprising here
-                                  belongs on the protection list, not in the sweep:
+                            {!sample ? <span className="text-muted-foreground">sampling…</span> : (
+                              <div className="grid gap-4 md:grid-cols-3">
+                                <div>
+                                  <div className="text-muted-foreground mb-1">By subtree — surprises here belong on the protection list:</div>
+                                  {sample.subtrees.map((r: any) => (
+                                    <div key={r.path} className="flex gap-3 font-mono">
+                                      <span className="w-20 text-right">{r.files.toLocaleString()}</span>
+                                      <span className="w-16 text-right">{formatBytes(r.bytes)}</span>
+                                      <span className="truncate" title={r.path}>{r.path.slice(g.path.length + 1) || "(direct)"}</span>
+                                    </div>
+                                  ))}
                                 </div>
-                                {preview.map((r: any) => (
-                                  <div key={r.path} className="flex gap-4 font-mono">
-                                    <span className="w-24 text-right">{r.files.toLocaleString()} files</span>
-                                    <span className="w-20 text-right">{formatBytes(r.bytes)}</span>
-                                    <span className="truncate" title={r.path}>{r.path.slice(g.path.length + 1) || "(direct)"}</span>
-                                  </div>
-                                ))}
+                                <div>
+                                  <div className="text-muted-foreground mb-1">By extension:</div>
+                                  {sample.extensions.map((r: any) => (
+                                    <div key={r.ext} className="flex gap-3 font-mono">
+                                      <span className="w-20 text-right">{r.files.toLocaleString()}</span>
+                                      <span className="w-16 text-right">{formatBytes(r.bytes)}</span>
+                                      <span>.{r.ext}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div>
+                                  <div className="text-muted-foreground mb-1">20 real paths (largest):</div>
+                                  {sample.samples.map((r: any) => (
+                                    <div key={r.path} className="font-mono truncate" title={r.path}>
+                                      {r.path.slice(g.path.length + 1) || r.path}
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             )}
                           </td>
@@ -574,13 +648,9 @@ function CandidatesPanel({ root, onAdopted }: { root: string; onAdopted: () => v
                 </tbody>
               </table>
             </div>
-            <ProtectionsLine segments={scan.protected_segments} onChanged={load} />
+            <ProtectionsLine segments={scan.protected_segments} onChanged={run} />
           </>
         )}
-        <p className="text-[10px] text-muted-foreground">
-          Empty files are deliberately excluded from every category: zero-byte pipeline
-          sentinels look identical to zero-byte garbage.
-        </p>
       </div>
     </details>
   );
@@ -1056,6 +1126,7 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
   const qc = useQueryClient();
   const [genBusy, setGenBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [estimate, setEstimate] = useState<any | null>(null);
   const [receiptBusy, setReceiptBusy] = useState(false);
   // Upload phases: byte progress during transfer, then row progress while
   // the server processes the job.
@@ -1066,6 +1137,23 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
     queryKey: ["hk-manifests", targetId],
     queryFn: () => api(`/targets/${targetId}/manifests`),
   });
+
+  // Two-step: estimate first — nobody gets a surprise 127 MB file.
+  // Small jobs proceed automatically; big ones ask.
+  const startGenerate = async () => {
+    setGenBusy(true);
+    setStatus(null);
+    setEstimate(null);
+    try {
+      const est = await api(`/manifests/${decisionId}/estimate`);
+      setEstimate(est);
+      if (!est.needs_confirmation) {
+        await generate();
+        return;
+      }
+    } catch (e: any) { setStatus(`Failed: ${e.message}`); }
+    setGenBusy(false);
+  };
 
   const generate = async () => {
     setGenBusy(true);
@@ -1150,8 +1238,8 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
     <div className="space-y-2 text-xs">
       <div className="flex flex-wrap items-center gap-2">
         <button className="h-7 px-3 rounded bg-primary text-primary-foreground disabled:opacity-50"
-                disabled={genBusy} onClick={generate}>
-          {genBusy ? "Resolving members…" : (manifests.data?.length ? "Regenerate manifests" : "Generate manifests")}
+                disabled={genBusy} onClick={startGenerate}>
+          {genBusy ? "Working…" : (manifests.data?.length ? "Regenerate manifests" : "Generate manifests")}
         </button>
         <label className="h-7 px-3 rounded border border-border flex items-center gap-1.5 cursor-pointer text-muted-foreground hover:text-foreground">
           {receiptBusy ? "Working…" : "⇪ Upload receipt (.json / .json.gz)"}
@@ -1186,6 +1274,24 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
           <span className={status.startsWith("Failed") ? "text-red-500" : "text-emerald-600"}>{status}</span>
         )}
       </div>
+
+      {estimate && (
+        <div className="px-2.5 py-1.5 rounded border border-border/60 bg-muted/10 space-y-1">
+          <div>
+            This will resolve <strong className="font-mono">{estimate.files.toLocaleString()}</strong> files
+            ({formatBytes(estimate.bytes)}) into <strong>{estimate.manifest_count}</strong> per-owner
+            manifest(s), ≈ <strong>{formatBytes(estimate.est_gz_bytes)}</strong> as .json.gz
+            ({formatBytes(estimate.est_raw_bytes)} uncompressed).
+            {"  "}Extensions: {estimate.extensions.map((e: any) => `.${e.ext} ${e.files.toLocaleString()}`).join(", ")}.
+          </div>
+          {estimate.needs_confirmation && !genBusy && (
+            <button className="h-7 px-3 rounded bg-primary text-primary-foreground"
+                    onClick={generate}>
+              Confirm — write {estimate.manifest_count} manifest(s)
+            </button>
+          )}
+        </div>
+      )}
 
       {manifests.isLoading ? (
         <span className="text-muted-foreground">loading manifests…</span>
