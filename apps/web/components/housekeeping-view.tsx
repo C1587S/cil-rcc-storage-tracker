@@ -1310,9 +1310,13 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
                 <td className="py-1 pr-4 text-right font-mono">{(m.files ?? 0).toLocaleString()} files</td>
                 <td className="py-1 pr-4 text-right font-mono">{formatBytes(m.bytes ?? 0)}</td>
                 <td className="py-1 pr-4 text-muted-foreground">{m.generated_at?.slice(0, 10)} (snap {m.snapshot_date})</td>
+                <td className="py-1 pr-4">
+                  <CopyRunCommand manifestId={m.manifest_id} />
+                </td>
                 <td className="py-1">
                   <a className="text-primary hover:underline"
-                     href={`${API_BASE_URL}/api/housekeeping/manifests/${m.manifest_id}`} download>
+                     href={`${API_BASE_URL}/api/housekeeping/manifests/${m.manifest_id}`} download
+                     title="Offline path: download the manifest file and run hk-executor --manifest <file>">
                     download
                   </a>
                 </td>
@@ -1322,13 +1326,40 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
         </table>
       )}
       <div className="text-[10px] text-muted-foreground">
-        On a Midway login node: <code>hk-executor --manifest &lt;file&gt;</code> (dry run) →
-        <code>--quarantine</code> (add <code>--delegate</code> when running others' manifests) →
-        upload the receipt here. After the 30-day grace: <code>--purge-quarantine</code> deletes
-        the held copies (refuses early unless <code>--force</code>) — upload that receipt too and
-        the registry marks them purged. Full instructions are embedded in each manifest.
+        <strong>copy command</strong> gives the whole round trip in one paste: the executor
+        fetches the manifest over HTTPS, and after the run uploads the receipt by itself
+        (<code>--no-upload</code> keeps it local). Dry run by default — add
+        <code>--quarantine</code> (plus <code>--delegate</code> for others' files) to act.
+        After the 30-day grace: <code>--purge-quarantine</code> deletes the held copies
+        (refuses early unless <code>--force</code>). Offline fallback: <strong>download</strong> the
+        file and run <code>hk-executor --manifest &lt;file&gt;</code>, then upload the receipt here.
       </div>
     </div>
+  );
+}
+
+
+/** One-paste handoff to the cluster: fetches the complete run command
+ *  (token rides an env var, not argv — argv is world-readable in `ps` on
+ *  shared login nodes) and puts it on the clipboard. */
+function CopyRunCommand({ manifestId }: { manifestId: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      className={cn("text-[11px] hover:underline whitespace-nowrap",
+        copied ? "text-emerald-600 font-medium" : "text-primary")}
+      title="Copy the complete hk-executor command: fetches this manifest over HTTPS and uploads the receipt automatically when done"
+      onClick={async () => {
+        try {
+          const d = await api(`/manifests/${manifestId}/command`);
+          await navigator.clipboard.writeText(d.command);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        } catch (e: any) { toast(e.message, "error"); }
+      }}
+    >
+      {copied ? "copied!" : "copy command"}
+    </button>
   );
 }
 
