@@ -79,6 +79,7 @@ case "${1:-all}" in
         echo ""
 
         # Process each date
+        IMPORT_FAILURES=""
         for SNAPSHOT_DATE in $DATES; do
             echo "=========================================="
             echo "Processing snapshot date: $SNAPSHOT_DATE"
@@ -100,20 +101,32 @@ case "${1:-all}" in
             # We need to pass each source directory separately
             SOURCE_DIRS=$(find "$SCANS_DIR" -path "*/$SNAPSHOT_DATE" -type d | sort)
 
-            # Import each source directory
+            # Import each source directory. A failed or empty source must
+            # never abort the whole run: one poisoned stale date would then
+            # block every NEWER date forever (this jammed the pipeline for a
+            # week once). Record failures, keep going, exit nonzero at the end.
             FIRST_IMPORT=true
             for source_dir in $SOURCE_DIRS; do
                 # Convert to container path
                 CONTAINER_PATH="/scans/${source_dir#$SCANS_DIR/}"
                 SOURCE_NAME=$(basename "$(dirname "$source_dir")")
+
+                if ! ls "$source_dir"/*.parquet >/dev/null 2>&1; then
+                    echo "  [skip] $SOURCE_NAME/$SNAPSHOT_DATE: directory has no parquet files"
+                    continue
+                fi
                 echo "Importing: $SOURCE_NAME"
 
                 # Only clear data on first import, append for subsequent imports
                 if [ "$FIRST_IMPORT" = true ]; then
-                    docker compose run --rm importer python scripts/import_snapshot.py "$CONTAINER_PATH"
-                    FIRST_IMPORT=false
+                    if docker compose run --rm importer python scripts/import_snapshot.py "$CONTAINER_PATH"; then
+                        FIRST_IMPORT=false
+                    else
+                        IMPORT_FAILURES="$IMPORT_FAILURES $SNAPSHOT_DATE/$SOURCE_NAME"
+                    fi
                 else
-                    docker compose run --rm importer python scripts/import_snapshot.py "$CONTAINER_PATH" --no-clear
+                    docker compose run --rm importer python scripts/import_snapshot.py "$CONTAINER_PATH" --no-clear \
+                        || IMPORT_FAILURES="$IMPORT_FAILURES $SNAPSHOT_DATE/$SOURCE_NAME"
                 fi
             done
 
@@ -180,6 +193,14 @@ case "${1:-all}" in
             echo ""
         done
 
+        if [ -n "$IMPORT_FAILURES" ]; then
+            echo "=========================================="
+            echo "FAILED source imports:$IMPORT_FAILURES"
+            echo "Other dates were still processed; fix or remove the listed"
+            echo "date directories under cil_scans/ and re-run."
+            echo "=========================================="
+            exit 1
+        fi
         echo "=========================================="
         echo "All snapshots imported successfully!"
         echo "=========================================="
