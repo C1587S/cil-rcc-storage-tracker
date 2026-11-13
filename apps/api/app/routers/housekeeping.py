@@ -2,8 +2,12 @@
 
 State lives in Postgres; facts resolve against ClickHouse via the selector
 resolver. Every write goes through one transaction that also appends the
-audit event. The actor comes from the X-User header (same identity the
-login gate validates) and must exist in `person`.
+audit event.
+
+Access: every state-changing route requires the operator key (see
+app.security.housekeeping_guard, applied router-wide). The X-User header
+only labels who the operator says is acting, for the audit trail; it is
+validated for format but is NOT authenticated and grants nothing.
 """
 import csv
 import io
@@ -11,11 +15,12 @@ import json
 import subprocess
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.db.clickhouse import get_client
+from app.security import housekeeping_guard, normalize_username
 from app.housekeeping import db as hk
 from app.housekeeping import manifests as mf
 from app.housekeeping import pilot
@@ -24,7 +29,8 @@ from app.housekeeping.resolver import (
     ResolverError, members_sql, resolve, rollup_sql,
 )
 
-router = APIRouter(prefix="/api/housekeeping", tags=["housekeeping"])
+router = APIRouter(prefix="/api/housekeeping", tags=["housekeeping"],
+                   dependencies=[Depends(housekeeping_guard)])
 
 # Archive destination and the headroom below which the archive verdict is
 # offered. Derived live from the scan — never a config flag.
@@ -38,7 +44,9 @@ def _actor(x_user: str | None, conn) -> str:
         raise HTTPException(status_code=401, detail=(
             "Your session has no identity attached — reload the page or sign in"
             " again. If it keeps happening, log out and back in."))
-    username = x_user.strip().lower()
+    username = normalize_username(x_user)
+    if username is None:
+        raise HTTPException(status_code=400, detail="Invalid username in session — sign in again.")
     row = conn.execute("SELECT username FROM person WHERE username = %s", (username,)).fetchone()
     if not row:
         # First sight of a gate-validated user: auto-register.
@@ -384,20 +392,25 @@ def target_manifests(target_id: int):
 
 @router.get("/manifests/{manifest_id}/command")
 def run_command(manifest_id: str, x_user: str | None = Header(default=None)):
-    """The complete pasteable command for a Midway login node. The token
-    rides an environment variable, not argv — argv is world-readable in
-    `ps` on shared nodes."""
+    """The complete pasteable command for a Midway login node (operator only).
+
+    The executor token is never sent over HTTP. The command reads it from a
+    private file the operator keeps on the cluster (~/.hk_exec_token, mode
+    600, same value as HK_EXEC_TOKEN in the server .env). It rides an
+    environment variable, not argv, because argv is world-readable in `ps`
+    on shared nodes."""
     import os as _os
     with hk.tx() as conn:
         _actor(x_user, conn)
     if mf.manifest_file(manifest_id) is None:
         raise HTTPException(status_code=404, detail="manifest not found")
-    token = _os.environ.get("HK_EXEC_TOKEN", "")
-    if not token:
+    if not _os.environ.get("HK_EXEC_TOKEN", ""):
         raise HTTPException(status_code=503, detail="HK_EXEC_TOKEN is not set in the server .env")
     return {"command": (
-        f"HK_TOKEN={token} ./scanner/target/release/hk-executor --manifest-id {manifest_id}"
-    ), "note": "dry run by default; add --quarantine (and --delegate for others' files) to act, "
+        'HK_TOKEN="$(cat ~/.hk_exec_token)" '
+        f"./scanner/target/release/hk-executor --manifest-id {manifest_id}"
+    ), "note": "reads the executor token from ~/.hk_exec_token on the cluster (create once, chmod 600); "
+               "dry run by default; add --quarantine (and --delegate for others' files) to act, "
                "--no-upload to keep the receipt local"}
 
 
@@ -412,31 +425,32 @@ def download_manifest(manifest_id: str):
 
 
 @router.post("/receipts")
-async def upload_receipt(request: Request, x_user: str | None = Header(default=None),
-                         x_exec_token: str | None = Header(default=None)):
+async def upload_receipt(request: Request, x_user: str | None = Header(default=None)):
     """Accepts the executor's receipt (.receipt.json or .json.gz), returns a
     job id immediately, and processes in the background. Poll
     /receipts/jobs/{id}.
 
-    Two credentials, deliberately simple (single-operator model):
-    - the browser path sends X-User (the login-gate identity), as before;
-    - the executor path sends X-Exec-Token, compared against the one
-      HK_EXEC_TOKEN in the server's .env. One operator, one token; if this
-      ever becomes several operators, revisit — until then any more auth
-      is code maintained for nobody.
+    Access (enforced by housekeeping_guard): the executor sends X-Exec-Token
+    (HK_EXEC_TOKEN); the dashboard upload sends the operator key. X-User
+    alone is never enough.
     """
-    import os as _os
-    if x_exec_token is not None:
-        expected = _os.environ.get("HK_EXEC_TOKEN", "")
-        if not expected or x_exec_token != expected:
-            raise HTTPException(status_code=401, detail="invalid executor token — recopy the run command from the dashboard")
     with hk.tx() as conn:
         actor = _actor(x_user, conn)
-    raw = await request.body()
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > rcpt.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="receipt upload too large")
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf.extend(chunk)
+        if len(buf) > rcpt.MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="receipt upload too large")
+    raw = bytes(buf)
     if not raw:
         raise HTTPException(status_code=422, detail="empty upload — send the receipt file as the request body")
+    import asyncio
     try:
-        return rcpt.start_job(raw, actor)
+        # Decompress + parse up to ~1 GB off the event loop.
+        return await asyncio.to_thread(rcpt.start_job, raw, actor)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

@@ -4,6 +4,7 @@ import time
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.security import normalize_username
 from app.settings import get_settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -50,9 +51,11 @@ class ValidateRequest(BaseModel):
 @router.post("/validate")
 async def validate_user(body: ValidateRequest):
     """Check if a username is in the allowed list."""
-    username = body.username.strip().lower()
-    if not username:
+    if not body.username.strip():
         raise HTTPException(status_code=400, detail="Username required")
+    username = normalize_username(body.username)
+    if username is None:
+        raise HTTPException(status_code=400, detail="Username not recognized")
 
     settings = get_settings()
     additional = [u.lower() for u in settings.get_allowed_users_list()]

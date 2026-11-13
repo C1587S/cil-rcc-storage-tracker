@@ -7,8 +7,9 @@ import urllib.request
 import ssl
 from datetime import date
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.security import require_operator
 from app.settings import get_settings
 
 router = APIRouter(prefix="/api/computing", tags=["computing"])
@@ -136,7 +137,7 @@ async def get_latest_report():
     return data
 
 
-@router.post("/ingest")
+@router.post("/ingest", dependencies=[Depends(require_operator)])
 async def ingest_latest():
     """Fetch latest report and store historical data in ClickHouse."""
     import asyncio

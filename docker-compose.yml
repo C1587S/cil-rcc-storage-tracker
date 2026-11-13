@@ -274,9 +274,13 @@ services:
       CORS_ORIGINS: http://localhost:3000,http://localhost:3001
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       ALLOWED_USERS: ${ALLOWED_USERS:-}
-      # Single-operator executor credential (see /receipts): lives ONLY in
-      # the untracked .env, embedded into the copied run command.
+      # Secrets live ONLY in the untracked .env (see app/security.py).
+      # HK_EXEC_TOKEN: executor receipt uploads; kept on the cluster in
+      #   ~/.hk_exec_token, never sent back by the API.
+      # HK_OPERATOR_KEY: required for every housekeeping change and the
+      #   record exports; unset = those operations are disabled.
       HK_EXEC_TOKEN: ${HK_EXEC_TOKEN:-}
+      HK_OPERATOR_KEY: ${HK_OPERATOR_KEY:-}
 
     depends_on:
       clickhouse:

@@ -31,8 +31,8 @@ struct Args {
     manifest: Option<PathBuf>,
     /// Fetch the manifest from the dashboard over HTTPS instead of a file,
     /// and upload the receipt automatically on completion. Uses the system
-    /// curl. Env: HK_TOKEN (from the copied command), HK_SERVER (default
-    /// https://s-cs.dev/cil-rcc-tracker).
+    /// curl. Env: HK_TOKEN (the copied command reads it from
+    /// ~/.hk_exec_token), HK_SERVER (default https://s-cs.dev/cil-rcc-tracker).
     #[arg(long)]
     manifest_id: Option<String>,
     /// With --manifest-id: keep the receipt local instead of uploading it.
@@ -347,8 +347,9 @@ purging anyway because --force was given. These files become unrecoverable.");
     if args.manifest_id.is_some() && !args.no_upload {
         let token = std::env::var("HK_TOKEN").unwrap_or_default();
         if token.is_empty() {
-            eprintln!("HK_TOKEN not set — receipt NOT uploaded. Copy the run command from the");
-            eprintln!("dashboard drawer (it includes the token), or upload the receipt file there.");
+            eprintln!("HK_TOKEN not set — receipt NOT uploaded. Put the executor token in");
+            eprintln!("~/.hk_exec_token (chmod 600) and use the copied run command, or upload");
+            eprintln!("the receipt file in the dashboard drawer.");
         } else {
             let user = std::env::var("USER").unwrap_or_default();
             let url = format!("{server}/api/housekeeping/receipts");

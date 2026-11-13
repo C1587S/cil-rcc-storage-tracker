@@ -73,10 +73,13 @@ ROLLUP_FILE="$BACKUP_DIR/daily_rollup-$STAMP.csv"
 
 # --- 2b. Human-readable record: the archive must outlive the app.
 # JSON = complete structured record; CSV = flat chronological ledger.
+# The exports are operator-only; the key goes to curl on stdin (-K -) so
+# it never appears in the process list.
 log "Exporting the record..."
-if curl -sf --compressed "http://localhost:8000/api/housekeeping/archive.json" \
+op_curl() { printf 'header = "X-Operator-Key: %s"\n' "${HK_OPERATOR_KEY:-}" | curl -K - "$@"; }
+if op_curl -sf --compressed "http://localhost:8000/api/housekeeping/archive.json" \
      -o "$BACKUP_DIR/housekeeping-archive-$STAMP.json.tmp" &&
-   curl -sf "http://localhost:8000/api/housekeeping/archive.csv" \
+   op_curl -sf "http://localhost:8000/api/housekeeping/archive.csv" \
      -o "$BACKUP_DIR/housekeeping-ledger-$STAMP.csv.tmp"; then
   mv "$BACKUP_DIR/housekeeping-archive-$STAMP.json.tmp" "$BACKUP_DIR/housekeeping-archive-$STAMP.json"
   mv "$BACKUP_DIR/housekeeping-ledger-$STAMP.csv.tmp" "$BACKUP_DIR/housekeeping-ledger-$STAMP.csv"

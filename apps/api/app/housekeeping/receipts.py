@@ -16,6 +16,7 @@ import json
 import pathlib
 import threading
 import traceback
+import zlib
 
 from app.housekeeping import db as hk
 from app.housekeeping import manifests as mf
@@ -23,13 +24,32 @@ from app.housekeeping import manifests as mf
 RECEIPT_DIR = pathlib.Path("/backups/receipts")
 BATCH = 5000
 
+# A real 400K-entry receipt is ~110 MB of JSON (~6 MB gzipped). The caps
+# leave ample headroom while making a gzip bomb or a huge body harmless.
+MAX_UPLOAD_BYTES = 256 * 1024**2
+MAX_RECEIPT_BYTES = 1024**3
+
+
+def decode_receipt_bytes(raw: bytes) -> str:
+    """Bytes (plain or gzip) to text, refusing anything over MAX_RECEIPT_BYTES."""
+    if raw[:2] == b"\x1f\x8b":
+        d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        data = d.decompress(raw, MAX_RECEIPT_BYTES + 1)
+        if len(data) > MAX_RECEIPT_BYTES or d.unconsumed_tail:
+            raise ValueError("receipt is too large once decompressed")
+    else:
+        if len(raw) > MAX_RECEIPT_BYTES:
+            raise ValueError("receipt is too large")
+        data = raw
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise ValueError("receipt is not UTF-8 text") from e
+
 
 def start_job(raw: bytes, actor: str) -> dict:
     """Store the upload, register the job, kick off processing. Fast."""
-    if raw[:2] == b"\x1f\x8b":
-        text = gzip.decompress(raw).decode("utf-8")
-    else:
-        text = raw.decode("utf-8")
+    text = decode_receipt_bytes(raw)
     try:
         receipt = json.loads(text)
     except json.JSONDecodeError as e:

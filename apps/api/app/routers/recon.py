@@ -17,15 +17,18 @@ two years" is NOT "unused".
 import json
 import time
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
 from app.cache import LRUCache
 from app.db.clickhouse import get_client
 from app.housekeeping import db as hk
 from app.housekeeping.resolver import KNOWN_ROOTS
+from app.security import housekeeping_guard, normalize_username
 
-router = APIRouter(prefix="/api/housekeeping/recon", tags=["housekeeping-recon"])
+# Reads are open; dismissals and list edits need the operator key.
+router = APIRouter(prefix="/api/housekeeping/recon", tags=["housekeeping-recon"],
+                   dependencies=[Depends(housekeeping_guard)])
 _cache = LRUCache(maxsize=256)
 
 
@@ -470,7 +473,9 @@ def _actor(conn, x_user: str | None) -> str:
         raise HTTPException(status_code=401, detail=(
             "Your session has no identity attached — reload the page or sign in"
             " again. If it keeps happening, log out and back in."))
-    u = x_user.strip().lower()
+    u = normalize_username(x_user)
+    if u is None:
+        raise HTTPException(status_code=400, detail="Invalid username in session — sign in again.")
     conn.execute("INSERT INTO person (username) VALUES (%s) ON CONFLICT DO NOTHING", (u,))
     return u
 
