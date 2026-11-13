@@ -33,8 +33,11 @@ DUMP="$BACKUP_DIR/.restore-check.sql"
 if [ -n "${R2_ENDPOINT:-}" ] && [ -n "${R2_BUCKET:-}" ]; then
   R2="python3 $PROJECT_ROOT/scripts/r2util.py"
   LATEST_KEY=""
+  # "housekeeping-2" = timestamped SQL dumps only. The bare "housekeeping-"
+  # prefix also matches housekeeping-archive-*/housekeeping-ledger-*, which
+  # sort after the dumps and would be picked as the "latest dump".
   for PREFIX in hourly daily monthly; do
-    LATEST_KEY=$($R2 latest "$PREFIX/housekeeping-" 2>/dev/null) && [ -n "$LATEST_KEY" ] && break
+    LATEST_KEY=$($R2 latest "$PREFIX/housekeeping-2" 2>/dev/null) && [ -n "$LATEST_KEY" ] && break
   done
   if [ -z "$LATEST_KEY" ]; then
     echo "FAIL: R2 configured but no dump found under hourly/, daily/ or monthly/"; exit 1
@@ -48,13 +51,28 @@ else
   fi
   echo "Using local dump: $LOCAL (R2 not configured)"
   cp "$LOCAL" "$DUMP"
+  LATEST_KEY="$LOCAL"
 fi
+
+# --- freshness: backups run hourly, so the newest dump must be recent ---
+MAX_AGE_HOURS="${MAX_DUMP_AGE_HOURS:-26}"
+STAMP=$(basename "$LATEST_KEY" | grep -oE '[0-9]{8}-[0-9]{6}' | head -1 || true)
+if [ -z "$STAMP" ]; then
+  echo "FAIL: cannot read a timestamp from dump name '$LATEST_KEY'"; rm -f "$DUMP"; exit 1
+fi
+DUMP_EPOCH=$(date -d "${STAMP:0:8} ${STAMP:9:2}:${STAMP:11:2}:${STAMP:13:2}" +%s)
+AGE_HOURS=$(( ($(date +%s) - DUMP_EPOCH) / 3600 ))
+if [ "$AGE_HOURS" -gt "$MAX_AGE_HOURS" ]; then
+  echo "FAIL: newest dump is ${AGE_HOURS}h old (limit ${MAX_AGE_HOURS}h) — backups have stopped"
+  rm -f "$DUMP"; exit 1
+fi
+echo "Dump age: ${AGE_HOURS}h"
 
 # --- restore into a scratch database ---
 docker compose exec -T postgres psql -U housekeeping -d postgres -q -c \
   "DROP DATABASE IF EXISTS hk_restore_check" -c "CREATE DATABASE hk_restore_check"
 docker compose exec -T postgres psql -U housekeeping -d hk_restore_check -q \
-  < "$DUMP" > /dev/null
+  -v ON_ERROR_STOP=1 < "$DUMP" > /dev/null
 
 # --- count and compare ---
 FAIL=0
@@ -67,6 +85,8 @@ for T in person target assignment decision execution event; do
     echo "FAIL: $T — restored count unreadable ('$REST')"; FAIL=1
   elif [ "$REST" -gt "$LIVE" ]; then
     echo "FAIL: $T — restored $REST > live $LIVE (wrong dump?)"; FAIL=1
+  elif [ "$REST" -eq 0 ] && [ "$LIVE" -gt 0 ]; then
+    echo "FAIL: $T — restored 0 rows but live has $LIVE (empty or wrong dump)"; FAIL=1
   else
     echo "ok:   $T — restored $REST (live $LIVE)"
   fi
