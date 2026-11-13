@@ -65,6 +65,7 @@ cil_scans.zip
 Thumbs.db
 .ipynb_checkpoints/
 logs/*.log
+logs/bench/
 cleanup/
 nohup.out
 backups/
