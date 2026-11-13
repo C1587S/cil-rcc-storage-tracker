@@ -12,10 +12,21 @@ language model runs **entirely in the user's browser**. It:
 - uses the real schema and metadata as context;
 - explains a query in plain language to users who don't know SQL.
 
-The approach is **model-driven**: dialect adaptation and error correction
-are done by the model, not by hand-written translation rules. The runtime
-(WebLLM or Transformers.js) and the model are chosen later, on measured
-accuracy, speed, browser coverage and resource needs.
+The approach is **model-driven, with a deterministic fallback**:
+
+1. **The local LLM is the primary assistant.** It handles natural-language
+   questions, SQL generation, dialect adaptation and iterative error
+   correction.
+2. **SQLGlot is an optional fallback** for translating existing SQL
+   between ClickHouse and BigQuery. It is used when the model is
+   unavailable (no WebGPU, not downloaded, too little memory) or when its
+   adaptation fails validation.
+3. **The manual SQL editor is always available**, with or without either
+   of the above.
+
+There are no external AI inference APIs. The runtime (WebLLM or
+Transformers.js) and the model are chosen later, on measured accuracy,
+speed, browser coverage and resource needs.
 
 **The model is never trusted for security.** Server-side validation,
 read-only permissions, resource limits and cost controls stay exactly as
@@ -149,16 +160,37 @@ untrusted input, the same as a hand-typed one:
   the browser, questions never leave the user's device; the prompt holds
   schema and descriptions, not data.
 
-## 7. Devices without WebGPU
+## 7. Fallbacks: model unavailable or failing
 
-In order:
-1. A smaller model on WASM (0.5B), for short tasks such as explanation
-   or small fixes, with a clear "slow on this device" notice.
-2. The existing form-based query builder in the Search Console, which
-   needs no model.
-3. Optionally, an external API if explicitly configured. It is off by
-   default once the local assistant is adopted. There is no
-   always-running inference server.
+The goal is a seamless experience. Each step is offered automatically
+when the previous one is not available:
+
+| Need | Primary | Fallback |
+|---|---|---|
+| Question → SQL | Local LLM (WebGPU) | Small model on WASM (0.5B), with a "slow on this device" notice; then the form-based query builder in the Search Console |
+| Adapt existing SQL between ClickHouse and BigQuery | Local LLM | **SQLGlot** transpilation (deterministic) |
+| Fix an error | Local LLM repair loop | The server's validation/database message shown as-is; manual edit |
+| Explain a query | Local LLM | — (the query stays editable) |
+| Anything | — | **Manual SQL editor, always available** |
+
+**SQLGlot as the fallback translator:**
+- It is used only for dialect adaptation of a query that already
+  exists.
+- It runs where the server already runs Python (an endpoint such as
+  `/api/sql/translate`, rate-limited). No inference server is needed.
+- Its output goes through the same server validation as everything
+  else.
+- It is known to pass some ClickHouse functions through untranslated
+  (e.g. `isNaN`, `arrayReverse`, `JSONExtractString`), and it does not
+  detect semantic differences such as integer division, NULL ordering
+  or time zones. The UI marks the result as "translated automatically —
+  review before running", and a validation failure is shown with the
+  translated text.
+- A small project test suite (pairs of known-equivalent queries from the
+  evaluation set) checks the dialect pairs the dashboard relies on.
+
+An external API is not part of the design. It could only ever be
+enabled by explicit configuration, and is off by default.
 
 ## 8. Milestones (on a separate `experiment/` branch)
 

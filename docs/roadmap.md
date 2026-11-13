@@ -15,7 +15,7 @@ eventually be owned by the Climate Impact Lab rather than a personal account.
 | 5. Query performance | Measured ([performance.md](performance.md)). Voronoi filter-then-join implemented (9–10×, identical results), to deploy after the next import. Next: sort-key subtree filters (11–27×), import-time rollups |
 | 6. Low-cost hosting and ownership | Planned (below) |
 | 7. BigQuery experiment | Designed, not started ([bigquery-experiment.md](bigquery-experiment.md)) |
-| 8. Self-hosted SQL assistant | Designed, not started ([sql-assistant-experiment.md](sql-assistant-experiment.md)): model-driven, in the browser (WebLLM or Transformers.js, small quantized model) for question→SQL, ClickHouse↔BigQuery adaptation, error repair and plain-language explanations; no external AI API or inference server; server-side validation, read-only accounts, limits and cost controls independent of the model |
+| 8. Self-hosted SQL assistant | Designed, not started ([sql-assistant-experiment.md](sql-assistant-experiment.md)): local LLM in the browser (WebLLM or Transformers.js, small quantized model) as the primary assistant for question→SQL, ClickHouse↔BigQuery adaptation, error repair and plain-language explanations; SQLGlot as an optional deterministic fallback for translating existing SQL; the manual SQL editor always available; no external AI inference API; server-side validation, read-only accounts, limits and cost controls independent of the model |
 
 ## Low-cost hosting objective: about $0–10/month
 
