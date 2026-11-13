@@ -1,12 +1,11 @@
 """Projections monitoring API — live data proxy for pi-mgreenst projection runs."""
 import json
 import time
-import urllib.request
-import ssl
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from app.settings import get_settings
+from app import rcc_tls
 
 router = APIRouter(prefix="/api/projections", tags=["projections"])
 
@@ -44,12 +43,8 @@ def _fetch_report() -> dict | None:
         return _cache["data"] or _load_from_disk()
 
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        req = urllib.request.Request(url, headers={"User-Agent": "cil-tracker/1.0"})
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            data = json.loads(resp.read().decode())
+        # Verified TLS, else pinned RCC key (see app/rcc_tls.py).
+        data = json.loads(rcc_tls.fetch(url, timeout=15).decode())
         _cache["data"] = data
         _cache["ts"] = now
         _save_to_disk(data)

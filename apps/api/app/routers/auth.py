@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.security import normalize_username
 from app.settings import get_settings
+from app import rcc_tls
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -21,8 +22,6 @@ def _fetch_group_members() -> list[str]:
         return _group_cache["members"]
 
     import json
-    import ssl
-    import urllib.request
 
     settings = get_settings()
     url = settings.computing_report_url
@@ -30,12 +29,8 @@ def _fetch_group_members() -> list[str]:
         return _group_cache["members"] or []
 
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        req = urllib.request.Request(url, headers={"User-Agent": "cil-tracker/1.0"})
-        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
-            data = json.loads(resp.read().decode())
+        # Verified TLS, else pinned RCC key (see app/rcc_tls.py).
+        data = json.loads(rcc_tls.fetch(url, timeout=10).decode())
         members = data.get("group_members", [])
         _group_cache["members"] = members
         _group_cache["fetched_at"] = now

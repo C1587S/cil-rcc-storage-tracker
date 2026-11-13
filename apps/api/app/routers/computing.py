@@ -3,8 +3,6 @@ import json
 import time
 import os
 import threading
-import urllib.request
-import ssl
 from datetime import date
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.security import require_operator
 from app.settings import get_settings
 from app.errors import internal_error
+from app import rcc_tls
 
 router = APIRouter(prefix="/api/computing", tags=["computing"])
 
@@ -98,12 +97,8 @@ def _fetch_report() -> dict | None:
         return _cache["data"] or _load_from_disk()
 
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        req = urllib.request.Request(url, headers={"User-Agent": "cil-tracker/1.0"})
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            data = json.loads(resp.read().decode())
+        # Verified TLS, else pinned RCC key (see app/rcc_tls.py).
+        data = json.loads(rcc_tls.fetch(url, timeout=15).decode())
         _backfill_quotas(data)
         _cache["data"] = data
         _cache["ts"] = now

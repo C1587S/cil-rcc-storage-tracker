@@ -15,6 +15,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOG_DIR="${PROJECT_ROOT}/logs"
 LOG_FILE="${LOG_DIR}/auto-update.log"
 RCC_URL="https://users.rcc.uchicago.edu/~cadavidsanchez/cil_scans"
+# TLS to RCC: verified, else pinned key — never plain -k (scripts/lib/rcc-curl.sh)
+source "${SCRIPT_DIR}/lib/rcc-curl.sh"
 LOCK_FILE="/tmp/dev-tracker-update.lock"
 
 # Load ClickHouse password from .env
@@ -61,7 +63,7 @@ fi
 echo "Checking RCC public URL for latest scan..."
 # Anchor on gcp_ (a core daily source): out-of-band sources like cds3 are
 # published on their own schedule and must not advance the snapshot date.
-NEW_DATE=$(curl -sk "${RCC_URL}/" \
+NEW_DATE=$(rcc_curl -s "${RCC_URL}/" \
   | grep -oP '(?<=href=")gcp_\d{4}-\d{2}-\d{2}_chunk' \
   | grep -oP '\d{4}-\d{2}-\d{2}' \
   | sort -u | tail -1)
@@ -147,7 +149,7 @@ echo ""
 echo "--- Step 1b: cds3 carry-forward ---"
 CDS3_DIR="${PROJECT_ROOT}/cil_scans/cds3/${NEW_DATE}"
 if ls "${CDS3_DIR}"/*.parquet >/dev/null 2>&1 && \
-   ! curl -sk "${RCC_URL}/cds3_${NEW_DATE}_manifest.json" | grep -q '"completed": *true'; then
+   ! rcc_curl -s "${RCC_URL}/cds3_${NEW_DATE}_manifest.json" | grep -q '"completed": *true'; then
   echo "cds3 files for ${NEW_DATE} are from an unfinished scan — discarding."
   rm -rf "$CDS3_DIR"
 fi
@@ -155,10 +157,10 @@ if ls "${CDS3_DIR}"/*.parquet >/dev/null 2>&1; then
   echo "cds3 scan for ${NEW_DATE} is complete and downloaded."
 else
   CDS3_DATE=""
-  for d in $(curl -sk "${RCC_URL}/" \
+  for d in $(rcc_curl -s "${RCC_URL}/" \
       | grep -oP '(?<=href=")cds3_\d{4}-\d{2}-\d{2}_manifest\.json' \
       | grep -oP '\d{4}-\d{2}-\d{2}' | sort -ur); do
-    if curl -sk "${RCC_URL}/cds3_${d}_manifest.json" | grep -q '"completed": *true'; then
+    if rcc_curl -s "${RCC_URL}/cds3_${d}_manifest.json" | grep -q '"completed": *true'; then
       CDS3_DATE="$d"
       break
     fi
@@ -169,10 +171,10 @@ else
     echo "Using completed cds3 scan from ${CDS3_DATE} for snapshot ${NEW_DATE}."
     mkdir -p "$CDS3_DIR"
     CDS3_OK=true
-    for f in $(curl -sk "${RCC_URL}/" \
+    for f in $(rcc_curl -s "${RCC_URL}/" \
         | grep -oP "(?<=href=\")cds3_${CDS3_DATE}_chunk_[0-9]+\.parquet" | sort -u); do
       echo "  downloading ${f}"
-      if ! curl -skf "${RCC_URL}/${f}" -o "${CDS3_DIR}/${f}"; then
+      if ! rcc_curl -sf "${RCC_URL}/${f}" -o "${CDS3_DIR}/${f}"; then
         echo "  ERROR downloading ${f}"
         CDS3_OK=false
         break

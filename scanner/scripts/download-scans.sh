@@ -12,6 +12,8 @@
 # Resolve project root (two levels up from this script)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# TLS to RCC: verified, else pinned key — never plain -k (scripts/lib/rcc-curl.sh)
+source "${PROJECT_ROOT}/scripts/lib/rcc-curl.sh"
 
 set -e
 
@@ -21,7 +23,7 @@ DATE="${2:-}"
 # If no date given, detect from the listing
 if [ -z "$DATE" ]; then
   echo "Detecting available dates from ${BASE_URL}..."
-  DATE=$(curl -sk "${BASE_URL}/" \
+  DATE=$(rcc_curl -s "${BASE_URL}/" \
     | grep -oP '(?<=href=")[^"]+_\d{4}-\d{2}-\d{2}_chunk' \
     | grep -oP '\d{4}-\d{2}-\d{2}' \
     | sort -u \
@@ -45,7 +47,7 @@ echo "=========================================="
 echo ""
 
 # Get full file listing for this date
-FILES=$(curl -sk "${BASE_URL}/" \
+FILES=$(rcc_curl -s "${BASE_URL}/" \
   | grep -oP "(?<=href=\")[^\"]*_${DATE}_chunk_[0-9]+\.parquet" \
   | sort -u)
 
@@ -97,7 +99,7 @@ for FILE in $FILES; do
   # Download with retries
   SUCCESS=false
   for attempt in $(seq 1 $MAX_RETRIES); do
-    HTTP=$(curl -sk --connect-timeout 30 --max-time 300 -o "${DEST_FILE}" -w "%{http_code}" "${BASE_URL}/${FILE}" 2>/dev/null) || HTTP="000"
+    HTTP=$(rcc_curl -s --connect-timeout 30 --max-time 300 -o "${DEST_FILE}" -w "%{http_code}" "${BASE_URL}/${FILE}" 2>/dev/null) || HTTP="000"
 
     if [ "$HTTP" = "200" ] && [ -s "${DEST_FILE}" ]; then
       SIZE=$(du -sh "${DEST_FILE}" 2>/dev/null | cut -f1)
@@ -177,7 +179,7 @@ for f in bad:
       FILE=$(basename "$bad_file")
       SOURCE=$(echo "$FILE" | sed "s/_${DATE}_chunk_[0-9]*\.parquet//")
       DEST_DIR="${PROJECT_ROOT}/cil_scans/${SOURCE}/${DATE}"
-      HTTP=$(curl -sk -o "${bad_file}" -w "%{http_code}" "${BASE_URL}/${FILE}")
+      HTTP=$(rcc_curl -s -o "${bad_file}" -w "%{http_code}" "${BASE_URL}/${FILE}")
       if [ "$HTTP" = "200" ]; then
         echo "  [ok]   ${FILE} (re-downloaded)"
         RE_COUNT=$((RE_COUNT + 1))
