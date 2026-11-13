@@ -165,22 +165,42 @@ export async function getFeedback(): Promise<FeedbackEntry[]> {
   return apiRequest<FeedbackEntry[]>("/api/feedback");
 }
 
+// The server returns a one-time delete token per posted comment; only this
+// browser keeps it. The displayed username cannot authorize a delete.
+const FEEDBACK_TOKENS = "feedback-delete-tokens";
+
+function feedbackTokens(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(FEEDBACK_TOKENS) || "{}"); } catch { return {}; }
+}
+
 export async function postFeedback(params: {
   username: string;
   message: string;
   parent_id?: string | null;
 }): Promise<FeedbackEntry> {
-  return apiRequest<FeedbackEntry>("/api/feedback", {
+  const posted = await apiRequest<FeedbackEntry & { delete_token?: string }>("/api/feedback", {
     method: "POST",
     body: JSON.stringify(params),
   });
+  if (posted.delete_token) {
+    try {
+      localStorage.setItem(FEEDBACK_TOKENS,
+        JSON.stringify({ ...feedbackTokens(), [posted.id]: posted.delete_token }));
+    } catch { /* storage full/blocked: the comment just can't be self-deleted */ }
+  }
+  const { delete_token: _omit, ...entry } = posted;
+  return entry;
 }
 
-export async function deleteFeedback(feedbackId: string, username: string): Promise<void> {
-  const url = `${API_BASE_URL}/api/feedback/${feedbackId}?username=${encodeURIComponent(username)}`;
-  const res = await fetch(url, { method: "DELETE" });
+/** `username` is kept for call-site compatibility; authorization is the token. */
+export async function deleteFeedback(feedbackId: string, _username?: string): Promise<void> {
+  const token = feedbackTokens()[feedbackId];
+  const url = `${API_BASE_URL}/api/feedback/${encodeURIComponent(feedbackId)}`;
+  const res = await fetch(url, { method: "DELETE", headers: token ? { "X-Delete-Token": token } : {} });
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`API error: ${res.status} ${errorText}`);
   }
+  const { [feedbackId]: _gone, ...rest } = feedbackTokens();
+  try { localStorage.setItem(FEEDBACK_TOKENS, JSON.stringify(rest)); } catch { /* ignore */ }
 }
