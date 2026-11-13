@@ -170,14 +170,41 @@ check "--clean removes only published files and the flag" '[ ! -e "$SRC/gcp_2030
 echo "partitions and accounts"
 hdr() { sed -n "s/^#SBATCH --$2=//p" "$REPO/scanner/scripts/$1"; }
 for s in daily_pipeline.sh scan_cil_parallel.sh daily_pipeline_computing.sh; do
-  check "Midway3 $s runs on partition cil with account pi-mgreenst" '[ "$(hdr $s partition)" = cil ] && [ "$(hdr $s account)" = pi-mgreenst ]'
+  check "Midway3 $s runs on partition cil with account cil" '[ "$(hdr $s partition)" = cil ] && [ "$(hdr $s account)" = cil ]'
 done
 for s in daily_publish.sh daily_publish_computing.sh; do
-  check "Midway2 $s runs on partition broadwl with account pi-mgreenst" '[ "$(hdr $s partition)" = broadwl ] && [ "$(hdr $s account)" = pi-mgreenst ]'
+  check "Midway2 $s runs on partition broadwl with account cil" '[ "$(hdr $s partition)" = broadwl ] && [ "$(hdr $s account)" = cil ]'
 done
+check "pi-mgreenst projections script stays off the cil partition (account rejected there)" \
+  '[ "$(hdr daily_pipeline_pi-mgreenst.sh partition)" != cil ]'
 check "no sbatch call overrides the partition (headers decide)" '! grep -nE "sbatch[^#]*--partition" "$REPO"/scanner/scripts/*.sh "$REPO"/scanner/scripts/lib/chain.sh'
 out=$(cd "$REPO" && env -u SLURM_JOB_ACCOUNT -u CIL_SLURM_ACCOUNT bash -c 'CHAIN_SCRIPT=scanner/scripts/daily_pipeline.sh; source scanner/scripts/lib/chain.sh; chain_init >/dev/null; echo "$ACCOUNT"')
-check "fallback billing account is pi-mgreenst" '[ "$out" = pi-mgreenst ]'
+check "fallback billing account is cil" '[ "$out" = cil ]'
+
+# ---------------------------------------- recurring runs keep their settings ---
+echo "recurring runs keep their settings"
+reset_fake k
+(cd "$REPO" && PATH="$T/bin:$PATH" SLURM_JOB_ID=700 SLURM_JOB_NAME=cil_daily_pipeline SLURM_SUBMIT_DIR="$REPO" \
+   SLURM_JOB_ACCOUNT=cil CIL_SCAN_OUTPUT_DIR="$T/scratch" CIL_SCAN_INTERVAL_DAYS=7 CIL_SCAN_CPUS=4 \
+   bash scanner/scripts/daily_pipeline.sh > "$FAKE/out" 2>&1)
+next=$(head -1 "$FAKE/sbatch.log")
+check "next run is billed to the job's own account (cil)" '[[ "$next" == *--account=cil* ]]'
+check "next run passes --export=ALL explicitly, so CIL_SCAN_* / MAX_SCAN_AGE_DAYS are inherited" \
+  '[[ "$next" == *" --export=ALL "* ]] && [[ "$next" != *CHAIN_ONCE* ]]'
+check "weekly interval honored for the next run" '[[ "$next" == *"--begin=$(date -d "+7 days" +%Y-%m-%d)T02:00:00"* ]]'
+check "child jobs keep the environment (ALL) and the account" \
+  '[ "$(grep -c -- "--account=cil .*--export=ALL," "$FAKE/sbatch.log")" = 2 ]'
+
+# daily_publish freshness alarm follows MAX_SCAN_AGE_DAYS (weekly cadence: 8)
+PUBH="$T/pubhome"; mkdir -p "$PUBH/public_html/cil_scans" "$T/scratch_pub"
+touch -d "5 days ago" "$PUBH/public_html/cil_scans/gcp_2030-01-01_manifest.json"
+pub() { (cd "$REPO" && PATH="$T/bin:$PATH" FAKE_HOSTNAME=midway2-login1 HOME="$PUBH" SOURCE_DIR="$T/scratch_pub" \
+          SLURM_JOB_ID=800 SLURM_JOB_NAME=cil_daily_publish SLURM_SUBMIT_DIR="$REPO" SLURM_JOB_ACCOUNT=cil "$@" \
+          bash scanner/scripts/daily_publish.sh > "$FAKE/out" 2>&1); }
+reset_fake l; pub env MAX_SCAN_AGE_DAYS=8; rc=$?
+check "5-day-old scan is fine with MAX_SCAN_AGE_DAYS=8" '[ $rc = 0 ]'
+reset_fake m; pub env; rc=$?
+check "same scan alerts with the 2-day default (exit 1 -> Slurm mail)" '[ $rc = 1 ] && grep -q ALERT "$FAKE/out"'
 
 echo
 echo "$PASS passed, $FAIL failed"

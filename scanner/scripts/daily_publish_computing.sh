@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=cil_computing_publish
-#SBATCH --account=pi-mgreenst
+#SBATCH --account=cil
 #SBATCH --partition=broadwl
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1

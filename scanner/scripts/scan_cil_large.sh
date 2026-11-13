@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=cil_scan_large
-#SBATCH --account=pi-mgreenst
+#SBATCH --account=cil
 #SBATCH --partition=cil
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32

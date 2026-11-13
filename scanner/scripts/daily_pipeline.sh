@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=cil_daily_pipeline
-#SBATCH --account=pi-mgreenst
+#SBATCH --account=cil
 #SBATCH --partition=cil
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1

@@ -52,7 +52,7 @@ chain_init() {
   cd "$CHAIN_REPO_DIR" || { chain_log "ERROR: cannot cd to $CHAIN_REPO_DIR"; return 1; }
   CHAIN_LOG_DIR="$CHAIN_REPO_DIR/slurm_out"
   mkdir -p "$CHAIN_LOG_DIR"
-  ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-pi-mgreenst}}"
+  ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-cil}}"
   CHAIN_NAME="${SLURM_JOB_NAME:-$(basename "$CHAIN_SCRIPT" .sh)}"
   chain_log "job ${SLURM_JOB_ID:-manual} '$CHAIN_NAME' on $(hostname), repo $CHAIN_REPO_DIR, account $ACCOUNT"
   chain_log "repo version: $(git -C "$CHAIN_REPO_DIR" log -1 --format='%h %ad' --date=short 2>/dev/null || echo unknown)"
@@ -93,7 +93,10 @@ chain_schedule_next() {
     chain_log "next run already queued (job(s) $(echo $pending)): this instance is a duplicate chain; exiting without work"
     exit 0
   fi
-  local args=(--parsable --account="$ACCOUNT" --begin="$begin"
+  # --export=ALL explicitly: the chain's settings (CIL_SCAN_INTERVAL_DAYS,
+  # CIL_SCAN_CPUS, MAX_SCAN_AGE_DAYS, CIL_SLURM_ACCOUNT, ...) must reach the
+  # next run even if a site changes sbatch's default export behaviour.
+  local args=(--parsable --account="$ACCOUNT" --begin="$begin" --export=ALL
               --job-name="$CHAIN_NAME" --dependency=singleton
               --chdir="$CHAIN_REPO_DIR"
               --output="$CHAIN_LOG_DIR/${CHAIN_NAME}_%j.out"
