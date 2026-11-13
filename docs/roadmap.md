@@ -9,12 +9,13 @@ eventually be owned by the Climate Impact Lab rather than a personal account.
 | Stage | Status |
 |---|---|
 | 1. Security and operational reliability | **Done and deployed**: server-side operator key, least-privilege ClickHouse accounts, localhost-only ports, executor token rotated, TLS pinning for RCC, rate limits, working backups with restore checks ([security.md](security.md)) |
-| 2. Restore periodic reporting | **In progress**: chains rebuilt on `scanner/scripts/lib/chain.sh` (resubmit first, dedup, overlap guard, finalize gate, staleness mail). Fresh scan running on Midway3. Publishing and computing chains to be restarted |
+| 2. Restore periodic reporting | **In progress**: chains rebuilt on `scanner/scripts/lib/chain.sh` (resubmit first, dedup, overlap guard, finalize gate, staleness mail). Fresh scan running on Midway3. Publishing and computing chains to be restarted. Cadence decided: storage scans **weekly** (`CIL_SCAN_INTERVAL_DAYS=7`, publish staleness alarm at 8 days) plus on-demand manual scans; computing reports **daily or more often** (15-minute chain). Follow-up: align the workstation staleness warning and the dashboard freshness badge with the weekly cadence |
 | 3. Data integrity | Planned: partial 09-18 snapshot, stale `computing.*` copies 09-13..11-13, directories counted as files, summing-view double counts, Voronoi mis-parenting, registry totals, idempotent imports (`PARTITION BY snapshot_date` + replace) |
 | 4. Scanner performance and reliability | Planned: one bounded thread pool, `lstat`, prune-before-descend resume, error sidecar, `blocks`/`nlink`/`dev`/`kind` columns. Measure before and after |
-| 5. Query performance | Measured ([performance.md](performance.md)). Next: Voronoi filter-then-join (10×), sort-key subtree filters (11–27×), import-time rollups |
+| 5. Query performance | Measured ([performance.md](performance.md)). Voronoi filter-then-join implemented (9–10×, identical results), to deploy after the next import. Next: sort-key subtree filters (11–27×), import-time rollups |
 | 6. Low-cost hosting and ownership | Planned (below) |
 | 7. BigQuery experiment | Designed, not started ([bigquery-experiment.md](bigquery-experiment.md)) |
+| 8. Self-hosted SQL assistant | Designed, not started ([sql-assistant-experiment.md](sql-assistant-experiment.md)): SQLGlot validation/translation + small quantized model in the browser (WebGPU), server-side small-model fallback, no external AI API by default |
 
 ## Low-cost hosting objective: about $0–10/month
 
