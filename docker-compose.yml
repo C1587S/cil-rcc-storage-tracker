@@ -5,10 +5,12 @@ services:
     container_name: tracker-clickhouse
     hostname: clickhouse
 
+    # Host-local only. Cron scripts and cloudflared use localhost; containers
+    # use the compose network. Publishing on 0.0.0.0 exposed the database
+    # to the whole LAN. 9009 (inter-server replication) is unused.
     ports:
-      - "8123:8123"  # HTTP interface
-      - "9000:9000"  # Native protocol
-      - "9009:9009"  # Inter-server communication
+      - "127.0.0.1:8123:8123"  # HTTP interface
+      - "127.0.0.1:9000:9000"  # Native protocol
 
     volumes:
       - clickhouse-data:/var/lib/clickhouse
@@ -255,7 +257,7 @@ services:
     hostname: api
 
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
     environment:
       POSTGRES_HOST: postgres
@@ -309,7 +311,7 @@ services:
     hostname: web
 
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"  # reached via cloudflared (localhost:3000)
 
     environment:
       API_URL: http://api:8000
