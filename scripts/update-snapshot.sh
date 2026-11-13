@@ -19,12 +19,9 @@ RCC_URL="https://users.rcc.uchicago.edu/~cadavidsanchez/cil_scans"
 source "${SCRIPT_DIR}/lib/rcc-curl.sh"
 LOCK_FILE="/tmp/dev-tracker-update.lock"
 
-# Load ClickHouse password from .env
-if [ -f "${PROJECT_ROOT}/.env" ]; then
-  CH_PASS=$(grep '^CLICKHOUSE_PASSWORD=' "${PROJECT_ROOT}/.env" | cut -d= -f2-)
-fi
-CH_PASS="${CH_PASS:-}"
-CH_CLIENT="clickhouse-client --password ${CH_PASS}"
+# clickhouse-client inside the container reads CLICKHOUSE_PASSWORD from the
+# container environment; never put the password on a command line (ps).
+CH_CLIENT="clickhouse-client"
 
 KEEP_OLD=false
 FORCE=false
@@ -33,13 +30,14 @@ for arg in "$@"; do
   [[ "$arg" == "--force" ]]    && FORCE=true
 done
 
-# Prevent concurrent runs
-if [ -f "$LOCK_FILE" ]; then
+# Prevent concurrent runs. flock is released by the kernel when this process
+# exits for any reason, so a killed run can never leave a stale lock that
+# silently blocks every later run.
+exec 8>"$LOCK_FILE"
+if ! flock -n 8; then
   echo "$(date): Another update is already running (lock: $LOCK_FILE). Exiting."
   exit 0
 fi
-trap "rm -f ${LOCK_FILE}" EXIT
-touch "$LOCK_FILE"
 
 # Always tee output to log file
 mkdir -p "$LOG_DIR"

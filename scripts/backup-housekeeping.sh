@@ -65,7 +65,8 @@ PG_DUMP_FILE="$BACKUP_DIR/housekeeping-$STAMP.sql"
 
 # --- 2. daily_rollup CSV (permanent history — not disposable) ---
 log "Dumping daily_rollup..."
-docker compose exec -T clickhouse clickhouse-client --password "${CLICKHOUSE_PASSWORD:-}" \
+# (the client reads CLICKHOUSE_PASSWORD from the container environment)
+docker compose exec -T clickhouse clickhouse-client \
   --query "SELECT * FROM filesystem.daily_rollup FINAL FORMAT CSVWithNames" \
   > "$BACKUP_DIR/daily_rollup-$STAMP.csv.tmp"
 mv "$BACKUP_DIR/daily_rollup-$STAMP.csv.tmp" "$BACKUP_DIR/daily_rollup-$STAMP.csv"

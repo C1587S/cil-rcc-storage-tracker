@@ -10,12 +10,9 @@ set -e
 
 SCANS_DIR="./cil_scans"
 
-# Load ClickHouse password from .env
-if [ -f ".env" ]; then
-  CH_PASS=$(grep '^CLICKHOUSE_PASSWORD=' ".env" | cut -d= -f2-)
-fi
-CH_PASS="${CH_PASS:-}"
-CH_CLIENT="clickhouse-client --password ${CH_PASS}"
+# clickhouse-client inside the container reads CLICKHOUSE_PASSWORD from the
+# container environment; never put the password on a command line (ps).
+CH_CLIENT="clickhouse-client"
 
 # Check if Docker is running
 if ! docker compose ps clickhouse 2>/dev/null | grep -q "Up\|running"; then
