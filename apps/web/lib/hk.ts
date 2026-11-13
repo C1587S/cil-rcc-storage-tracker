@@ -10,17 +10,43 @@ export function currentIdentity(): string | null {
   return localStorage.getItem("cil-user");
 }
 
+/** Operator key: the server-side secret that unlocks housekeeping changes.
+ *  The username above is only a label; it never grants anything. */
+const OPERATOR_KEY_STORAGE = "hk-operator-key";
+export const OPERATOR_KEY_EVENT = "hk-operator-key-changed";
+
+export function operatorKey(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  return localStorage.getItem(OPERATOR_KEY_STORAGE);
+}
+
+export function setOperatorKey(key: string | null) {
+  if (typeof localStorage === "undefined") return;
+  if (key) localStorage.setItem(OPERATOR_KEY_STORAGE, key);
+  else localStorage.removeItem(OPERATOR_KEY_STORAGE);
+  window.dispatchEvent(new Event(OPERATOR_KEY_EVENT));
+}
+
+/** Headers for every housekeeping call: who (a label) + operator key (if set). */
+export function hkHeaders(user?: string | null): Record<string, string> {
+  const uid = user ?? currentIdentity();
+  const key = operatorKey();
+  return {
+    ...(uid ? { "X-User": uid } : {}),
+    ...(key ? { "X-Operator-Key": key } : {}),
+  };
+}
+
 /** The one fetch wrapper for /api/housekeeping/*. Identity is resolved at
  *  call time (per-call `user` only for tests); errors surface the server's
  *  detail as the thrown message. */
 export async function hkApi(path: string, opts: RequestInit = {}, user?: string | null) {
-  const uid = user ?? currentIdentity();
   const res = await fetch(`${API_BASE_URL}/api/housekeeping${path}`, {
     ...opts,
     headers: {
       "Content-Type": "application/json",
       ...(opts.headers || {}),
-      ...(uid ? { "X-User": uid } : {}),
+      ...hkHeaders(user),
     },
   });
   const d = await res.json().catch(() => ({}));
@@ -54,10 +80,9 @@ export async function addToActiveList(paths: string[], source: string): Promise<
     return ("No list is active yet. Lists collect paths you want to act on: "
       + "open the Housekeeping tab, pick or create one under Custom lists, then retry.");
   }
-  const user = currentIdentity();
   const res = await fetch(`${API_BASE_URL}/api/housekeeping/recon/lists/${list.id}/items`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(user ? { "X-User": user } : {}) }, // user = currentIdentity() above
+    headers: { "Content-Type": "application/json", ...hkHeaders() },
     body: JSON.stringify({ paths, source }),
   });
   const d = await res.json().catch(() => ({}));

@@ -30,7 +30,8 @@ import { API_BASE_URL } from "@/lib/api";
 import { formatBytes } from "@/lib/utils/formatters";
 import { cn } from "@/lib/utils";
 import { FindPanel } from "@/components/housekeeping-find";
-import { hkApi as api, toast, currentIdentity } from "@/lib/hk";
+import { hkApi as api, toast, currentIdentity, hkHeaders } from "@/lib/hk";
+import { OperatorKeyControl } from "@/components/operator-key-control";
 import { GridLoader } from "@/components/ui/grid-loader";
 
 const VERDICTS = ["keep", "delete", "quarantine", "archive", "compress", "needs_info", "not_mine"];
@@ -84,6 +85,7 @@ export function HousekeepingView() {
             {label}
           </button>
         ))}
+        <div className="ml-auto"><OperatorKeyControl /></div>
       </div>
 
       {/* Modes unmount when inactive: nothing hidden runs queries. */}
@@ -178,7 +180,7 @@ function WorkMode({ globalRoot }: { globalRoot: string }) {
 
   const downloadCsv = async () => {
     const res = await fetch(`${API_BASE_URL}/api/housekeeping/report.csv`, {
-      headers: (currentUser ?? currentIdentity()) ? { "X-User": (currentUser ?? currentIdentity())! } : {},
+      headers: hkHeaders(currentUser),
     });
     const blob = await res.blob();
     const a = document.createElement("a");
@@ -887,8 +889,7 @@ function ExecutionDrawer({ targetId, decisionId, onChanged }:
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `${API_BASE_URL}/api/housekeeping/receipts`);
         xhr.setRequestHeader("Content-Type", "application/octet-stream");
-        const uid = currentIdentity();
-        if (uid) xhr.setRequestHeader("X-User", uid);
+        for (const [k, v] of Object.entries(hkHeaders())) xhr.setRequestHeader(k, v);
         xhr.upload.onprogress = e => {
           if (e.lengthComputable) setUploadPct(Math.round((e.loaded / e.total) * 100));
         };

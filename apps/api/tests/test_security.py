@@ -130,6 +130,14 @@ class TestGuardAllowsLegitimateCallers(SecurityTestBase):
                                        headers={"X-User": "someone", "X-Exec-Token": EXEC_TOKEN})
             self.assertEqual(big.status_code, 413)
 
+    def test_operator_status_reports_without_leaking(self):
+        anon = self.client.get("/api/housekeeping/operator").json()
+        self.assertEqual(anon, {"configured": True, "unlocked": False})
+        good = self.client.get("/api/housekeeping/operator",
+                               headers={"X-Operator-Key": OPERATOR_KEY}).json()
+        self.assertEqual(good, {"configured": True, "unlocked": True})
+        self.assertNotIn(OPERATOR_KEY, str(good))
+
     def test_invalid_username_rejected_even_for_operator(self):
         with self._stub_db():
             r = self.client.get("/api/housekeeping/manifests/abc/command",

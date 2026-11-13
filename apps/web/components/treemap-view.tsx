@@ -24,6 +24,8 @@ import { type PartitionInfo } from '@/lib/voronoi/utils/types'
 import { quotaForPath } from '@/lib/voronoi/utils/constants'
 import { formatBytes } from '@/lib/utils/formatters'
 import { cn } from '@/lib/utils'
+import { API_BASE_URL } from '@/lib/api'
+import { addToActiveList, currentIdentity, hkHeaders, toast } from '@/lib/hk'
 
 echarts.use([TreemapChart, SunburstChart, TooltipComponent, CanvasRenderer])
 
@@ -364,7 +366,7 @@ export function TreemapView() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/housekeeping/targets`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-User': uid },
+        headers: { 'Content-Type': 'application/json', ...hkHeaders(uid) },
         body: JSON.stringify({
           name: activePartition.name,
           root,

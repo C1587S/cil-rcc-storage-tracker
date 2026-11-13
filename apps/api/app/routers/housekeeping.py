@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.db.clickhouse import get_client
-from app.security import housekeeping_guard, normalize_username
+from app.security import housekeeping_guard, is_operator, normalize_username, operator_configured
 from app.housekeeping import db as hk
 from app.housekeeping import manifests as mf
 from app.housekeeping import pilot
@@ -91,6 +91,13 @@ class PersonIn(BaseModel):
     username: str
     display_name: str | None = None
     owner_unames: list[str] = []
+
+
+@router.get("/operator")
+def operator_status(request: Request):
+    """Whether changes are enabled on the server and whether the caller's
+    X-Operator-Key unlocks them. Lets the UI verify a key before keeping it."""
+    return {"configured": operator_configured(), "unlocked": is_operator(request)}
 
 
 @router.get("/people")
