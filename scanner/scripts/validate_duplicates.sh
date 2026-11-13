@@ -8,15 +8,19 @@
 #
 # Run on a cluster node where /project/cil is accessible.
 #
+# Proof of concept kept for reproducing the April 2026 investigation; an
+# I/O-budgeted, resumable verifier is being developed separately.
+#
 # Usage:
-#   bash validate_duplicates.sh                    # uses bundled validation_groups.json
 #   bash validate_duplicates.sh --input groups.json
-#   bash validate_duplicates.sh --full             # hash ALL files in each group (slow)
+#   bash validate_duplicates.sh --input groups.json --full   # hash ALL files (slow)
+#
+# The input holds real paths: keep it outside the repository (no bundled
+# copy is shipped any more).
 # =============================================================================
 set -o pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INPUT_FILE="${SCRIPT_DIR}/validation_groups.json"
+INPUT_FILE=""
 FULL_MODE=false
 
 while [[ $# -gt 0 ]]; do
@@ -27,9 +31,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ ! -f "$INPUT_FILE" ]]; then
-    echo "Error: input file not found: $INPUT_FILE"
-    echo "Generate it from the dashboard query or use the bundled one."
+if [[ -z "$INPUT_FILE" || ! -f "$INPUT_FILE" ]]; then
+    echo "Error: --input <groups.json> is required (file not found: ${INPUT_FILE:-none})"
+    echo "Generate it from the dashboard query; keep it outside the repository."
     exit 1
 fi
 
