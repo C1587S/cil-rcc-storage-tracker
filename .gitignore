@@ -69,3 +69,10 @@ logs/bench/
 cleanup/
 nohup.out
 backups/
+
+# Duplicate verification inputs/outputs hold real paths: never commit them
+validation_groups*.json
+candidates*.jsonl
+candidates*.jsonl.meta.json
+**/dupverify-out*/
+hash-cache.jsonl
