@@ -10,6 +10,11 @@ paths, unless --show-paths is given for local inspection.
       [--spot-check-max-mib M]    hard cap on bytes the spot check may read (default 256)
       [--show-paths]              list verified sets with paths (do not paste these anywhere)
 
+  python3 scripts/dupverify/summarize_results.py --leak-check LOG [LOG ...] \
+      --candidates ~/dupverify/pilot0/cand_pilot0.jsonl
+      count occurrences of candidate paths, directory names and distinctive
+      file names in the given logs (prints counts only; expect all zeros)
+
 --recheck reads no file content (lstat only). --spot-check opens files
 read-only (O_NOATIME where permitted) and reads at most the cap.
 """
@@ -117,14 +122,62 @@ def same_bytes(a: str, b: str, size: int, budget: list) -> str:
         os.close(fb)
 
 
+def leak_check(candidates: str, logs: list) -> dict:
+    """Search logs for anything from the candidate file. Generic tokens
+    (short names, common words) are ignored; only distinctive ones count."""
+    full, names, dirs = set(), set(), set()
+    with open(candidates) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            for c in json.loads(line)["files"]:
+                p = c["path"]
+                full.add(p)
+                base = os.path.basename(p)
+                if len(base) >= 8:
+                    names.add(base)
+                for part in p.split("/")[3:-1]:      # below /project/cil
+                    if len(part) >= 8:
+                        dirs.add(part)
+    out = {"distinctive_tokens": {"paths": len(full), "file_names": len(names), "dir_names": len(dirs)}, "logs": {}}
+    for log in logs:
+        try:
+            with open(log, errors="replace") as f:
+                text = f.read()
+        except OSError as e:
+            out["logs"][os.path.basename(log)] = {"error": e.__class__.__name__}
+            continue
+        out["logs"][os.path.basename(log)] = {
+            "bytes": len(text),
+            "candidate_paths": sum(text.count(p) for p in full),
+            "candidate_file_names": sum(1 for n in names if n in text),
+            "candidate_dir_names": sum(1 for d in dirs if d in text),
+            "project_paths": text.count("/project/") + text.count("/cds3/"),
+        }
+    out["clean"] = all(v.get("candidate_paths", 1) == 0 and v.get("candidate_file_names", 1) == 0
+                       and v.get("candidate_dir_names", 1) == 0 and v.get("project_paths", 1) == 0
+                       for v in out["logs"].values())
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--leak-check", nargs="+", metavar="LOG")
+    ap.add_argument("--candidates")
+    ap.add_argument("--out")
     ap.add_argument("--recheck", action="store_true")
     ap.add_argument("--spot-check", type=int, default=0)
     ap.add_argument("--spot-check-max-mib", type=int, default=256)
     ap.add_argument("--show-paths", action="store_true")
     a = ap.parse_args()
+    if a.leak_check:
+        if not a.candidates:
+            ap.error("--leak-check needs --candidates")
+        r = leak_check(os.path.expanduser(a.candidates), a.leak_check)
+        print(json.dumps(r, indent=2))
+        return 0 if r["clean"] else 1
+    if not a.out:
+        ap.error("--out is required")
     out = os.path.expanduser(a.out)
 
     latest, bad = latest_results(out)
