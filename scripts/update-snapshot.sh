@@ -2,9 +2,16 @@
 # Update dashboard with the latest snapshot from RCC
 #
 # Usage:
-#   ./scripts/update-snapshot.sh            # Download, import, then delete old (default)
-#   ./scripts/update-snapshot.sh --keep-old # Keep old snapshots after import
-#   ./scripts/update-snapshot.sh --force    # Re-import even if date matches what's in DB
+#   ./scripts/update-snapshot.sh              # Download and import the newest published date; keep older snapshots
+#   ./scripts/update-snapshot.sh --prune-old  # ...and then delete all but the previous snapshot (explicit opt-in)
+#   ./scripts/update-snapshot.sh --force      # Re-import even if date matches what's in DB
+#   (--keep-old is accepted for compatibility; keeping is now the default.)
+#
+# Only the newly published date is imported (docker-import.sh date <D>);
+# older dates on disk are never re-imported.
+#
+# SNAPSHOT_MAX_AGE_DAYS (default 8, for weekly scans) sets when an
+# unchanged published scan is reported as stale.
 #
 # Logs always written to: logs/auto-update.log
 
@@ -23,12 +30,16 @@ LOCK_FILE="/tmp/dev-tracker-update.lock"
 # container environment; never put the password on a command line (ps).
 CH_CLIENT="clickhouse-client"
 
-KEEP_OLD=false
+# Deleting historical snapshots is opt-in: data is never removed unless
+# --prune-old is passed explicitly.
+KEEP_OLD=true
 FORCE=false
 for arg in "$@"; do
-  [[ "$arg" == "--keep-old" ]] && KEEP_OLD=true
-  [[ "$arg" == "--force" ]]    && FORCE=true
+  [[ "$arg" == "--keep-old" ]]  && KEEP_OLD=true
+  [[ "$arg" == "--prune-old" ]] && KEEP_OLD=false
+  [[ "$arg" == "--force" ]]     && FORCE=true
 done
+MAX_AGE_DAYS="${SNAPSHOT_MAX_AGE_DAYS:-8}"
 
 # Prevent concurrent runs. flock is released by the kernel when this process
 # exits for any reason, so a killed run can never leave a stale lock that
@@ -90,7 +101,7 @@ echo "In DB     : ${CURRENT_DATE:-none}"
 if [ "$NEW_DATE" = "$CURRENT_DATE" ] && [ "$FORCE" = false ]; then
   # "Up to date" can mean "the whole pipeline is stale" — say which it is.
   AGE_DAYS=$(( ( $(date +%s) - $(date -d "$NEW_DATE" +%s) ) / 86400 ))
-  if [ "$AGE_DAYS" -ge 2 ]; then
+  if [ "$AGE_DAYS" -gt "$MAX_AGE_DAYS" ]; then
     echo "WARNING: 'up to date' but the newest PUBLISHED scan is ${AGE_DAYS} days old (${NEW_DATE})."
     echo "WARNING: The RCC scan/publish chain has likely stopped (exhausted SU allocation,"
     echo "WARNING: dead self-resubmission, or publish failure). Check squeue on Midway3/Midway2"
@@ -196,8 +207,8 @@ fi
 
 # Step: Import new snapshot into ClickHouse
 echo ""
-echo "--- Step 2/3: Import ---"
-"${SCRIPT_DIR}/docker-import.sh"
+echo "--- Step 2/3: Import ${NEW_DATE} only ---"
+"${SCRIPT_DIR}/docker-import.sh" date "${NEW_DATE}"
 
 # Step 5: Delete ALL old snapshots from DB and disk (keep only NEW_DATE)
 # Safety: a snapshot much smaller than its predecessor means a broken or
@@ -249,7 +260,7 @@ if [ "$KEEP_OLD" = false ]; then
   fi
 elif [ "$KEEP_OLD" = true ]; then
   echo ""
-  echo "--- Step 3/3: Skipped (--keep-old) ---"
+  echo "--- Step 3/3: Older snapshots kept (pass --prune-old to delete) ---"
 fi
 
 # Pre-warm the API caches so the first visitor doesn't pay the cold scans
