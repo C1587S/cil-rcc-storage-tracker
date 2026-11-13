@@ -295,13 +295,19 @@ def generate_manifests(body: ManifestRequest, x_user: str | None = Header(defaul
     with hk.tx() as conn:
         actor = _actor(x_user, conn)
         row = conn.execute(
-            "SELECT d.id, d.verdict, t.id, t.root, t.path, t.scope, t.predicate"
+            "SELECT d.id, d.verdict, t.id, t.root, t.path, t.scope, t.predicate, d.superseded_by"
             " FROM decision d JOIN target t ON t.id = d.target_id"
             " WHERE d.id = %s", (body.decision_id,),
         ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="decision not found")
-    decision_id, verdict, target_id, root, path, scope, predicate = row
+    decision_id, verdict, target_id, root, path, scope, predicate, superseded_by = row
+    if superseded_by is not None:
+        # A newer decision replaced this one; executing the old verdict
+        # would act on a judgment that has been withdrawn.
+        raise HTTPException(status_code=409, detail=(
+            f"decision {decision_id} was superseded by decision {superseded_by}; "
+            "generate manifests from the current decision"))
     if verdict not in ("delete", "quarantine", "archive", "compress"):
         raise HTTPException(status_code=422, detail=f"verdict {verdict!r} has nothing to execute")
 

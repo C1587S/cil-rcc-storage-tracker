@@ -138,6 +138,21 @@ class TestGuardAllowsLegitimateCallers(SecurityTestBase):
         self.assertEqual(good, {"configured": True, "unlocked": True})
         self.assertNotIn(OPERATOR_KEY, str(good))
 
+    def test_superseded_decision_cannot_produce_manifests(self):
+        conn = mock.MagicMock()
+        # _actor lookup, then the decision row (superseded by decision 9)
+        conn.execute.return_value.fetchone.side_effect = [
+            ("someone",),
+            (5, "quarantine", 1, "/project/cil", "/project/cil/x", "subtree", {}, 9),
+        ]
+        with mock.patch("app.housekeeping.db.tx", lambda: contextlib.nullcontext(conn)), \
+             mock.patch("app.housekeeping.manifests.generate_manifests") as gen:
+            r = self.client.post("/api/housekeeping/manifests", json={"decision_id": 5},
+                                 headers={"X-User": "someone", "X-Operator-Key": OPERATOR_KEY})
+        self.assertEqual(r.status_code, 409, r.text)
+        self.assertIn("superseded", r.json()["detail"])
+        gen.assert_not_called()
+
     def test_invalid_username_rejected_even_for_operator(self):
         with self._stub_db():
             r = self.client.get("/api/housekeeping/manifests/abc/command",
