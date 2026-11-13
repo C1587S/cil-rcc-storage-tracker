@@ -36,7 +36,9 @@ MONTH=$(date +%Y%m)
 QUIET=false
 [ "$1" = "--quiet" ] && QUIET=true
 
-log() { [ "$QUIET" = false ] && echo "$(date '+%F %T') $*"; }
+# Must always return 0: under `set -e` a non-zero return here (quiet mode)
+# would abort the whole backup at the first log call.
+log() { if [ "$QUIET" = false ]; then echo "$(date '+%F %T') $*"; fi; return 0; }
 
 cd "$PROJECT_ROOT"
 mkdir -p "$BACKUP_DIR"
