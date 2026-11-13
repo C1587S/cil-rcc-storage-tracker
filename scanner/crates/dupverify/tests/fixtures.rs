@@ -15,7 +15,8 @@ use tempfile::TempDir;
 
 // Small blocks so tiny fixtures still exercise sampling and multi-block reads.
 fn settings() -> Settings {
-    Settings { sample_block: 4096, samples: 3, read_block: 4096, ..Settings::default() }
+    // settle_secs 0: fixtures are verified seconds after being written.
+    Settings { sample_block: 4096, samples: 3, read_block: 4096, settle_secs: 0, ..Settings::default() }
 }
 
 struct Fx {
@@ -538,4 +539,128 @@ fn plan_estimates_without_reading_files() {
     assert_eq!(p.full_bytes_max, 3 << 30);
     assert_eq!(p.sample_bytes_max, 3 * 3 * 4096);
     assert_eq!(p.potential_bytes_upper_bound, 2 << 30);
+}
+
+
+#[test]
+fn recently_changed_files_are_not_verified() {
+    let mut fx = Fx::new();
+    let data = pattern(100, 20_000);
+    let a = fx.write("a", &data);
+    let b = fx.write("b", &data);
+    fx.group("g1", 20_000, &[a, b]);
+    let mut c = fx.cfg();
+    c.settings.settle_secs = 600; // the CLI default
+    let s = run_cfg(&c);
+    let r = &results(&fx.out())["g1"];
+    assert!(reasons(r).iter().all(|x| *x == SkipReason::RecentlyChanged));
+    assert!(r.duplicate_sets.is_empty());
+    assert_eq!(s.bytes_read, 0, "nothing is read from a file that may still be written");
+}
+
+#[test]
+fn verified_inodes_record_their_version() {
+    let mut fx = Fx::new();
+    let data = pattern(101, 9_000);
+    let a = fx.write("a", &data);
+    let b = fx.write("b", &data);
+    fx.group("g1", 9_000, &[a.clone(), b]);
+    run_cfg(&fx.cfg());
+    let m = fs::metadata(&a).unwrap();
+    let r = &results(&fx.out())["g1"];
+    let e = r.duplicate_sets[0].inodes.iter().find(|i| i.paths[0].path == a).unwrap();
+    assert_eq!(e.size, 9_000);
+    assert_eq!(e.mtime_ns, m.mtime() * 1_000_000_000 + m.mtime_nsec());
+    assert_eq!(e.ctime_ns, m.ctime() * 1_000_000_000 + m.ctime_nsec());
+}
+
+#[test]
+fn torn_last_line_after_a_crash_is_recovered() {
+    let mut fx = Fx::new();
+    for g in 0..3u8 {
+        let data = pattern(110 + g, 30_000);
+        let a = fx.write(&format!("g{g}/a"), &data);
+        let b = fx.write(&format!("g{g}/b"), &data);
+        fx.group(&format!("g{g}"), 30_000, &[a, b]);
+    }
+    let mut c = fx.cfg();
+    c.workers = 1;
+    run_cfg(&c);
+    // Simulate kill -9 during the last write: cut the final line in half.
+    let rp = fx.out().join(RESULTS_FILE);
+    let text = fs::read_to_string(&rp).unwrap();
+    let keep = text.trim_end().rfind('\n').unwrap() + 1;
+    let torn = &text[..keep + (text.len() - keep) / 2];
+    fs::write(&rp, torn).unwrap();
+    let s = run_cfg(&c);
+    assert_eq!(s.repaired_torn_lines, 1);
+    assert_eq!(s.groups_already_done, 2);
+    assert_eq!(s.groups_complete, 1, "the group whose line was torn is redone");
+    // Every complete line parses; exactly one fragment remains and is skipped by readers.
+    let lines: Vec<String> = fs::read_to_string(&rp).unwrap().lines().map(String::from).collect();
+    assert_eq!(lines.iter().filter(|l| serde_json::from_str::<ResultLine>(l).is_err()).count(), 1);
+    let r = results_lenient(&fx.out());
+    assert_eq!(r.len(), 3);
+    assert!(r.values().all(|g| g.status == GroupStatus::Complete));
+}
+
+fn results_lenient(out: &Path) -> HashMap<String, GroupResult> {
+    let mut m = HashMap::new();
+    for line in fs::read_to_string(out.join(RESULTS_FILE)).unwrap().lines() {
+        if let Ok(r) = serde_json::from_str::<ResultLine>(line) {
+            m.insert(r.result.group_id.clone(), r.result);
+        }
+    }
+    m
+}
+
+#[test]
+fn resuming_with_a_different_scope_is_refused() {
+    let mut fx = Fx::new();
+    let data = pattern(120, 8_000);
+    let a = fx.write("lab1/a", &data);
+    let b = fx.write("lab2/b", &data);
+    fx.group("g1", 8_000, &[a, b]);
+    let mut c = fx.cfg();
+    c.settings.prefixes = vec![fx.p("lab1").to_string_lossy().into_owned()];
+    run_cfg(&c);
+    c.settings.prefixes.clear();
+    let err = run::run(&c, None).err().expect("refused");
+    assert!(err.to_string().contains("different scope settings"), "{err}");
+    // Explicitly starting over is allowed.
+    c.resume = false;
+    let s = run_cfg(&c);
+    assert_eq!(s.duplicate_sets, 1);
+}
+
+#[test]
+fn byte_verify_charges_a_failing_reference_to_itself() {
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let mut fx = Fx::new();
+    let data = pattern(130, 50_000);
+    let a = fx.write("a", &data);
+    let b = fx.write("b", &data);
+    let c_ = fx.write("c", &data);
+    fx.group("g1", 50_000, &[a.clone(), b.clone(), c_.clone()]);
+    let mut cfg = fx.cfg();
+    cfg.workers = 1;
+    cfg.settings.byte_verify = true;
+    // After the last full hash, make the reference copy (a) unreadable.
+    let (target, locked) = (c_.clone(), a.clone());
+    let fired = AtomicBool::new(false);
+    let hook = move |path: &str, off: u64| {
+        if path == target && off == 50_000 && !fired.swap(true, Ordering::SeqCst) {
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+    };
+    run::run(&cfg, Some(&hook)).unwrap();
+    fs::set_permissions(&a, fs::Permissions::from_mode(0o600)).unwrap();
+    let r = &results(&fx.out())["g1"];
+    assert!(r.skipped.iter().any(|s| s.path == a && s.reason == SkipReason::PermissionDenied), "{:?}", r.skipped);
+    assert!(!r.skipped.iter().any(|s| s.path == b || s.path == c_), "b and c are not blamed");
+    let d = &r.duplicate_sets[0];
+    assert!(d.byte_verified);
+    assert_eq!(d.copies, 2);
 }

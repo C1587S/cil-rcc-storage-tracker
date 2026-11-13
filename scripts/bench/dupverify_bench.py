@@ -178,7 +178,7 @@ def main() -> int:
         def dv(name, extra, cold=True, out=None):
             out = out or os.path.join(work, name)
             r = run_measured([a.bin, "--input", cand, "--out", out, "--quiet", "--max-read-mib-s", "0",
-                              "--budget-gib", "0", *extra], files, cold)
+                              "--budget-gib", "0", "--settle-secs", "0", *extra], files, cold)
             s = json.loads(r.pop("stdout"))
             sets = []
             with open(os.path.join(out, "results.jsonl")) as f:

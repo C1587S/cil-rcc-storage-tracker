@@ -22,6 +22,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const RESULTS_FILE: &str = "results.jsonl";
 pub const CACHE_FILE: &str = "hash-cache.jsonl";
+pub const CONFIG_FILE: &str = "run-config.json";
 
 pub struct RunConfig {
     pub input: PathBuf,
@@ -68,6 +69,49 @@ pub struct SettingsOut {
     pub byte_verify: bool,
     pub max_group_files: usize,
     pub prefixes: Vec<String>,
+    #[serde(default)]
+    pub settle_secs: u64,
+}
+
+/// Settings that decide what a "complete" group means. Resuming into an
+/// output directory is refused when they differ: a group completed under a
+/// narrower --prefix or other sampling would otherwise be skipped silently.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScopeConfig {
+    pub sample_spec: String,
+    pub byte_verify: bool,
+    pub max_group_files: usize,
+    pub prefixes: Vec<String>,
+    pub settle_secs: u64,
+}
+
+impl ScopeConfig {
+    fn of(s: &Settings) -> Self {
+        let mut prefixes: Vec<String> = s.prefixes.iter().map(|p| p.trim_end_matches('/').to_string()).collect();
+        prefixes.sort();
+        ScopeConfig { sample_spec: s.sample_spec(), byte_verify: s.byte_verify,
+                      max_group_files: s.max_group_files, prefixes, settle_secs: s.settle_secs }
+    }
+}
+
+/// A run killed mid-write (kill -9, node failure) can leave a final line
+/// without its newline. Terminate it so later appends start on a new line;
+/// readers skip the unparsable fragment and the group is simply redone.
+fn repair_trailing_line(path: &Path) -> std::io::Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = OpenOptions::new().read(true).append(true).open(path) else { return Ok(false) };
+    let len = f.metadata()?.len();
+    if len == 0 {
+        return Ok(false);
+    }
+    f.seek(SeekFrom::Start(len - 1))?;
+    let mut last = [0u8; 1];
+    f.read_exact(&mut last)?;
+    if last[0] != b'\n' {
+        f.write_all(b"\n")?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -110,6 +154,9 @@ pub struct Summary {
     pub confirmation_rate_inodes: Option<f64>,
     pub cache_entries_loaded: usize,
     pub cache_entries_written: u64,
+    /// A previous run had been cut off mid-line; the fragment was terminated.
+    #[serde(default)]
+    pub repaired_torn_lines: u64,
 }
 
 /// SIGINT/SIGTERM set a flag; workers finish their current read and the
@@ -220,6 +267,25 @@ pub fn run(cfg: &RunConfig, hook: Option<BlockHook>) -> std::io::Result<Summary>
     let results_path = cfg.out_dir.join(RESULTS_FILE);
     let cache_path = cfg.cache_path.clone().unwrap_or_else(|| cfg.out_dir.join(CACHE_FILE));
 
+    let scope = ScopeConfig::of(&cfg.settings);
+    let config_path = cfg.out_dir.join(CONFIG_FILE);
+    if config_path.exists() {
+        let prev: Result<ScopeConfig, _> = serde_json::from_reader(File::open(&config_path)?);
+        if cfg.resume && prev.as_ref().ok() != Some(&scope) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, format!(
+                "{} was written with different scope settings ({:?}); resuming would skip groups \
+                 verified under another scope. Use a new --out, or --no-resume.",
+                config_path.display(), prev.ok())));
+        }
+    }
+    let mut repaired = 0u64;
+    for p in [&results_path, &cfg.cache_path.clone().unwrap_or_else(|| cfg.out_dir.join(CACHE_FILE))] {
+        repaired += repair_trailing_line(p)? as u64;
+    }
+    {
+        let mut f = OpenOptions::new().create(true).write(true).truncate(true).mode(0o600).open(&config_path)?;
+        serde_json::to_writer_pretty(&mut f, &scope)?;
+    }
     let done = if cfg.resume { finished_groups(&results_path)? } else { HashSet::new() };
     let cache = RwLock::new(HashCache::load(&cache_path)?);
     let mut gov = IoGovernor::new(cfg.max_read_bytes_s, cfg.budget_bytes);
@@ -237,7 +303,9 @@ pub fn run(cfg: &RunConfig, hook: Option<BlockHook>) -> std::io::Result<Summary>
             workers, max_read_bytes_s: cfg.max_read_bytes_s, budget_bytes: cfg.budget_bytes,
             sample_block: s.sample_block, samples: s.samples, read_block: s.read_block,
             byte_verify: s.byte_verify, max_group_files: s.max_group_files, prefixes: s.prefixes.clone(),
+            settle_secs: s.settle_secs,
         },
+        repaired_torn_lines: repaired,
         cache_entries_loaded: cache.read().unwrap().len(),
         ..Default::default()
     };

@@ -43,6 +43,9 @@ pub enum SkipReason {
     Interrupted,
     /// Excluded by --prefix targeting.
     OutOfScope,
+    /// Modified (mtime or ctime) within --settle-secs of the run: possibly
+    /// still being written, and too recent for timestamps to prove stability.
+    RecentlyChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -66,6 +69,14 @@ pub struct InodeEntry {
     /// Link count reported by the filesystem. Larger than `paths.len()` means
     /// links exist outside the candidate set.
     pub nlink: u64,
+    /// File version that was verified (nanoseconds since the epoch). Used to
+    /// tell later whether a verified file is still the same version.
+    #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
+    pub mtime_ns: i64,
+    #[serde(default)]
+    pub ctime_ns: i64,
     /// st_blocks * 512: space actually allocated (sparse files allocate less).
     pub allocated_bytes: u64,
     pub sparse: bool,
@@ -111,6 +122,10 @@ pub struct IoCounts {
     pub compare_bytes: u64,
     pub files_opened: u64,
     pub cache_hits: u64,
+    /// Opens where O_NOATIME was refused (file not owned by the job user),
+    /// so the read may have updated the file's atime.
+    #[serde(default)]
+    pub opened_without_noatime: u64,
 }
 
 impl IoCounts {
@@ -123,6 +138,7 @@ impl IoCounts {
         self.compare_bytes += o.compare_bytes;
         self.files_opened += o.files_opened;
         self.cache_hits += o.cache_hits;
+        self.opened_without_noatime += o.opened_without_noatime;
     }
 }
 

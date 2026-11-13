@@ -66,7 +66,7 @@ out=$(python3 "$REPO/scripts/dupverify/export_candidates.py" --date 2026-01-05 -
       --prefix "$T/data/lab1" --out "$T/cand_lab1.jsonl" 2>&1)
 check "export: --prefix scopes groups (lab1 only has the 3M link pair)" '[ "$(wc -l < "$T/cand_lab1.jsonl")" = 1 ]'
 
-"$BIN" --input "$T/cand.jsonl" --out "$T/run" --quiet --max-read-mib-s 0 > "$T/summary.json"; rc=$?
+"$BIN" --settle-secs 0 --input "$T/cand.jsonl" --out "$T/run" --quiet --max-read-mib-s 0 > "$T/summary.json"; rc=$?
 check "verify exits 0" '[ $rc = 0 ]'
 py() { python3 -c "import json; s=json.load(open('$T/summary.json')); print($1)"; }
 check "verify: 2 verified sets (renamed copy, 10 replicas)" '[ "$(py "s[\"duplicate_sets\"]")" = 2 ]'
@@ -92,7 +92,7 @@ check "import: run row carries totals" \
 # A second, separate scope that stops on its budget: recorded, never verified.
 python3 "$REPO/scripts/dupverify/export_candidates.py" --date 2026-01-05 --min-size 2M --max-size 2M \
   --out "$T/cand2.jsonl" >/dev/null
-"$BIN" --input "$T/cand2.jsonl" --out "$T/run2" --quiet --max-read-mib-s 0 --budget-gib 0.000001 \
+"$BIN" --settle-secs 0 --input "$T/cand2.jsonl" --out "$T/run2" --quiet --max-read-mib-s 0 --budget-gib 0.000001 \
   --sample-kib 1 --samples 1 > /dev/null; rc=$?
 check "budget-stopped run exits 3 (resumable)" '[ $rc = 3 ]'
 python3 "$REPO/scripts/dupverify/import_results.py" --out "$T/run2" >/dev/null

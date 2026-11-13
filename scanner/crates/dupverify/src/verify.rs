@@ -15,8 +15,9 @@ use crate::model::*;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::path::Path;
+use std::collections::HashSet;
 use std::sync::RwLock;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -26,6 +27,11 @@ pub struct Settings {
     pub byte_verify: bool,
     pub max_group_files: usize,
     pub prefixes: Vec<String>,
+    /// Files modified (mtime or ctime) less than this many seconds before
+    /// they are examined are skipped as `recently_changed`. Timestamps are
+    /// the only evidence that a file did not change, and on filesystems with
+    /// coarse timestamps a write in the same second is invisible to them.
+    pub settle_secs: u64,
 }
 
 impl Settings {
@@ -37,7 +43,7 @@ impl Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings { sample_block: 64 * 1024, samples: 5, read_block: 1 << 20, byte_verify: false,
-                   max_group_files: 50_000, prefixes: vec![] }
+                   max_group_files: 50_000, prefixes: vec![], settle_secs: 600 }
     }
 }
 
@@ -90,9 +96,12 @@ fn in_scope(path: &str, prefixes: &[String]) -> bool {
 /// Open the representative path of an inode and confirm it is still the
 /// same file version that was stat'ed (guards against swaps and edits).
 fn open_checked(ino: &Inode, io_counts: &mut IoCounts) -> Result<File, Outcome> {
-    let (f, _noatime) = io::open_readonly(Path::new(&ino.paths[0].path))
+    let (f, noatime) = io::open_readonly(Path::new(&ino.paths[0].path))
         .map_err(|e| Outcome::Skip(reason_for(&e)))?;
     io_counts.files_opened += 1;
+    if !noatime {
+        io_counts.opened_without_noatime += 1;
+    }
     let now = FileId::from_meta(&f.metadata().map_err(|e| Outcome::Skip(reason_for(&e)))?);
     if !now.same_content_version(&ino.id) {
         return Err(Outcome::Skip(SkipReason::ChangedDuringRead));
@@ -142,6 +151,8 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
     }
 
     // ---- stage 0: identity -------------------------------------------------
+    let now_ns = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as i128).unwrap_or(0);
+    let settle_ns = s.settle_secs as i128 * 1_000_000_000;
     let mut inodes: Vec<Inode> = vec![];
     let mut by_id: HashMap<(u64, u64), usize> = HashMap::new();
     for f in &g.files {
@@ -157,6 +168,8 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
                 let id = FileId::from_meta(&m);
                 if id.size != g.size {
                     Some(SkipReason::SizeChanged)
+                } else if now_ns - id.mtime_ns.max(id.ctime_ns) < settle_ns {
+                    Some(SkipReason::RecentlyChanged) // also covers timestamps in the future
                 } else {
                     let pe = PathEntry { path: f.path.clone(), owner: f.owner.clone() };
                     match by_id.get(&(id.dev, id.ino)) {
@@ -185,9 +198,12 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
         let reason = match h { Halt::Budget => SkipReason::BudgetExhausted, Halt::Interrupted => SkipReason::Interrupted };
         r.status = GroupStatus::Incomplete;
         r.duplicate_sets.clear();
+        let already: HashSet<String> = r.skipped.iter().map(|x| x.path.clone()).collect();
         for ino in inodes {
             for p in &ino.paths {
-                r.skipped.push(Skipped { path: p.path.clone(), reason });
+                if !already.contains(&p.path) {
+                    r.skipped.push(Skipped { path: p.path.clone(), reason });
+                }
             }
         }
         let why = match h { Halt::Budget => "I/O budget reached", Halt::Interrupted => "interrupted" };
@@ -287,22 +303,56 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
         }
         let mut byte_verified = false;
         if s.byte_verify {
-            let reference = members[0];
-            let mut kept = vec![reference];
-            for &i in &members[1..] {
-                let cmp = open_checked(&inodes[reference], &mut res.io).and_then(|a| {
-                    let b = open_checked(&inodes[i], &mut res.io)?;
-                    let eq = io::byte_equal(&a, &b, g.size, s.read_block, ctx.gov, &mut res.io.compare_bytes)
-                        .map_err(from_read)?;
-                    unchanged_after(&a, &inodes[reference])?;
-                    unchanged_after(&b, &inodes[i])?;
-                    Ok(eq)
-                });
-                match cmp {
-                    Ok(true) => kept.push(i),
-                    Ok(false) => res.unique_inodes += 1, // would need a BLAKE3 collision; reported, not trusted
-                    Err(Outcome::Skip(r)) => skip_inode(&mut res, &inodes[i], r),
+            // Compare every member with a reference copy. If the reference
+            // itself fails (unreadable, changed), it is excluded and the next
+            // member becomes the reference: a failure is charged to the file
+            // that caused it, never to the one it was compared with.
+            let mut pending: std::collections::VecDeque<usize> = members.iter().copied().collect();
+            let mut kept: Vec<usize> = vec![];
+            while let Some(i) = pending.pop_front() {
+                let Some(&reference) = kept.first() else {
+                    match open_checked(&inodes[i], &mut res.io).and_then(|f| unchanged_after(&f, &inodes[i])) {
+                        Ok(()) => kept.push(i),
+                        Err(Outcome::Skip(r)) => skip_inode(&mut res, &inodes[i], r),
+                        Err(Outcome::Halt(h)) => return halt(res, h, &inodes, new_cache),
+                    }
+                    continue;
+                };
+                let a = match open_checked(&inodes[reference], &mut res.io) {
+                    Ok(a) => a,
                     Err(Outcome::Halt(h)) => return halt(res, h, &inodes, new_cache),
+                    Err(Outcome::Skip(r)) => {
+                        skip_inode(&mut res, &inodes[reference], r);
+                        kept.remove(0);
+                        pending.push_front(i);
+                        // Members already confirmed against the old reference
+                        // stay confirmed; the next one becomes the reference.
+                        continue;
+                    }
+                };
+                let b = match open_checked(&inodes[i], &mut res.io) {
+                    Ok(b) => b,
+                    Err(Outcome::Halt(h)) => return halt(res, h, &inodes, new_cache),
+                    Err(Outcome::Skip(r)) => { skip_inode(&mut res, &inodes[i], r); continue; }
+                };
+                let eq = match io::byte_equal(&a, &b, g.size, s.read_block, ctx.gov, &mut res.io.compare_bytes) {
+                    Ok(eq) => eq,
+                    Err(ReadError::Halt(h)) => return halt(res, h, &inodes, new_cache),
+                    // A short read cannot be attributed: re-check both.
+                    Err(_) => false,
+                };
+                let ref_ok = unchanged_after(&a, &inodes[reference]);
+                let b_ok = unchanged_after(&b, &inodes[i]);
+                match (ref_ok, b_ok) {
+                    (Err(Outcome::Skip(r)), _) => {
+                        skip_inode(&mut res, &inodes[reference], r);
+                        kept.remove(0);
+                        pending.push_front(i);
+                    }
+                    (_, Err(Outcome::Skip(r))) => skip_inode(&mut res, &inodes[i], r),
+                    (Ok(()), Ok(())) if eq => kept.push(i),
+                    (Ok(()), Ok(())) => res.unique_inodes += 1, // a BLAKE3 collision; reported, not trusted
+                    _ => unreachable!("unchanged_after only skips"),
                 }
             }
             members = kept;
@@ -315,6 +365,7 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
         let mut entries: Vec<InodeEntry> = members.iter().map(|&i| {
             let ino = &inodes[i];
             InodeEntry { dev: ino.id.dev, ino: ino.id.ino, nlink: ino.id.nlink,
+                         size: ino.id.size, mtime_ns: ino.id.mtime_ns as i64, ctime_ns: ino.id.ctime_ns as i64,
                          allocated_bytes: ino.id.allocated, sparse: ino.id.allocated < ino.id.size,
                          paths: ino.paths.clone() }
         }).collect();

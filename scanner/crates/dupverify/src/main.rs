@@ -45,6 +45,9 @@ struct Cli {
     /// Groups with more files are deferred (reported, not read)
     #[arg(long, default_value_t = 50_000)]
     max_group_files: usize,
+    /// Skip files modified less than this many seconds ago (possibly still being written)
+    #[arg(long, default_value_t = 600)]
+    settle_secs: u64,
     /// Only verify files under this directory (repeatable)
     #[arg(long)]
     prefix: Vec<String>,
@@ -72,6 +75,7 @@ fn main() {
         byte_verify: cli.byte_verify,
         max_group_files: cli.max_group_files,
         prefixes: cli.prefix.clone(),
+        settle_secs: cli.settle_secs,
     };
     if cli.plan {
         match run::plan(&cli.input, &settings) {

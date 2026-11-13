@@ -158,12 +158,15 @@ impl IoGovernor {
 /// Open read-only without following a symlink in the last component.
 /// O_NOATIME keeps reads from marking cold files as recently accessed
 /// (it is only permitted for the file's owner; otherwise retried without).
+/// O_NONBLOCK keeps a path swapped for a FIFO or device after the lstat
+/// from blocking the open; it has no effect on regular-file reads, and the
+/// identity check that follows rejects anything that is not the stat'ed file.
 pub fn open_readonly(path: &Path) -> io::Result<(File, bool)> {
-    let flags = libc::O_NOFOLLOW | libc::O_NOATIME;
-    match OpenOptions::new().read(true).custom_flags(flags).open(path) {
+    let base = libc::O_NOFOLLOW | libc::O_NONBLOCK;
+    match OpenOptions::new().read(true).custom_flags(base | libc::O_NOATIME).open(path) {
         Ok(f) => Ok((f, true)),
         Err(e) if e.raw_os_error() == Some(libc::EPERM) => {
-            let f = OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(path)?;
+            let f = OpenOptions::new().read(true).custom_flags(base).open(path)?;
             Ok((f, false))
         }
         Err(e) => Err(e),
@@ -317,6 +320,16 @@ mod tests {
         }
         // 1 s burst then ~1 s per MB.
         assert!(t.elapsed() >= Duration::from_millis(1500), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn opening_a_fifo_does_not_block() {
+        let d = tempfile::TempDir::new().unwrap();
+        let p = d.path().join("fifo");
+        let c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (f, _) = open_readonly(&p).expect("returns immediately");
+        assert!(!f.metadata().unwrap().is_file());
     }
 
     #[test]
