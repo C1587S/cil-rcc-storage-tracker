@@ -52,7 +52,7 @@ chain_init() {
   cd "$CHAIN_REPO_DIR" || { chain_log "ERROR: cannot cd to $CHAIN_REPO_DIR"; return 1; }
   CHAIN_LOG_DIR="$CHAIN_REPO_DIR/slurm_out"
   mkdir -p "$CHAIN_LOG_DIR"
-  ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-cil}}"
+  ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-pi-mgreenst}}"
   CHAIN_NAME="${SLURM_JOB_NAME:-$(basename "$CHAIN_SCRIPT" .sh)}"
   chain_log "job ${SLURM_JOB_ID:-manual} '$CHAIN_NAME' on $(hostname), repo $CHAIN_REPO_DIR, account $ACCOUNT"
   chain_log "repo version: $(git -C "$CHAIN_REPO_DIR" log -1 --format='%h %ad' --date=short 2>/dev/null || echo unknown)"

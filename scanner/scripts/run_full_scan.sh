@@ -27,7 +27,7 @@ fi
 mkdir -p slurm_out
 
 echo "=== 1/2 Submitting Slurm scan array (all sources except cds3) ==="
-ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-cil}}"
+ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-pi-mgreenst}}"
 JOB_ID=$(sbatch --parsable --account="$ACCOUNT" "${SCRIPT_DIR}/scan_cil_parallel.sh")
 echo "  Submitted array job: $JOB_ID"
 

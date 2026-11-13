@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=cil_scan
-#SBATCH --account=cil
-#SBATCH --partition=caslake
+#SBATCH --account=pi-mgreenst
+#SBATCH --partition=cil
 #SBATCH --cpus-per-task=8
 #SBATCH --ntasks=1
 #SBATCH --mem-per-cpu=4G

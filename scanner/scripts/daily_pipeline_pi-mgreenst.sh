@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=mgreenst_projection_scan
 #SBATCH --account=pi-mgreenst
-#SBATCH --partition=caslake
+#SBATCH --partition=cil
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1
 #SBATCH --mem=2G

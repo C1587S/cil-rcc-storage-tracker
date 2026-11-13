@@ -166,6 +166,19 @@ check "writes the completion marker" 'grep -q "dates=2030-01-05" "$PUB/latest_pu
 check "never publishes dot-files" '[ ! -e "$PUB/.scan_complete" ] && [ ! -e "$PUB/.partial" ]'
 check "--clean removes only published files and the flag" '[ ! -e "$SRC/gcp_2030-01-05_chunk_0001.parquet" ] && [ ! -e "$SRC/.scan_complete" ] && [ -e "$SRC/.partial/x/a" ]'
 
+# ------------------------------------------------- partitions / accounts ---
+echo "partitions and accounts"
+hdr() { sed -n "s/^#SBATCH --$2=//p" "$REPO/scanner/scripts/$1"; }
+for s in daily_pipeline.sh scan_cil_parallel.sh daily_pipeline_computing.sh; do
+  check "Midway3 $s runs on partition cil with account pi-mgreenst" '[ "$(hdr $s partition)" = cil ] && [ "$(hdr $s account)" = pi-mgreenst ]'
+done
+for s in daily_publish.sh daily_publish_computing.sh; do
+  check "Midway2 $s runs on partition broadwl with account pi-mgreenst" '[ "$(hdr $s partition)" = broadwl ] && [ "$(hdr $s account)" = pi-mgreenst ]'
+done
+check "no sbatch call overrides the partition (headers decide)" '! grep -nE "sbatch[^#]*--partition" "$REPO"/scanner/scripts/*.sh "$REPO"/scanner/scripts/lib/chain.sh'
+out=$(cd "$REPO" && env -u SLURM_JOB_ACCOUNT -u CIL_SLURM_ACCOUNT bash -c 'CHAIN_SCRIPT=scanner/scripts/daily_pipeline.sh; source scanner/scripts/lib/chain.sh; chain_init >/dev/null; echo "$ACCOUNT"')
+check "fallback billing account is pi-mgreenst" '[ "$out" = pi-mgreenst ]'
+
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
