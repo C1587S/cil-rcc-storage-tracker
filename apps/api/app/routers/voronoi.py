@@ -5,6 +5,7 @@ from datetime import date
 from app.cache import LRUCache
 from app.services.snapshot_storage import SnapshotStorage
 from app.services.voronoi_store import VoronoiStore
+from app.errors import internal_error
 
 router = APIRouter(prefix="/api/voronoi", tags=["voronoi"])
 storage = SnapshotStorage()
@@ -51,9 +52,7 @@ async def get_voronoi_artifact(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to load voronoi artifact: {str(e)}"
-        )
+        raise internal_error("Failed to load voronoi artifact", e) from e
 
 
 @router.get("/artifact/{snapshot_date}/stats")
@@ -84,9 +83,7 @@ async def get_artifact_stats(snapshot_date: date):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to get artifact stats: {str(e)}"
-        )
+        raise internal_error("Failed to get artifact stats", e) from e
 
 
 @router.get("/artifacts")
@@ -116,9 +113,7 @@ async def list_artifacts():
         return {"total": len(artifacts), "artifacts": artifacts}
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to list artifacts: {str(e)}"
-        )
+        raise internal_error("Failed to list artifacts", e) from e
 
 
 @router.get("/node/{snapshot_date}/batch")
@@ -168,10 +163,7 @@ async def get_voronoi_nodes_batch(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve voronoi nodes: {str(e)}",
-        )
+        raise internal_error("Failed to retrieve voronoi nodes", e) from e
 
 
 @router.get("/node/{snapshot_date}/subtree")
@@ -225,10 +217,7 @@ async def get_voronoi_subtree(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve voronoi subtree: {str(e)}",
-        )
+        raise internal_error("Failed to retrieve voronoi subtree", e) from e
 
 
 @router.get("/node/{snapshot_date}/{node_id}")
@@ -306,7 +295,4 @@ async def get_voronoi_node(snapshot_date: date, node_id: str, path: str = None):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve voronoi node: {str(e)}",
-        )
+        raise internal_error("Failed to retrieve voronoi node", e) from e

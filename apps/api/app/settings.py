@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     api_version: str = "1.0.0"
     api_description: str = "Filesystem snapshot explorer backend"
 
+    # Interactive API docs (/docs, /redoc, /openapi.json). Off in deployment:
+    # they map every endpoint for anyone who reaches the API. API_DOCS=true
+    # to enable locally.
+    api_docs: bool = False
+
     # CORS settings (comma-separated string)
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
 

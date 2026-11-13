@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException
 from app.db import execute_query
 from app.models import SnapshotInfo
+from app.errors import internal_error
 
 router = APIRouter(prefix="/api/snapshots", tags=["snapshots"])
 
@@ -32,7 +33,7 @@ async def list_snapshots():
         results = execute_query(query)
         return [SnapshotInfo(**row) for row in results]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise internal_error("Database error", e) from e
 
 
 @router.get("/{snapshot_date}", response_model=SnapshotInfo)
@@ -68,4 +69,4 @@ async def get_snapshot(snapshot_date: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise internal_error("Database error", e) from e

@@ -5,6 +5,7 @@ from typing import Literal
 from app.db import execute_query
 from app.cache import LRUCache
 from app.models import ContentsResponse, DirectoryEntry
+from app.errors import internal_error
 
 router = APIRouter(prefix="/api/contents", tags=["contents"])
 
@@ -194,4 +195,4 @@ async def get_contents(
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise internal_error("Database error", e) from e

@@ -5,6 +5,7 @@ from typing import Literal
 from app.db import execute_query
 from app.models import SearchResponse, DirectoryEntry
 from app.services.guardrails import validate_scope_path, QueryValidationError
+from app.errors import internal_error
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -135,4 +136,4 @@ async def search_files(
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise internal_error("Database error", e) from e

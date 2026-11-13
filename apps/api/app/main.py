@@ -1,33 +1,44 @@
 """CIL-rcc-tracker FastAPI application."""
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from app.settings import get_settings
+from app.ratelimit import RateLimitMiddleware
 from app.routers import housekeeping, recon, snapshots, browse, contents, search, query, voronoi, nl_to_sql, computing, projections, auth, feedback
+
+log = logging.getLogger("app")
 
 # Get settings
 settings = get_settings()
 
-# Create FastAPI app
+# Create FastAPI app. Interactive docs are opt-in (API_DOCS=true): they map
+# every endpoint for anyone who can reach the API.
 app = FastAPI(
     title=settings.api_title,
     version=settings.api_version,
     description=settings.api_description,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.api_docs else None,
+    redoc_url="/redoc" if settings.api_docs else None,
+    openapi_url="/openapi.json" if settings.api_docs else None,
 )
 
-# Configure CORS
+# CORS: the browser calls the same-origin Next.js proxy, so this only
+# matters for local development. No cookies are used (privileged calls
+# carry an explicit header secret), so credentials are not allowed and a
+# cross-site request has no ambient credential to ride on (no CSRF).
 cors_list = settings.get_cors_origins_list()
 # Subtree/report payloads are multi-MB JSON full of repetitive paths —
 # gzip cuts them ~4x through the tunnel.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "X-User", "X-Operator-Key", "X-Exec-Token", "X-Delete-Token"],
 )
 
 # Register routers
@@ -63,19 +74,18 @@ async def root():
         "name": settings.api_title,
         "version": settings.api_version,
         "description": settings.api_description,
-        "docs": "/docs",
-        "redoc": "/redoc",
     }
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint. Failure details go to the server log only."""
     from app.db import get_client
 
     try:
         client = get_client()
         client.execute("SELECT 1")
         return {"status": "healthy", "database": "connected"}
-    except Exception as e:
-        return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
+    except Exception:
+        log.exception("health check: database unreachable")
+        return {"status": "unhealthy", "database": "disconnected"}

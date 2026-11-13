@@ -4,6 +4,7 @@ from datetime import date
 from app.db import execute_query
 from app.cache import LRUCache
 from app.models import BrowseResponse, DirectoryEntry
+from app.errors import internal_error
 
 router = APIRouter(prefix="/api/browse", tags=["browse"])
 
@@ -130,4 +131,4 @@ async def browse_folders(
         return result
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise internal_error("Database error", e) from e

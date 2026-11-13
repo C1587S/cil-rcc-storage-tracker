@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.security import require_operator
 from app.settings import get_settings
+from app.errors import internal_error
 
 router = APIRouter(prefix="/api/computing", tags=["computing"])
 
@@ -208,7 +209,7 @@ async def ingest_latest():
 
         return {"status": "ok", "date": today}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+        raise internal_error("Ingestion failed", e) from e
 
 
 @router.get("/history/su")
