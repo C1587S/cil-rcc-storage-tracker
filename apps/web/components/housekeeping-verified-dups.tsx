@@ -27,7 +27,9 @@ type VFile = { path: string; owner: string | null; inode: number; nlink: number;
 type VSet = { group_id: string; blake3: string; size: number; copies: number; byte_verified: boolean;
               external_links: boolean; snapshot_date: string; verified_at: string; run_id: string;
               potential_logical_bytes: number; potential_allocated_bytes: number | null;
-              paths_total: number; paths_truncated: boolean; owners: string[]; files: VFile[] };
+              paths_total: number; paths_truncated: boolean; owners: string[]; files: VFile[];
+              snapshot_check: null | { snapshot: string; files: number; unchanged: number; changed: number;
+                                       missing: number; state: "consistent" | "needs_reverification" } };
 
 const STATUS_LABEL: Record<string, string> = {
   complete: "verified (complete)",
@@ -160,6 +162,18 @@ export function VerifiedDuplicates({ root, selected, toggle }: {
                       {r.blake3.slice(0, 12)}…
                       {r.byte_verified && <span className="ml-1 text-emerald-700 dark:text-emerald-400" title="Also compared byte for byte">✓bytes</span>}
                       {r.external_links && <span className="ml-1 text-amber-600" title="Some copy has hard links outside this set">⚠links</span>}
+                      {r.snapshot_check?.state === "consistent" && (
+                        <span className="ml-1 text-muted-foreground"
+                              title={`Every copy has the verified size, inode and mtime in the ${r.snapshot_check.snapshot} snapshot (metadata only)`}>
+                          ✓{r.snapshot_check.snapshot}
+                        </span>
+                      )}
+                      {r.snapshot_check?.state === "needs_reverification" && (
+                        <span className="ml-1 text-amber-600"
+                              title={`In the ${r.snapshot_check.snapshot} snapshot: ${r.snapshot_check.changed} changed, ${r.snapshot_check.missing} missing. Re-verify before relying on this set.`}>
+                          ⚠re-verify
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-1 text-right font-mono">{formatBytes(r.size)}</td>
                     <td className="px-2 py-1 text-right font-mono">×{r.copies}</td>
@@ -173,12 +187,21 @@ export function VerifiedDuplicates({ root, selected, toggle }: {
                   {open === key && (
                     <tr>
                       <td colSpan={7} className="border-b border-border/30 bg-muted/10 px-3 py-2">
+                        {r.snapshot_check?.state === "needs_reverification" && (
+                          <div className="text-[11px] text-amber-700 dark:text-amber-400 mb-1">
+                            {r.snapshot_check.changed} file(s) changed and {r.snapshot_check.missing} missing in the{" "}
+                            {r.snapshot_check.snapshot} snapshot since verification. This set is no longer evidence;
+                            selection is disabled until it is re-verified.
+                          </div>
+                        )}
                         {r.files.map((f) => {
                           const linked = (inodeCount.get(f.inode) ?? 0) > 1 || f.nlink > 1;
                           return (
                             <div key={f.path} className={cn("flex items-center gap-2 font-mono text-[11px]", !f.in_root && "opacity-60")}>
-                              <input type="checkbox" checked={selected.has(f.path)} disabled={!f.in_root}
-                                     title={f.in_root ? undefined : "Outside the current root"}
+                              <input type="checkbox" checked={selected.has(f.path)}
+                                     disabled={!f.in_root || r.snapshot_check?.state === "needs_reverification"}
+                                     title={!f.in_root ? "Outside the current root"
+                                            : r.snapshot_check?.state === "needs_reverification" ? "Changed since verification — re-verify first" : undefined}
                                      onChange={() => toggle(
                                        { path: f.path, bytes: r.size, files: 1, kind: "file", owner: f.owner },
                                        `find:dup-verified:${r.blake3.slice(0, 16)}`)} />

@@ -78,6 +78,7 @@ class DupverifyApiTest(unittest.TestCase):
         row = ("2026-11-13:abcd1234:8192", h, 8192, 2, 1, 0, "2026-11-13", "2026-11-14 01:00:00",
                "run1", 3, files)
         fake = FakeClient([("system.tables", [(4,)]), ("snapshots", [("2026-11-13",)]),
+                           ("LEFT JOIN", [("2026-11-13:abcd1234:8192", h, 3, 2, 0)]),
                            ("dupverify_files", [row])])
         with mock.patch.object(dupverify, "get_client", return_value=fake):
             r = self.client.get("/api/housekeeping/verified-duplicates/sets", params={"root": ROOT})
@@ -93,6 +94,9 @@ class DupverifyApiTest(unittest.TestCase):
         self.assertEqual(s["owners"], ["u1", "u2"])
         self.assertTrue(s["byte_verified"])
         self.assertIn("not a deletion instruction", body["caveat"])
+        # One of three files no longer matches the current snapshot.
+        self.assertEqual(s["snapshot_check"]["state"], "needs_reverification")
+        self.assertEqual(s["snapshot_check"]["changed"], 1)
         # Only complete groups' latest runs are eligible.
         sql = next(q for q, _ in fake.queries if "dupverify_files" in q)
         self.assertIn("status = 'complete'", sql)

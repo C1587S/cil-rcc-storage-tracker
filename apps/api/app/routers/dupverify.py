@@ -161,6 +161,41 @@ def verified_sets(root: str, min_size: int, limit: int, client=None) -> list[dic
     return out
 
 
+def snapshot_checks(keys: list[tuple[str, str]], snap: str | None, client=None) -> dict:
+    """For each (group_id, set) compare the verified file versions with a
+    snapshot: same path, size, inode and mtime (seconds). Metadata only —
+    agreement means "no sign of change", not a fresh content proof; any
+    disagreement means the set must be re-verified before it is relied on."""
+    if not keys or not snap:
+        return {}
+    client = client or get_client()
+    rows = client.execute(f"""
+        SELECT f.group_id, f.set_blake3, count() AS n,
+               countIf(e.path != '' AND e.size = f.size AND e.inode = f.inode
+                       AND f.mtime_ns != 0 AND e.modified_time = intDiv(f.mtime_ns, 1000000000)) AS same,
+               countIf(e.path = '') AS missing
+        FROM (
+            SELECT group_id, set_blake3, path, size, inode, mtime_ns
+            FROM filesystem.dupverify_files FINAL
+            WHERE (group_id, run_id) IN (SELECT group_id, run_id FROM ({LATEST}) WHERE status = 'complete')
+              AND (group_id, set_blake3) IN %(keys)s
+        ) AS f
+        LEFT JOIN (
+            SELECT path, size, inode, modified_time FROM filesystem.entries
+            WHERE snapshot_date = %(snap)s AND path IN (
+                SELECT path FROM filesystem.dupverify_files WHERE (group_id, set_blake3) IN %(keys)s)
+        ) AS e ON e.path = f.path
+        GROUP BY f.group_id, f.set_blake3
+    """, {"keys": keys, "snap": snap})
+    out = {}
+    for gid, h, n, same, missing in rows:
+        n, same, missing = int(n), int(same), int(missing)
+        out[(gid, h)] = {"snapshot": snap, "files": n, "unchanged": same, "missing": missing,
+                         "changed": n - same - missing,
+                         "state": "consistent" if same == n else "needs_reverification"}
+    return out
+
+
 def pending_groups(root: str, status: str, limit: int, client=None) -> list[dict]:
     client = client or get_client()
     pfx = root.rstrip("/") + "/"
@@ -205,7 +240,11 @@ def sets(root: str = Query(...), min_size: int = Query(1 << 20, ge=1),
     rows = verified_sets(root, min_size, limit, client)
     if byte_verified_only:
         rows = [r for r in rows if r["byte_verified"]]
-    return {"available": True, "current_snapshot": _current_snapshot(client), "rows": rows,
+    current = _current_snapshot(client)
+    checks = snapshot_checks([(r["group_id"], r["blake3"]) for r in rows], current, client)
+    for r in rows:
+        r["snapshot_check"] = checks.get((r["group_id"], r["blake3"]))
+    return {"available": True, "current_snapshot": current, "rows": rows,
             "caveat": CAVEAT.format(bv=", byte-compared where marked")}
 
 
