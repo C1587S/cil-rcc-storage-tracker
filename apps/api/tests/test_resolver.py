@@ -26,9 +26,22 @@ class TestRootScoping(unittest.TestCase):
     def test_sibling_prefix_cannot_leak(self):
         # /cds3/cil-old must NOT be matched by a /cds3/cil target
         rq = resolve("/cds3/cil", "2026-09-11", "/cds3/cil")
-        self.assertIn("path = %(tpath)s OR path LIKE %(tprefix)s", rq.where)
-        self.assertEqual(rq.params["tprefix"], "/cds3/cil/%")
+        self.assertIn("path = %(tpath)s OR startsWith(path, %(tprefix)s)", rq.where)
+        self.assertEqual(rq.params["tprefix"], "/cds3/cil/")
         self.assertNotIn("'/cds3/cil%'", rq.where)
+
+    def test_wildcard_characters_in_target_path_are_literal(self):
+        # Regression: LIKE '.../run_1/%' also matched .../run-1/ and
+        # .../runX1/, pulling files outside the target into manifests.
+        rq = resolve("/project/cil", "2026-09-11", "/project/cil/gcp/run_1%x")
+        self.assertNotIn("LIKE", rq.where.split("name LIKE")[0])
+        self.assertEqual(rq.params["tprefix"], "/project/cil/gcp/run_1%x/")
+        prefix = rq.params["tprefix"]
+        for inside in ["/project/cil/gcp/run_1%x/a.nc", "/project/cil/gcp/run_1%x/d/b"]:
+            self.assertTrue(inside.startswith(prefix), inside)
+        for outside in ["/project/cil/gcp/run-1%x/a.nc", "/project/cil/gcp/runX1Yx/a",
+                        "/project/cil/gcp/run_1%xy/a", "/project/cil/gcp/run_1%x"]:
+            self.assertFalse(outside.startswith(prefix), outside)
 
     def test_root_equal_path_allowed(self):
         rq = resolve("/cds3/cil", "2026-09-11", "/cds3/cil")

@@ -10,7 +10,10 @@ Design rules:
   different physical filesystems; inode spaces, quotas and campaigns differ).
 - All user values travel as bound parameters, never interpolated.
 - Paths are matched with an exact-or-prefix pair, never a bare LIKE 'x%'
-  (which would also match sibling paths like /cds3/cil-old).
+  (which would also match sibling paths like /cds3/cil-old). The prefix
+  test is startsWith(path, 'dir/'), never LIKE: `_` and `%` are common in
+  real directory names and are LIKE wildcards, so LIKE 'run_1/%' would
+  also select files under run-1/, runX1/, ... and put them in manifests.
 """
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -107,8 +110,8 @@ def resolve(
         conds.append("parent_path = %(tpath)s")
         conds.append("is_directory = 0")
     else:  # subtree, query
-        params["tprefix"] = path + "/%"
-        conds.append("(path = %(tpath)s OR path LIKE %(tprefix)s)")
+        params["tprefix"] = path + "/"
+        conds.append("(path = %(tpath)s OR startsWith(path, %(tprefix)s))")
         conds.append("is_directory = 0")
 
     if "ext" in predicate:
