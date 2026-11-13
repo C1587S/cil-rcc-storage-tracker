@@ -213,11 +213,27 @@ class VoronoiStore:
         # Recursive last_modified comes from directory_recursive_sizes so the
         # UI can encode "age" (cold data). The right side is bounded by the
         # same prefix + a slash-count cap so the join stays small.
+        #
+        # The voronoi rows are filtered in a subquery BEFORE the join. With
+        # the filter in the outer WHERE of a JOIN, ClickHouse did not
+        # pre-filter voronoi_precomputed and decompressed
+        # original_files_json (79 GiB uncompressed) for most of the
+        # snapshot: ~30 GiB read, p95 14 s, most of the dashboard's
+        # timeouts. Filtered first: same rows, ~10x faster, ~14x less read
+        # (docs/performance.md, finding 1).
         subtree_query = f"""
         SELECT v.node_id, v.name, v.path, v.size, v.is_directory, v.depth,
                v.children_json, v.file_count, v.is_synthetic, {files_expr},
                r.last_modified
-        FROM voronoi_precomputed AS v
+        FROM (
+            SELECT node_id, name, path, size, is_directory, depth,
+                   children_json, file_count, is_synthetic, original_files_json
+            FROM voronoi_precomputed
+            WHERE snapshot_date = %(snapshot_date)s
+              AND (path = %(root_path)s OR startsWith(path, %(path_prefix)s))
+              AND depth <= %(max_depth)s
+              AND (depth <= %(full_depth)s OR size >= %(min_size)s OR file_count >= %(min_files)s)
+        ) AS v
         LEFT JOIN (
             SELECT path, max(last_modified) AS last_modified
             FROM directory_recursive_sizes
@@ -226,10 +242,6 @@ class VoronoiStore:
               AND (length(path) - length(replaceAll(path, '/', ''))) <= %(max_slashes)s
             GROUP BY path
         ) AS r ON r.path = v.path
-        WHERE v.snapshot_date = %(snapshot_date)s
-          AND (v.path = %(root_path)s OR startsWith(v.path, %(path_prefix)s))
-          AND v.depth <= %(max_depth)s
-          AND (v.depth <= %(full_depth)s OR v.size >= %(min_size)s OR v.file_count >= %(min_files)s)
         ORDER BY v.depth, v.path
         """
         results = self.client.execute(
