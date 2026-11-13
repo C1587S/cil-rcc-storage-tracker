@@ -380,6 +380,7 @@ fn interrupt_then_resume_completes_without_rereading_finished_groups() {
     let r1 = results(&fx.out());
     assert_eq!(r1["g2"].status, GroupStatus::Incomplete);
     assert!(reasons(&r1["g2"]).contains(&SkipReason::Interrupted));
+    assert!(r1["g2"].io.full_bytes >= 8192, "partial reads before the stop are accounted for");
 
     stop.store(false, Ordering::SeqCst);
     let s2 = run_cfg(&c);

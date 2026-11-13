@@ -109,8 +109,8 @@ fn full_hash(ino: &Inode, size: u64, ctx: &Ctx, io_counts: &mut IoCounts) -> Res
     let f = open_checked(ino, io_counts)?;
     let path = ino.paths[0].path.clone();
     let mut hook = |off: u64| { if let Some(h) = ctx.hook { h(&path, off) } };
-    let (d, n) = io::full_digest(&f, size, ctx.settings.read_block, ctx.gov, &mut hook).map_err(from_read)?;
-    io_counts.full_bytes += n;
+    let d = io::full_digest(&f, size, ctx.settings.read_block, ctx.gov, &mut io_counts.full_bytes, &mut hook)
+        .map_err(from_read)?;
     unchanged_after(&f, ino)?;
     Ok(io::hex(&d))
 }
@@ -228,8 +228,8 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
             continue;
         }
         let r = open_checked(&inodes[i], &mut res.io).and_then(|f| {
-            let (d, n) = io::sample_digest(&f, g.size, s.sample_block, s.samples, ctx.gov).map_err(from_read)?;
-            res.io.sample_bytes += n;
+            let d = io::sample_digest(&f, g.size, s.sample_block, s.samples, ctx.gov, &mut res.io.sample_bytes)
+                .map_err(from_read)?;
             unchanged_after(&f, &inodes[i])?;
             Ok(io::hex(&d))
         });
@@ -292,8 +292,8 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
             for &i in &members[1..] {
                 let cmp = open_checked(&inodes[reference], &mut res.io).and_then(|a| {
                     let b = open_checked(&inodes[i], &mut res.io)?;
-                    let (eq, n) = io::byte_equal(&a, &b, g.size, s.read_block, ctx.gov).map_err(from_read)?;
-                    res.io.compare_bytes += n;
+                    let eq = io::byte_equal(&a, &b, g.size, s.read_block, ctx.gov, &mut res.io.compare_bytes)
+                        .map_err(from_read)?;
                     unchanged_after(&a, &inodes[reference])?;
                     unchanged_after(&b, &inodes[i])?;
                     Ok(eq)

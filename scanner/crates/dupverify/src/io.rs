@@ -206,28 +206,29 @@ pub fn fully_sampled(size: u64, block: u64, count: u64) -> bool {
     size <= block * count
 }
 
-/// Digest of spread samples (keyed by size and offsets).
-pub fn sample_digest(f: &File, size: u64, block: u64, count: u64, gov: &IoGovernor)
-    -> Result<([u8; 32], u64), ReadError> {
+/// Digest of spread samples (keyed by size and offsets). Bytes are added
+/// to `read` as they are read, so partial reads are accounted for too.
+pub fn sample_digest(f: &File, size: u64, block: u64, count: u64, gov: &IoGovernor, read: &mut u64)
+    -> Result<[u8; 32], ReadError> {
     let mut h = blake3::Hasher::new();
     h.update(b"cil-dupverify-sample-v1");
     h.update(&size.to_le_bytes());
     let mut buf = vec![0u8; block as usize];
-    let mut read = 0u64;
     for off in sample_offsets(size, block, count) {
         let len = block.min(size - off) as usize;
         gov.acquire(len as u64).map_err(ReadError::Halt)?;
-        read_exact_at(f, &mut buf[..len], off)?;
+        let r = read_exact_at(f, &mut buf[..len], off);
+        *read += len as u64;
+        r?;
         h.update(&off.to_le_bytes());
         h.update(&buf[..len]);
-        read += len as u64;
     }
-    Ok((*h.finalize().as_bytes(), read))
+    Ok(*h.finalize().as_bytes())
 }
 
 /// Full-content BLAKE3. `on_block` is a test hook called after each block.
-pub fn full_digest(f: &File, size: u64, block: u64, gov: &IoGovernor,
-                   on_block: &mut dyn FnMut(u64)) -> Result<([u8; 32], u64), ReadError> {
+pub fn full_digest(f: &File, size: u64, block: u64, gov: &IoGovernor, read: &mut u64,
+                   on_block: &mut dyn FnMut(u64)) -> Result<[u8; 32], ReadError> {
     advise(f, libc::POSIX_FADV_SEQUENTIAL);
     let mut h = blake3::Hasher::new();
     let mut buf = vec![0u8; block as usize];
@@ -236,7 +237,9 @@ pub fn full_digest(f: &File, size: u64, block: u64, gov: &IoGovernor,
         while off < size {
             let len = block.min(size - off) as usize;
             gov.acquire(len as u64).map_err(ReadError::Halt)?;
-            read_exact_at(f, &mut buf[..len], off)?;
+            let r = read_exact_at(f, &mut buf[..len], off);
+            *read += len as u64;
+            r?;
             h.update(&buf[..len]);
             off += len as u64;
             on_block(off);
@@ -249,28 +252,32 @@ pub fn full_digest(f: &File, size: u64, block: u64, gov: &IoGovernor,
         Ok(())
     })();
     advise(f, libc::POSIX_FADV_DONTNEED);
-    result.map(|_| (*h.finalize().as_bytes(), off))
+    result.map(|_| *h.finalize().as_bytes())
 }
 
 /// Byte-for-byte equality of two already-open files of `size` bytes.
-pub fn byte_equal(a: &File, b: &File, size: u64, block: u64, gov: &IoGovernor)
-    -> Result<(bool, u64), ReadError> {
+pub fn byte_equal(a: &File, b: &File, size: u64, block: u64, gov: &IoGovernor, read: &mut u64)
+    -> Result<bool, ReadError> {
     let mut ba = vec![0u8; block as usize];
     let mut bb = vec![0u8; block as usize];
     let mut off = 0u64;
-    while off < size {
-        let len = block.min(size - off) as usize;
-        gov.acquire(2 * len as u64).map_err(ReadError::Halt)?;
-        read_exact_at(a, &mut ba[..len], off)?;
-        read_exact_at(b, &mut bb[..len], off)?;
-        if ba[..len] != bb[..len] {
-            return Ok((false, 2 * (off + len as u64)));
+    let result = (|| {
+        while off < size {
+            let len = block.min(size - off) as usize;
+            gov.acquire(2 * len as u64).map_err(ReadError::Halt)?;
+            let r = read_exact_at(a, &mut ba[..len], off).and_then(|_| read_exact_at(b, &mut bb[..len], off));
+            *read += 2 * len as u64;
+            r?;
+            if ba[..len] != bb[..len] {
+                return Ok(false);
+            }
+            off += len as u64;
         }
-        off += len as u64;
-    }
+        Ok(true)
+    })();
     advise(a, libc::POSIX_FADV_DONTNEED);
     advise(b, libc::POSIX_FADV_DONTNEED);
-    Ok((true, 2 * off))
+    result
 }
 
 pub fn hex(d: &[u8; 32]) -> String {
