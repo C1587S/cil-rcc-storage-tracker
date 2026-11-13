@@ -324,94 +324,142 @@ counts only):
 
 ## Pilot 0: a small RCC run (prepared, not submitted)
 
-Pilot 0 needs no production schema change: its outputs stay in a private directory and
-are inspected with `summarize_results.py` before anything is imported.
+Pilot 0 needs no production schema change and imports nothing. Its outputs stay in a
+private directory and are inspected with `summarize_results.py`.
 
-The scope is the 2026-11-13 snapshot:
-- file sizes from 100 MiB to 1 GiB;
-- only groups of at most 4 files;
-- the 40 groups with the largest unverified upper bound.
+| | |
+|---|---|
+| Scope | 2026-11-13 snapshot, files 100 MiB–1 GiB, groups of ≤ 4 files, top 40 groups |
+| Size | 157 files, 5 owners, 7 top-level directories |
+| Limits | 1 worker, 25 MiB/s, 5 GiB total read, 30 min walltime, 2 CPUs, 2 GB, account and partition `cil` |
+| Reads | samples ≤ 49.1 MiB (51,445,760 bytes), plus full reads only where samples collide; hard cap 5 GiB (about 3.5 min at the rate cap). Worst case without the cap would be 133.7 GiB |
+| Writes | `~/dupverify/pilot0/` (0700) and the clone's `slurm_out/` (0700) only |
 
-| Measured with `--plan` | |
-|---|---:|
-| Files | 157 |
-| Owners | 5 |
-| Top-level directories | 7 |
-| Sample stage (always read) | ≤ 49.1 MiB |
-| Worst case if every sample collided | 133.7 GiB |
+### Preflight checklist
 
-Limits: 1 worker, 25 MiB/s, 5 GiB budget, 30 min, 2 CPUs, 2 GB. At the cap the
-budget takes about 3.5 min. The expected read is the samples plus full reads of any
-colliding groups (at most 4 GiB per group), always capped at 5 GiB.
+`scanner/scripts/dupverify_pilot_check.sh pre` checks each item and prints PASS, WARN
+or FAIL. It is read-only and never submits anything.
 
-Workstation (feature branch checked out; the export is read-only against ClickHouse):
+**No interference with scheduled RCC jobs**
+- It runs from a separate clone, pinned to the reviewed commit, with no local changes.
+  The checkout used by the chains is neither used nor modified; `post` compares its
+  HEAD and status with the preflight snapshot.
+- The pilot script never calls `sbatch` and has no `--dependency`/singleton.
+- Its job name, `cil_dupverify`, is not used by any chain script, and no pilot job is
+  already queued.
+- It warns if one of your scheduled jobs starts within 45 min. The pilot uses 2 CPUs
+  for at most 30 min.
+- It writes nothing under `/scratch/.../cil_scans`, `public_html` or shared project
+  trees.
+- `post` confirms every job queued before the pilot is still queued.
+
+**Paths stay private**
+- `~/dupverify` and `~/dupverify/pilot0` are 0700, and the candidate file is 0600 and
+  owned by you.
+- The candidate file's checksum matches the workstation export. It travels only over
+  SSH (`scp -p`).
+- The output directory is new (created 0700). The log directory is 0700 and the umask
+  is 077, so Slurm creates the job logs 0600.
+
+**No output or job log exposes file names or paths**
+- The plan output contains no paths.
+- `post` runs a leak check on both job logs, the Slurm job record, and the summary
+  report. It counts occurrences of every candidate path, every directory name below the
+  project root, and every distinctive file name, and requires zero.
+- Logs, `sacct` and failure mail carry counts, the job name and state only. Process
+  arguments and the job record show only home-directory paths.
+
+**Accepted residual effects**
+- Files not owned by the job user are read without `O_NOATIME`, so their atime may
+  update; `opened_without_noatime` reports how many. The tracker's age analysis uses
+  mtime.
+- Reads appear in normal GPFS I/O accounting.
+- `results.jsonl` necessarily contains paths; it stays 0600 and is never imported
+  without approval.
+
+### Commands
+
+**Workstation**, in the feature-branch checkout. The export is read-only against
+ClickHouse and only counts are printed:
 
 ```bash
-mkdir -m 700 -p ~/dupverify/pilot0
+umask 077
+mkdir -p ~/dupverify/pilot0 && chmod 700 ~/dupverify ~/dupverify/pilot0
 python3 scripts/dupverify/export_candidates.py --date 2026-11-13 \
     --min-size 100M --max-size 1G --skip-groups-over 4 --max-groups 40 \
     --out ~/dupverify/pilot0/cand_pilot0.jsonl
+(cd scanner && cargo build -q --release -p dupverify)
 scanner/target/release/cil-dupverify --input ~/dupverify/pilot0/cand_pilot0.jsonl --plan
-#   expect: groups 40, files 157, largest_group 4, sample_bytes_max 51445760
-ssh midway3.rcc.uchicago.edu 'mkdir -m 700 -p ~/dupverify/pilot0'
+#   expect "groups": 40, "files": 157, "largest_group": 4, "sample_bytes_max": 51445760
+stat -c '%a %n' ~/dupverify ~/dupverify/pilot0 ~/dupverify/pilot0/cand_pilot0.jsonl   # 700 700 600
+sha256sum ~/dupverify/pilot0/cand_pilot0.jsonl          # keep this value for EXPECT_SHA256
+```
+
+**Transfer** (SSH only):
+
+```bash
+ssh midway3.rcc.uchicago.edu 'umask 077; mkdir -p ~/dupverify/pilot0; chmod 700 ~/dupverify ~/dupverify/pilot0'
 scp -p ~/dupverify/pilot0/cand_pilot0.jsonl midway3.rcc.uchicago.edu:dupverify/pilot0/
 ```
 
-Midway3 login node. This uses a separate clone, so the checkout used by the scheduled
-chains is untouched:
+**Midway3 login node.** This is an isolated clone pinned to the reviewed commit:
 
 ```bash
+umask 077
 git clone --branch feature/content-verified-duplicates --single-branch \
-    https://github.com/C1587S/cil-rcc-storage-tracker.git ~/cil-dupverify-pilot
-cd ~/cil-dupverify-pilot && git log -1 --format='%h %s'
-rustc --version                       # a recent stable toolchain (1.80 or newer)
+    git@github.com:C1587S/cil-rcc-storage-tracker.git ~/cil-dupverify-pilot
+cd ~/cil-dupverify-pilot && git checkout --detach <REVIEWED_SHA>
+rustc --version                                          # recent stable (1.80 or newer)
 export CARGO_TARGET_DIR=/scratch/midway3/$USER/cargo-target-dupverify
 (cd scanner && nice cargo build --release -p dupverify)
-BIN=$CARGO_TARGET_DIR/release/cil-dupverify
-ls -l ~/dupverify/pilot0/cand_pilot0.jsonl                         # -rw-------
-$BIN --input ~/dupverify/pilot0/cand_pilot0.jsonl --plan           # same numbers as above
-mkdir -p slurm_out
+export DUPV_BIN=$CARGO_TARGET_DIR/release/cil-dupverify
+mkdir -m 700 -p slurm_out
+export PROD_CHECKOUT=<path of the checkout the scheduled chains run from>
+export EXPECT_SHA=<REVIEWED_SHA> EXPECT_SHA256=<value from the workstation>
+bash scanner/scripts/dupverify_pilot_check.sh pre        # must end with "RESULT: no failures"
+```
+
+**Submit** once, from the same shell:
+
+```bash
 sbatch --time=00:30:00 --mem=2G --cpus-per-task=2 \
-  --export=ALL,CANDIDATES=$HOME/dupverify/pilot0/cand_pilot0.jsonl,OUT=$HOME/dupverify/pilot0/out,DUPV_BIN=$BIN,DUPV_WORKERS=1,DUPV_MAX_READ_MIB_S=25,DUPV_BUDGET_GIB=5 \
+  --export=ALL,CANDIDATES=$HOME/dupverify/pilot0/cand_pilot0.jsonl,OUT=$HOME/dupverify/pilot0/out,DUPV_BIN=$DUPV_BIN,DUPV_WORKERS=1,DUPV_MAX_READ_MIB_S=25,DUPV_BUDGET_GIB=5 \
   scanner/scripts/dupverify_pilot.sh
+squeue -u $USER -n cil_dupverify                         # watch only this job
+#   to abort: scancel <jobid>   (only this id; it stops cleanly and can be resumed)
 ```
 
-Account `cil` and partition `cil` come from the script header.
-
-Checks after the job:
+**Validate.** Use the same shell, or re-export `DUPV_BIN` and `PROD_CHECKOUT` first:
 
 ```bash
-sacct -j <jobid> --format=JobID,State,ExitCode,Elapsed,MaxRSS,TotalCPU
-#   COMPLETED 0:0, or FAILED 3:0 = stopped at the budget (resumable, not an error)
-tail -n 80 slurm_out/dupverify_<jobid>.out                          # plan + summary, counts only
-grep -c '/project/' slurm_out/dupverify_<jobid>.out slurm_out/dupverify_<jobid>.err   # expect 0 and 0
-ls -la ~/dupverify/pilot0/out                                       # drwx------ and -rw-------
-python3 scripts/dupverify/summarize_results.py --out ~/dupverify/pilot0/out --recheck
-# only if verified_sets > 0: an independent byte check, at most 2 GiB, on a compute node
+cd ~/cil-dupverify-pilot && umask 077
+bash scanner/scripts/dupverify_pilot_check.sh post <jobid>     # must end with "RESULT: no failures"
+cat ~/dupverify/pilot0/summary-check.json                       # counts only: safe to share
+# only if verified_sets > 0: an independent byte check (at most 2 GiB) on a compute node
 srun --account=cil --partition=cil --time=00:15:00 --mem=1G --cpus-per-task=1 \
-  python3 scripts/dupverify/summarize_results.py --out ~/dupverify/pilot0/out --spot-check 2 --spot-check-max-mib 2048
+  python3 scripts/dupverify/summarize_results.py --out ~/dupverify/pilot0/out \
+  --spot-check 2 --spot-check-max-mib 2048
 ```
 
-Success looks like this:
-- All 40 groups are accounted for (complete, skipped, incomplete, deferred or not
-  attempted).
-- `bytes_read` is at most 5 GiB and `read_mib_s` at most 25.
-- There are no unexpected `io_error`s.
-- The recheck reports every verified path `unchanged`.
-- The spot check reports every checked set `identical`.
-- Logs contain no paths, and outputs are private.
-- `opened_without_noatime` and the `permission_denied` count show how GPFS permissions
-  and atime behave for this account.
+`post` checks:
+- the job state (COMPLETED, or exit 3, which means it stopped at the budget and can be
+  resumed);
+- that logs and the job record are free of paths and names;
+- output modes;
+- that all 40 groups are accounted for;
+- bytes read ≤ 5 GiB, and a read rate ≤ 25 MiB/s;
+- that the recheck reports every verified path unchanged;
+- that the scheduled jobs and the production checkout are as before.
 
-To inspect paths locally, copy the outputs back into a private directory:
+Share the `post` output and the two JSON reports; they contain counts only. Keep
+`results.jsonl` private. To look at paths, use `summarize_results.py --show-paths
+2> private-file` locally.
 
-```bash
-rsync -a --chmod=go-rwx midway3.rcc.uchicago.edu:dupverify/pilot0/out/ ~/dupverify/pilot0/out/
-python3 scripts/dupverify/summarize_results.py --out ~/dupverify/pilot0/out --show-paths \
-    2> ~/dupverify/pilot0/sets.txt && chmod 600 ~/dupverify/pilot0/sets.txt
-```
+Optional cleanup after review:
+- `rm -rf /scratch/midway3/$USER/cargo-target-dupverify`;
+- later, `rm -rf ~/cil-dupverify-pilot`.
 
-Nothing is imported until the schema is approved.
+Keep `~/dupverify/pilot0` until the results have been reviewed.
 
 **Pilot 1 (after pilot 0 is reviewed).** Larger scope (≥ 1 GiB, top 500 groups),
 4 workers, 200 MiB/s, 200 GiB budget, 4 h. The production schema can be applied first if
