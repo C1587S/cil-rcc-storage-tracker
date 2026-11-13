@@ -24,9 +24,17 @@ The approach is **model-driven, with a deterministic fallback**:
 3. **The manual SQL editor is always available**, with or without either
    of the above.
 
-There are no external AI inference APIs. The runtime (WebLLM or
-Transformers.js) and the model are chosen later, on measured accuracy,
-speed, browser coverage and resource needs.
+There are no external AI inference APIs and no third-party model hosting
+at run time. Questions, SQL, schemas, paths, file names, usernames,
+errors and results never leave infrastructure we control for AI
+inference (§9). The runtime (WebLLM or Transformers.js) and the model are
+chosen later, on measured accuracy, speed, browser coverage and resource
+needs.
+
+> Note: today's NL-to-SQL feature does send the question and the schema
+> prompt (plus, for `/fix`, the failed SQL and error text) to Groq. It
+> does not meet these requirements and is retired when the local
+> assistant ships.
 
 **The model is never trusted for security.** Server-side validation,
 read-only permissions, resource limits and cost controls stay exactly as
@@ -136,7 +144,8 @@ Estimates, to be replaced by measurements:
   - explanation correctness, rated by a reviewer;
   - p50/p95 latency and memory per device class (discrete GPU,
     integrated-GPU laptop, no WebGPU).
-- **Baseline:** the current Groq setup, for comparison only.
+- **Targets are absolute** (§8), so the evaluation never needs to send
+  questions or schema to an external model for comparison.
 
 ## 6. Security and cost: independent of the model
 
@@ -189,17 +198,124 @@ when the previous one is not available:
 - A small project test suite (pairs of known-equivalent queries from the
   evaluation set) checks the dialect pairs the dashboard relies on.
 
-An external API is not part of the design. It could only ever be
-enabled by explicit configuration, and is off by default.
+An external AI API is not part of the design and is not kept as an
+option.
 
 ## 8. Milestones (on a separate `experiment/` branch)
 
-1. Evaluation set plus an offline scorer that can run any generator.
+1. Evaluation set plus an offline scorer that can run any locally hosted
+   generator.
 2. A schema/metadata context generator for both backends.
-3. Browser prototype behind a feature flag. WebLLM and Transformers.js
+3. A model-asset pipeline (§9): pinned revision, checksums, license
+   files, upload to our own storage.
+4. Browser prototype behind a feature flag. WebLLM and Transformers.js
    side by side with 2–3 candidate models, all four capabilities and the
-   repair loop. Telemetry stays local to the session.
-4. **Decision:** adopt if, on the target devices, execution accuracy
-   (with repair) is at least the Groq baseline minus 10 points and median
-   latency is under 10 s. Choose the runtime and model on those numbers
-   and browser coverage.
+   repair loop. CSP enforcing first-party-only connections. Telemetry,
+   if any, stays local to the session.
+5. **Decision:** adopt if, on the target devices:
+   - execution accuracy with repair is at least 70% on the evaluation
+     set (initial proposal, to be confirmed once the set exists);
+   - dialect adaptation of at least 90% of console queries validates;
+   - median latency is under 10 s;
+   - a network audit shows no request leaves our origins.
+
+   Choose the runtime and model on those numbers and browser coverage.
+
+## 9. Privacy: model assets and inference stay on our infrastructure
+
+**Requirement:** sensitive lab information never needs to leave our
+controlled environment for AI inference. Normal authenticated
+communication between the browser and our own API/database is fine.
+
+### What is never sent to third parties
+
+User questions, generated SQL, schemas, directory paths, file names,
+usernames, query errors and query results. That includes no OpenAI,
+Anthropic, Hugging Face Inference API or other inference endpoint, and no
+AI telemetry or analytics.
+
+### Model assets: obtained once, then served by us
+
+- **Obtain during development only.** Download one candidate from its
+  source (e.g. Hugging Face) at a **pinned revision** (commit hash, not a
+  branch name), after checking its license.
+- **Asset manifest (small, committed):** model id, source revision, the
+  runtime (WebLLM library build or ONNX export), file list, SHA-256 of
+  every file, license name and file. The binaries themselves are **not**
+  committed to Git (about 0.3–2 GB).
+- **Reproducible deploy:** one script downloads the pinned revision,
+  verifies every SHA-256 against the manifest, and uploads to our
+  storage. Use first-party object storage behind our domain now (e.g. an
+  R2 bucket on a route of the dashboard domain), and the same domain or
+  approved institutional storage under UChicago hosting.
+- **Serving:** same origin as the app (e.g. `/models/<id>/<revision>/…`),
+  with immutable cache headers, HTTP range support, the correct
+  `application/wasm` type, and COOP/COEP headers (cross-origin isolation
+  enables multithreaded WASM for the CPU fallback).
+- **Integrity in the browser:** the loader fetches the manifest from our
+  origin and verifies each file's SHA-256 before handing it to the
+  runtime. A mismatch aborts with a clear message.
+- **Opt-in download:** the dashboard never downloads a model just
+  because a page opened. The user enables the assistant and sees the size
+  first.
+
+### Licensing (verify per candidate before selection)
+
+Redistribution terms decide whether we may host the weights. Many
+small coder models are Apache-2.0, which allows redistribution with the
+LICENSE/NOTICE files. Some sizes in the same family use more restrictive
+research licenses. For example, check whether the 3B Qwen2.5-Coder
+variant differs from the 0.5B/1.5B/7B. The asset manifest records the
+license, and the license files are served next to the weights.
+
+### Runtime configuration without third-party requests
+
+- **WebLLM:** supply our own `appConfig.model_list`, with the model
+  weights URL and the compiled model library (`model_lib` `.wasm`) both
+  pointing to our origin. Do not use the prebuilt list, which points at
+  public hosts.
+- **Transformers.js:** set `env.allowRemoteModels = false`,
+  `env.localModelPath = '/models/'`, and point
+  `env.backends.onnx.wasm.wasmPaths` at self-hosted ONNX Runtime files.
+  By default these runtime files come from a public CDN, so this must be
+  set explicitly.
+- **Belt and braces:** a Content-Security-Policy with
+  - `connect-src 'self'` (plus our API, if on another first-party
+    origin);
+  - `script-src 'self' 'wasm-unsafe-eval'`;
+  - `worker-src 'self' blob:`.
+
+  The browser then blocks any third-party fetch, even if a library
+  default changes. Roll it out as `Content-Security-Policy-Report-Only`
+  first, with reports sent to our own endpoint, then enforce.
+- **Verification:** an automated browser test that loads the assistant,
+  runs a question, and fails if any request goes to an origin other than
+  ours.
+
+### Offline and caching
+
+- After the first download, weights stay in the browser cache (Cache API
+  or IndexedDB). Inference then works offline; only running the query
+  needs our API.
+- A versioned cache key, the model id plus revision, makes upgrades
+  explicit and lets old versions be evicted.
+
+### No accidental disclosure through logs or errors
+
+- **Client:** no third-party error reporting or analytics in the app (none
+  today; keep it that way). Prompts, schemas and generated SQL are not
+  written to the console in production builds.
+- **Server:**
+  - Generated SQL reaches the API only when the user runs or validates
+    it, in a POST body, which is not logged by the proxy (it logs only
+    URLs).
+  - Server errors already return reference ids instead of internals.
+  - The schema/metadata endpoint that feeds the prompt returns structure
+    and descriptions only, under the same access rules as the rest of the
+    API.
+
+### Unchanged: security does not depend on the model
+
+Final query authorization, read-only enforcement, execution limits and
+BigQuery cost controls stay on the server (§6). The model only proposes
+text.
