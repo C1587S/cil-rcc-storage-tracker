@@ -4,90 +4,100 @@
 #SBATCH --partition=caslake
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1
-#SBATCH --mem=4G
-#SBATCH --time=12:00:00
-#SBATCH -o ./slurm_out/pipeline_%j.out
-#SBATCH -e ./slurm_out/pipeline_%j.err
-# Daily scan orchestrator - runs on Midway3 at 2am
-# Submits the scan job array, waits for completion, and leaves a flag for the publish job.
+#SBATCH --mem=1G
+#SBATCH --time=00:15:00
+#SBATCH -o ./slurm_out/cil_daily_pipeline_%j.out
+#SBATCH -e ./slurm_out/cil_daily_pipeline_%j.err
+# =============================================================================
+# Daily storage scan orchestrator (Midway3).
 #
-# First run (manual, from Midway3):
-#   sbatch --begin=02:00 scanner/scripts/daily_pipeline.sh
+#   1. Schedules tomorrow's run FIRST (scanner/scripts/lib/chain.sh), so a
+#      failure later in this job can never stop the chain.
+#   2. Refuses to start a scan while one is queued or running.
+#   3. Submits the scan array (scan_cil_parallel.sh) with one SCAN_DATE.
+#   4. Submits a short finalize job (afterany) that checks every source
+#      produced a completed manifest and only then writes the publish flag
+#      read by daily_publish.sh on Midway2. Nothing waits for 12 hours.
 #
-# After that it resubmits itself automatically every day.
-#
-# To stop it:
-#   scancel <job_id>  # find it with: squeue -u $USER
+# Start the chain (Midway3 login node, from the repository root):
+#   mkdir -p slurm_out
+#   sbatch --account=<acct> --begin=02:00 scanner/scripts/daily_pipeline.sh
+# One-off scan now, without touching the chain:
+#   sbatch --account=<acct> --export=ALL,CHAIN_ONCE=1 scanner/scripts/daily_pipeline.sh
+# Stop it:
+#   scancel -u $USER -n cil_daily_pipeline
+# =============================================================================
+set -eo pipefail
 
-set -e
+REPO_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+CHAIN_SCRIPT="scanner/scripts/daily_pipeline.sh"
+# shellcheck source=lib/chain.sh
+source "$REPO_DIR/scanner/scripts/lib/chain.sh"
 
-# Slurm account for this chain — set once, redirects everything:
-#   CIL_SLURM_ACCOUNT overrides explicitly; otherwise the account THIS job
-#   is already running under propagates to every child submission and
-#   self-resubmission (so `sbatch --account=pi-mgreenst <script>` redirects
-#   the whole chain); the #SBATCH header above is only the cold-start
-#   default. One exhausted allocation must never require editing files.
-ACCOUNT="${CIL_SLURM_ACCOUNT:-${SLURM_JOB_ACCOUNT:-cil}}"
-
-SCAN_SCRIPT="./scanner/scripts/scan_cil_parallel.sh"
-OUTPUT_DIR="/scratch/midway3/${USER}/cil_scans"
+OUTPUT_DIR="${CIL_SCAN_OUTPUT_DIR:-/scratch/midway3/${USER}/cil_scans}"
 FLAG_FILE="${OUTPUT_DIR}/.scan_complete"
+RUNNING_MARK="${OUTPUT_DIR}/.scan_running"
+SCAN_SCRIPT="scanner/scripts/scan_cil_parallel.sh"
+# Sources the array scans by default (task ids 0-6,8 in scan_cil_parallel.sh;
+# cds3 is scanned from a login node and published separately).
+EXPECTED_SOURCES="battuta-shares-S3-archive battuta_shares gcp home_dirs kupe_shares norgay sacagawea_shares coastal"
 
-echo "Daily pipeline started at $(date)"
-echo "Running on: $(hostname)"
-
-# Clean slurm logs from previous run
-echo "Cleaning previous slurm logs..."
-mkdir -p slurm_out
-rm -f slurm_out/scan_*.out slurm_out/scan_*.err
-
-# Remove previous flag
-rm -f "$FLAG_FILE"
-
-# Submit scan job array
-echo "Submitting scan job array..."
-JOB_ID=$(sbatch --parsable --account="$ACCOUNT" "$SCAN_SCRIPT")
-echo "Submitted job array: $JOB_ID"
-
-# Wait for all jobs to finish
-echo ""
-echo "Waiting for all jobs to finish..."
-while true; do
-    RUNNING=$(squeue -j "$JOB_ID" -h 2>/dev/null | wc -l)
-    if [ "$RUNNING" -eq 0 ]; then
-        break
+finalize() {
+  local array_id="$1" date="$2" failed="" missing="" src m rows total=0
+  chain_log "finalizing scan array $array_id for $date"
+  rm -f "$RUNNING_MARK"
+  failed=$(sacct -j "$array_id" -X -n -o JobID,State 2>/dev/null \
+             | awk '$2 != "COMPLETED" {print $1 ":" $2}' | tr '\n' ' ')
+  for src in $EXPECTED_SOURCES; do
+    m="${OUTPUT_DIR}/${src}_${date}_manifest.json"
+    if [ -f "$m" ] && grep -q '"completed": *true' "$m"; then
+      rows=$(grep -o '"total_rows": *[0-9]*' "$m" | grep -o '[0-9]*$')
+      if [ "${rows:-0}" -gt 0 ]; then total=$((total + rows)); continue; fi
     fi
-    echo "  $(date +%H:%M:%S) - $RUNNING job(s) still running..."
-    sleep 60
-done
-echo "All jobs finished."
+    missing="$missing $src"
+  done
+  if [ -n "$failed" ] || [ -n "$missing" ]; then
+    chain_log "NOT publishing $date. Failed tasks: ${failed:-none}. Sources without a completed manifest:${missing:- none}"
+    chain_log "Rerun just the failed sources (completed ones are skipped):"
+    chain_log "  sbatch --account=$ACCOUNT --job-name=cil_scan --export=ALL,SCAN_DATE=$date $SCAN_SCRIPT"
+    exit 1   # FAIL -> Slurm mail
+  fi
+  printf 'date=%s\nrows=%s\nfinalized=%s\narray=%s\n' "$date" "$total" "$(date -Is)" "$array_id" > "${FLAG_FILE}.tmp"
+  mv "${FLAG_FILE}.tmp" "$FLAG_FILE"
+  chain_log "all $(echo $EXPECTED_SOURCES | wc -w) sources complete for $date ($total rows); flag written: $FLAG_FILE"
+}
 
-# Check for failures
-echo ""
-echo "Checking for failures..."
-FAILED=$(sacct -j "$JOB_ID" --format=JobID,State -n | grep -v "COMPLETED\|PENDING\|RUNNING" | grep -v "^$" || true)
+chain_init
 
-if [ -n "$FAILED" ]; then
-    echo "Warning: Some jobs did not complete successfully:"
-    echo "$FAILED"
-    echo "Check logs in slurm_out/ for details."
-    echo "Skipping flag — publish job will not run."
-else
-    # Verify output files exist
-    FILE_COUNT=$(ls "$OUTPUT_DIR"/*.parquet 2>/dev/null | wc -l)
-    if [ "$FILE_COUNT" -eq 0 ]; then
-        echo "Error: No parquet files found in $OUTPUT_DIR"
-        echo "Skipping flag — publish job will not run."
-    else
-        echo "Found $FILE_COUNT parquet file(s). Writing flag for publish job..."
-        echo "$(date)" > "$FLAG_FILE"
-        echo "Flag written to $FLAG_FILE"
-    fi
+if [ "${1:-}" = "--finalize" ]; then
+  finalize "$2" "$3"
+  exit 0
 fi
 
-# Resubmit itself for tomorrow at 2am
-echo ""
-echo "Scheduling next scan for tomorrow at 2am..."
-sbatch --account="$ACCOUNT" --begin=$(date -d "tomorrow 02:00" +%Y-%m-%dT%H:%M:%S) "$0"
+chain_guard_overlap
+chain_schedule_next "$(date -d 'tomorrow 02:00' +%Y-%m-%dT%H:%M:%S)" \
+  || chain_log "continuing with today's scan despite the scheduling failure"
 
-echo "Pipeline finished at $(date)"
+if [ -n "$(squeue -h -u "$USER" -n cil_scan -o %i 2>/dev/null)" ]; then
+  chain_log "a cil_scan array is already queued or running; not starting another"
+  exit 0
+fi
+
+DATE=$(date +%Y-%m-%d)
+mkdir -p "$OUTPUT_DIR"
+rm -f "$CHAIN_LOG_DIR"/scan_*.out "$CHAIN_LOG_DIR"/scan_*.err
+echo "started=$(date -Is) date=$DATE" > "$RUNNING_MARK"
+
+ARRAY_ID=$(sbatch --parsable --account="$ACCOUNT" --job-name=cil_scan \
+             --export=ALL,SCAN_DATE="$DATE" "$SCAN_SCRIPT")
+ARRAY_ID="${ARRAY_ID%%;*}"
+chain_log "submitted scan array $ARRAY_ID for $DATE"
+
+FIN_ID=$(sbatch --parsable --account="$ACCOUNT" --job-name=cil_scan_finalize \
+           --dependency=afterany:"$ARRAY_ID" --time=00:10:00 --mem=1G \
+           --output="$CHAIN_LOG_DIR/cil_scan_finalize_%j.out" \
+           --error="$CHAIN_LOG_DIR/cil_scan_finalize_%j.err" \
+           --mail-type=FAIL --mail-user="${CIL_ALERT_EMAIL:-$USER@uchicago.edu}" \
+           --export=ALL,CHAIN_ONCE=1 \
+           "$CHAIN_SCRIPT" --finalize "$ARRAY_ID" "$DATE")
+chain_log "finalize job ${FIN_ID%%;*} will verify the array and write the publish flag"

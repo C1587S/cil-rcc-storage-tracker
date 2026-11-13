@@ -54,8 +54,10 @@ PATHS=(
 )
 
 # Configuration
-OUTPUT_DIR="/scratch/midway3/${USER}/cil_scans"
-DATE=$(date +%Y-%m-%d)
+OUTPUT_DIR="${CIL_SCAN_OUTPUT_DIR:-/scratch/midway3/${USER}/cil_scans}"
+# One date for the whole snapshot: daily_pipeline.sh exports SCAN_DATE so
+# tasks that start after midnight still belong to the same snapshot.
+DATE="${SCAN_DATE:-$(date +%Y-%m-%d)}"
 SCANNER_BIN="./scanner/target/release/storage-scanner"
 
 # Get target for this array task
@@ -84,9 +86,29 @@ if [ ! -f "${SCANNER_BIN}" ]; then
 fi
 
 # Create output directory
-mkdir -p ${OUTPUT_DIR}
+mkdir -p "${OUTPUT_DIR}"
 
-# Run scanner with resume capability
+# Idempotent per source and date:
+#   - a source whose manifest says completed is not scanned again;
+#   - leftovers of an interrupted attempt are moved aside (never deleted)
+#     and the source is rescanned from scratch.
+# --resume is deliberately not used: it re-stats every entry and can write
+# a partially scanned directory twice (duplicate rows in the snapshot).
+MANIFEST="${OUTPUT_DIR}/${DIR}_${DATE}_manifest.json"
+if [ -f "$MANIFEST" ] && grep -q '"completed": *true' "$MANIFEST"; then
+    echo "Already complete for ${DATE}: $MANIFEST — skipping (rows: $(grep -o '"total_rows": *[0-9]*' "$MANIFEST" | grep -o '[0-9]*$'))"
+    exit 0
+fi
+shopt -s nullglob
+LEFTOVERS=("${OUTPUT_DIR}/${DIR}_${DATE}"_chunk_*.parquet)
+[ -f "$MANIFEST" ] && LEFTOVERS+=("$MANIFEST")
+if [ ${#LEFTOVERS[@]} -gt 0 ]; then
+    ASIDE="${OUTPUT_DIR}/.partial/${DIR}_${DATE}_$(date +%Y%m%dT%H%M%S)"
+    mkdir -p "$ASIDE"
+    mv -- "${LEFTOVERS[@]}" "$ASIDE/"
+    echo "Moved ${#LEFTOVERS[@]} file(s) of an incomplete earlier attempt to $ASIDE"
+fi
+
 echo "Starting scan..."
 ${SCANNER_BIN} scan \
     --path "${SCAN_PATH}" \
@@ -94,7 +116,6 @@ ${SCANNER_BIN} scan \
     --threads ${SLURM_CPUS_PER_TASK} \
     --batch-size 50000 \
     --incremental \
-    --resume \
     --verbose
 
 EXIT_CODE=$?
