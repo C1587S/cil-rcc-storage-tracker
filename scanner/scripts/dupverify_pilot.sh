@@ -29,6 +29,9 @@
 #   DUPV_MAX_READ_MIB_S   sustained read cap  (default: 200)
 #   DUPV_WORKERS          concurrent files    (default: 4)
 #   DUPV_PREFIX           only files under this directory
+#   DUPV_SETTLE_SECS      skip files modified more recently (default: 600)
+#   DUPV_BIN              verifier binary (default: <repo>/scanner/target/release/cil-dupverify;
+#                         set it when building with CARGO_TARGET_DIR on scratch)
 #   DUPV_EXTRA            extra flags, e.g. "--byte-verify"
 #
 #   sbatch --export=ALL,CANDIDATES=$HOME/dupverify/cand_pilot.jsonl \
@@ -40,7 +43,7 @@ umask 077
 : "${CANDIDATES:?set CANDIDATES to the exported candidate JSONL}"
 [ -r "$CANDIDATES" ] || { echo "cannot read CANDIDATES" >&2; exit 2; }
 REPO="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-BIN="$REPO/scanner/target/release/cil-dupverify"
+BIN="${DUPV_BIN:-$REPO/scanner/target/release/cil-dupverify}"
 [ -x "$BIN" ] || { echo "build first: (cd scanner && cargo build --release -p dupverify)" >&2; exit 2; }
 OUT="${OUT:-$HOME/dupverify/$(basename "$CANDIDATES" .jsonl)}"
 mkdir -p "$OUT"
@@ -48,13 +51,15 @@ mkdir -p "$OUT"
 ARGS=(--input "$CANDIDATES" --out "$OUT"
       --workers "${DUPV_WORKERS:-4}"
       --max-read-mib-s "${DUPV_MAX_READ_MIB_S:-200}"
-      --budget-gib "${DUPV_BUDGET_GIB:-200}")
+      --budget-gib "${DUPV_BUDGET_GIB:-200}"
+      --settle-secs "${DUPV_SETTLE_SECS:-600}")
 [ -n "${DUPV_PREFIX:-}" ] && ARGS+=(--prefix "$DUPV_PREFIX")
 # shellcheck disable=SC2206
 [ -n "${DUPV_EXTRA:-}" ] && ARGS+=($DUPV_EXTRA)
 
 echo "cil-dupverify job ${SLURM_JOB_ID:-local} on $(hostname) at $(date -u +%FT%TZ)"
-echo "workers=${DUPV_WORKERS:-4} rate=${DUPV_MAX_READ_MIB_S:-200}MiB/s budget=${DUPV_BUDGET_GIB:-200}GiB"
+echo "workers=${DUPV_WORKERS:-4} rate=${DUPV_MAX_READ_MIB_S:-200}MiB/s budget=${DUPV_BUDGET_GIB:-200}GiB settle=${DUPV_SETTLE_SECS:-600}s"
+echo "binary: $("$BIN" --version)"
 "$BIN" --input "$CANDIDATES" --plan | sed 's/^/plan: /'
 # exec: the batch shell becomes the verifier, so --signal=B:TERM reaches it.
 # Exit 3 = stopped at budget or time limit; resubmit with the same OUT to continue.
