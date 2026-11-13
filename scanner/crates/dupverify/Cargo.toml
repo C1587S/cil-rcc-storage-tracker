@@ -1,0 +1,25 @@
+[package]
+name = "dupverify"
+version = "0.1.0"
+edition = "2021"
+description = "Read-only, I/O-budgeted content verification of duplicate candidates (BLAKE3). Never modifies, moves or deletes files."
+license = "MIT"
+
+[[bin]]
+name = "cil-dupverify"
+path = "src/main.rs"
+
+[lib]
+name = "dupverify"
+path = "src/lib.rs"
+
+[dependencies]
+blake3 = "1"
+clap = { version = "4.4", features = ["derive"] }
+crossbeam-channel = "0.5"
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.8"
