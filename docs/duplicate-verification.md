@@ -49,9 +49,11 @@ the candidate set is flagged `external_links`.
 
 ## Safety properties
 
-- **Read-only.** Candidates are opened with `O_RDONLY | O_NOFOLLOW`. `O_NOATIME` is
-  used where the kernel allows it (owner only), so verification does not make cold
-  files look recently used to atime-based age analysis.
+- **Read-only.** Candidates are opened with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK`
+  (a path swapped for a FIFO cannot hang the open). `O_NOATIME` is used where the
+  kernel allows it (owner only), so verification does not make cold files look
+  recently used to atime-based age analysis; opens without it are counted
+  (`opened_without_noatime`).
 - **Pages dropped after reading.** `posix_fadvise(DONTNEED)` keeps large reads from
   evicting other users' cached data.
 - **No actions.** Nothing is modified, moved or deleted, and no deletion action is
@@ -63,6 +65,10 @@ the candidate set is flagged `external_links`.
   after reading, and device, inode, size, mtime and ctime must all match. Reading one
   byte past the expected size detects growth. A file that changed is reported as
   `changed_during_read` and is never counted as verified.
+- **Settle window.** Files whose mtime or ctime is less than `--settle-secs` old
+  (default 600) are skipped as `recently_changed`: they may still be being written,
+  and with whole-second timestamps a write in the same second as the stat would be
+  invisible to the identity checks and to the cache key.
 - **I/O governance**, shared by all workers:
   - a sustained read-rate cap (token bucket, `--max-read-mib-s`);
   - a hard total budget (`--budget-gib`). Once a read would exceed it the run winds
@@ -74,7 +80,11 @@ the candidate set is flagged `external_links`.
 - **Resumable.** `results.jsonl` is appended after every group and is also the
   checkpoint. Rerunning with the same `--out` skips groups recorded as complete,
   skipped or deferred, and retries incomplete ones. Exit code 3 means the run stopped
-  early and can be resumed.
+  early and can be resumed. Resuming is refused when scope settings differ from the
+  ones recorded in `run-config.json` (prefix, sampling, limits, settle window), so a
+  group completed under a narrower scope is never skipped by accident. A line left
+  torn by a crash (`kill -9`, node failure) is terminated on the next start, readers
+  skip it, and that group is redone.
 - **Safe cache reuse.** Digests are reused only for the identical file version,
   matched on device, inode, size, mtime_ns and ctime_ns. Any write, truncate, chmod or
   replacement changes ctime, which users cannot set, so a stale digest is recomputed
@@ -91,6 +101,7 @@ the candidate set is flagged `external_links`.
   - `budget_exhausted`
   - `interrupted`
   - `out_of_scope`
+  - `recently_changed`
 
   Group statuses:
   - `complete`: authoritative.
@@ -131,6 +142,13 @@ scanner/target/release/cil-dupverify --input ~/dupverify/cand_pilot.jsonl --plan
 sbatch --export=ALL,CANDIDATES=$HOME/dupverify/cand_pilot.jsonl scanner/scripts/dupverify_pilot.sh
 ```
 
+Inspect the outputs without any database (standard library; runs on RCC too). It
+prints counts only unless `--show-paths`:
+
+```bash
+python3 scripts/dupverify/summarize_results.py --out ~/dupverify/cand_pilot --recheck
+```
+
 Bring `~/dupverify/cand_pilot/` back and import it. This needs the schema; see below.
 
 ```bash
@@ -151,26 +169,121 @@ Main flags:
 | `--byte-verify` | off |
 | `--max-group-files` | 50000 |
 | `--prefix DIR` | none (repeatable) |
+| `--settle-secs` | 600 |
 | `--cache FILE` | none |
 | `--no-resume` | off |
 | `--plan` | estimate only, no file access |
 
-**Schema.** `clickhouse/schema/06_duplicate_verification.sql` is not applied
-automatically; the compose init uses its own inline schema. It adds four new tables and
-changes no existing one. Applying it to production needs approval:
+## Production schema (not applied)
+
+`clickhouse/schema/06_duplicate_verification.sql` creates four tables. The compose
+init uses its own inline schema and never reads this file, so nothing applies it
+automatically. Until it is applied, the Content-verified view says that no
+verification has been imported, and the API answers `available: false`.
+
+| Table | One row per | Holds | Engine / key |
+|---|---|---|---|
+| `dupverify_runs` | verification run | settings, outcome (`stopped`), group counts, bytes read, elapsed, skip-reason counts | ReplacingMergeTree, `ORDER BY run_id` |
+| `dupverify_groups` | group × run | status, common directory, files, inodes examined, duplicate sets, bytes read, note. The latest row per group is authoritative | ReplacingMergeTree, monthly partitions, `ORDER BY (snapshot_date, group_id, run_id)` |
+| `dupverify_files` | path in a verified set (complete groups only) | BLAKE3, byte-verified flag, copies, device, inode, nlink, allocated bytes, sparse flag, verified mtime/ctime, path, owner | as above, `+ (set_blake3, path)` |
+| `dupverify_skipped` | file not compared | path, reason | as above, `+ path` |
+
+Files that were compared and found unique are not stored.
+
+**Storage.** Measured with ClickHouse 24.1 on synthetic rows whose paths match the
+real average length for these candidates (176 characters):
+
+| Table | Bytes per row on disk |
+|---|---:|
+| `dupverify_files` | 74 |
+| `dupverify_skipped` | 15 |
+| `dupverify_groups` | 9.5 |
+
+Real paths may compress less well, so allow 2×:
+
+| Scope | Worst case (every file recorded) |
+|---|---:|
+| Small pilot (40 groups, 157 files) | under 50 KB |
+| ≥ 1 GiB (3,215 groups, 15,949 files) | under 3 MB |
+| ≥ 100 MiB (58,431 groups, 443,695 files) | under 80 MiB |
+
+For comparison, one snapshot of `entries` is several GiB. Re-verification adds history
+rows (there is no TTL).
+
+**Migration safety.**
+- The file contains only `CREATE TABLE IF NOT EXISTS` on four new names. It has no
+  `ALTER`, `DROP`, `INSERT` or materialized view, and doesn't touch existing tables,
+  partitions or merges.
+- It is idempotent, needs no restart, and requires only that the `filesystem` database
+  exists.
+- No grants change. `tracker_api` already has `SELECT` on `filesystem.*`, and only the
+  importer, through the admin account like the snapshot importer, writes.
+- The deployed API has no endpoints for these tables until this branch is deployed, so
+  applying the schema alone changes nothing visible.
+
+Pre-check:
+
+```bash
+docker compose exec -T clickhouse clickhouse-client --readonly=1 -q \
+  "SELECT name FROM system.tables WHERE database = 'filesystem' AND name LIKE 'dupverify%'"
+```
+
+It should print nothing.
+
+Apply (needs approval):
 
 ```bash
 docker compose exec -T clickhouse clickhouse-client --multiquery < clickhouse/schema/06_duplicate_verification.sql
 ```
 
-Until then, the Content-verified view says that no verification has been imported.
+Then verify: the pre-check should list the four tables.
+
+Rollback drops only these four tables:
+
+```bash
+docker compose exec -T clickhouse clickhouse-client --multiquery <<'SQL'
+DROP TABLE IF EXISTS filesystem.dupverify_skipped SYNC;
+DROP TABLE IF EXISTS filesystem.dupverify_files SYNC;
+DROP TABLE IF EXISTS filesystem.dupverify_groups SYNC;
+DROP TABLE IF EXISTS filesystem.dupverify_runs SYNC;
+SQL
+```
+
+The source of truth stays in the private output directories (`results.jsonl` and
+summaries), so everything can be re-imported after a rollback.
+
+## Staying valid as files change
+
+A verified set describes files as they were when read. Its validity is tracked in
+layers. None of them ever produces a deletion action or a manifest.
+
+1. **Version recorded.** Each verified inode stores device, inode, size, mtime_ns and
+   ctime_ns, and each group its verification time. Every set shows its verified date.
+2. **Snapshot check (automatic, metadata only).** Each `/sets` response compares every
+   copy with the latest snapshot: same path, size, inode and mtime in seconds.
+   - If any copy changed or is missing, the set is marked **re-verify** and its copies
+     cannot be selected from the verified view.
+   - Agreement means "no sign of change", not a new proof: the snapshot has no ctime,
+     and a copy made with preserved mtime can still differ.
+3. **Live recheck (stat only, no content read).** `summarize_results.py --recheck`
+   compares the full recorded version, including ctime, which users cannot set, with
+   `lstat` now.
+4. **Re-verification.** Exporting the same scope from a newer snapshot gives new group
+   ids; a run over them supersedes the old results. Through the digest cache,
+   unchanged files (same device, inode, size, mtime and ctime) cost no reads, and only
+   changed files are read again.
+5. **Decisions.** A verified set is evidence for reviewers. Targets made from it go
+   through the unchanged Housekeeping review, manifest, receipt and audit flow.
+   Reviewers should only act on sets that are consistent with the current snapshot and
+   recently verified. Checks at execution time remain the executor's own and are not
+   affected.
 
 ## Tests
 
 | Suite | Covers |
 |---|---|
-| `cargo test -p dupverify` | 27 tests on synthetic fixtures. Content: identical content under different names; same name and size with different content; identical samples but different elsewhere. File kinds: hard links (inside and outside the set), symlinks, directories, missing files, zero-byte files, 64 MiB sparse files. Runtime behaviour: budget stop then resume; in-place modification and growth during hashing; `chmod 000`; interrupt then resume without rereading finished groups; cache reuse and invalidation (identical rewrite with the mtime restored still invalidates via ctime). Limits and outputs: groups of 15 files (12 identical); byte verification; prefix scoping on path-component boundaries; deferral; 0600/0700 outputs; candidates unchanged after a run. |
-| `scripts/tests/dupverify_e2e_test.sh` | Against a throwaway ClickHouse container: export, verify, import, idempotent re-import, a budget-stopped run, and the API's own SQL. |
+| `cargo test -p dupverify` | 33 tests on synthetic fixtures. Content: identical content under different names; same name and size with different content; identical samples but different elsewhere. File kinds: hard links (inside and outside the set), symlinks, directories, missing files, zero-byte files, 64 MiB sparse files. Runtime behaviour: budget stop then resume; in-place modification and growth during hashing; `chmod 000`; interrupt then resume without rereading finished groups; cache reuse and invalidation (identical rewrite with the mtime restored still invalidates via ctime). Limits and outputs: groups of 15 files (12 identical); byte verification; prefix scoping on path-component boundaries; deferral; 0600/0700 outputs; candidates unchanged after a run. After review: settle window, recorded versions, recovery from a torn last line after a crash, refusal to resume under a different scope, a failing byte-verify reference charged to itself, and a FIFO open that does not block. |
+| `scripts/tests/dupverify_e2e_test.sh` | 31 checks against a throwaway ClickHouse container: export, verify, the offline summary (recheck, independent byte check, file modes), import, idempotent re-import, a budget-stopped run, the API's own SQL, a file rewritten after verification, and a newer snapshot that disagrees with one set. |
 | `apps/api/tests/test_dupverify.py` | GET-only routes, `available: false` without tables, root validation, response shape and savings, parameterized prefixes, and labels on the probable endpoint. |
 
 ## Benchmarks
@@ -209,33 +322,103 @@ counts only):
 - Wall time on GPFS will be set by the rate cap and the metadata server, not by hashing
   speed.
 
-## Pilot proposal
+## Pilot 0: a small RCC run (prepared, not submitted)
 
-These are proposed steps, not yet run. Each needs approval.
+Pilot 0 needs no production schema change: its outputs stay in a private directory and
+are inspected with `summarize_results.py` before anything is imported.
 
-1. Apply the 06 schema to production ClickHouse. It is additive: four new tables.
-2. Export the **≥ 1 GiB scope, top 500 groups by upper bound**, optionally restricted
-   to one lab directory with `--prefix`. Check `--plan`.
-   - The sample stage reads at most `files × 320 KiB`, about 5 GiB for all 15,949
-     files ≥ 1 GiB.
-   - Full reads happen only where samples collide. That should be rare, given the April
-     result.
-3. Submit `dupverify_pilot.sh` once on Midway3:
-   - account `cil`, partition `cil`;
-   - 4 CPUs, 4 GB, 4 h;
-   - 4 workers, **200 MiB/s cap, 200 GiB total budget**.
+The scope is the 2026-11-13 snapshot:
+- file sizes from 100 MiB to 1 GiB;
+- only groups of at most 4 files;
+- the 40 groups with the largest unverified upper bound.
 
-   At the cap, 200 GiB takes about 17 min. The time limit leaves room for metadata
-   latency. It stops cleanly at the budget or 5 min before the limit.
-4. Copy the results back, import, and review in Housekeeping:
-   - the confirmation rate;
-   - bytes read per verified GiB;
-   - skip reasons (permission denied is expected outside the job user's groups);
-   - incomplete groups.
-5. Only then consider wider scopes. If GPFS load is a concern, use a lower cap or an
-   off-hours window.
+| Measured with `--plan` | |
+|---|---:|
+| Files | 157 |
+| Owners | 5 |
+| Top-level directories | 7 |
+| Sample stage (always read) | ≤ 49.1 MiB |
+| Worst case if every sample collided | 133.7 GiB |
 
-Open questions for the pilot:
-- whether `O_NOATIME` and `fadvise` behave as expected on GPFS;
+Limits: 1 worker, 25 MiB/s, 5 GiB budget, 30 min, 2 CPUs, 2 GB. At the cap the
+budget takes about 3.5 min. The expected read is the samples plus full reads of any
+colliding groups (at most 4 GiB per group), always capped at 5 GiB.
+
+Workstation (feature branch checked out; the export is read-only against ClickHouse):
+
+```bash
+mkdir -m 700 -p ~/dupverify/pilot0
+python3 scripts/dupverify/export_candidates.py --date 2026-11-13 \
+    --min-size 100M --max-size 1G --skip-groups-over 4 --max-groups 40 \
+    --out ~/dupverify/pilot0/cand_pilot0.jsonl
+scanner/target/release/cil-dupverify --input ~/dupverify/pilot0/cand_pilot0.jsonl --plan
+#   expect: groups 40, files 157, largest_group 4, sample_bytes_max 51445760
+ssh midway3.rcc.uchicago.edu 'mkdir -m 700 -p ~/dupverify/pilot0'
+scp -p ~/dupverify/pilot0/cand_pilot0.jsonl midway3.rcc.uchicago.edu:dupverify/pilot0/
+```
+
+Midway3 login node. This uses a separate clone, so the checkout used by the scheduled
+chains is untouched:
+
+```bash
+git clone --branch feature/content-verified-duplicates --single-branch \
+    https://github.com/C1587S/cil-rcc-storage-tracker.git ~/cil-dupverify-pilot
+cd ~/cil-dupverify-pilot && git log -1 --format='%h %s'
+rustc --version                       # a recent stable toolchain (1.80 or newer)
+export CARGO_TARGET_DIR=/scratch/midway3/$USER/cargo-target-dupverify
+(cd scanner && nice cargo build --release -p dupverify)
+BIN=$CARGO_TARGET_DIR/release/cil-dupverify
+ls -l ~/dupverify/pilot0/cand_pilot0.jsonl                         # -rw-------
+$BIN --input ~/dupverify/pilot0/cand_pilot0.jsonl --plan           # same numbers as above
+mkdir -p slurm_out
+sbatch --time=00:30:00 --mem=2G --cpus-per-task=2 \
+  --export=ALL,CANDIDATES=$HOME/dupverify/pilot0/cand_pilot0.jsonl,OUT=$HOME/dupverify/pilot0/out,DUPV_BIN=$BIN,DUPV_WORKERS=1,DUPV_MAX_READ_MIB_S=25,DUPV_BUDGET_GIB=5 \
+  scanner/scripts/dupverify_pilot.sh
+```
+
+Account `cil` and partition `cil` come from the script header.
+
+Checks after the job:
+
+```bash
+sacct -j <jobid> --format=JobID,State,ExitCode,Elapsed,MaxRSS,TotalCPU
+#   COMPLETED 0:0, or FAILED 3:0 = stopped at the budget (resumable, not an error)
+tail -n 80 slurm_out/dupverify_<jobid>.out                          # plan + summary, counts only
+grep -c '/project/' slurm_out/dupverify_<jobid>.out slurm_out/dupverify_<jobid>.err   # expect 0 and 0
+ls -la ~/dupverify/pilot0/out                                       # drwx------ and -rw-------
+python3 scripts/dupverify/summarize_results.py --out ~/dupverify/pilot0/out --recheck
+# only if verified_sets > 0: an independent byte check, at most 2 GiB, on a compute node
+srun --account=cil --partition=cil --time=00:15:00 --mem=1G --cpus-per-task=1 \
+  python3 scripts/dupverify/summarize_results.py --out ~/dupverify/pilot0/out --spot-check 2 --spot-check-max-mib 2048
+```
+
+Success looks like this:
+- All 40 groups are accounted for (complete, skipped, incomplete, deferred or not
+  attempted).
+- `bytes_read` is at most 5 GiB and `read_mib_s` at most 25.
+- There are no unexpected `io_error`s.
+- The recheck reports every verified path `unchanged`.
+- The spot check reports every checked set `identical`.
+- Logs contain no paths, and outputs are private.
+- `opened_without_noatime` and the `permission_denied` count show how GPFS permissions
+  and atime behave for this account.
+
+To inspect paths locally, copy the outputs back into a private directory:
+
+```bash
+rsync -a --chmod=go-rwx midway3.rcc.uchicago.edu:dupverify/pilot0/out/ ~/dupverify/pilot0/out/
+python3 scripts/dupverify/summarize_results.py --out ~/dupverify/pilot0/out --show-paths \
+    2> ~/dupverify/pilot0/sets.txt && chmod 600 ~/dupverify/pilot0/sets.txt
+```
+
+Nothing is imported until the schema is approved.
+
+**Pilot 1 (after pilot 0 is reviewed).** Larger scope (≥ 1 GiB, top 500 groups),
+4 workers, 200 MiB/s, 200 GiB budget, 4 h. The production schema can be applied first if
+the results are to be shown in Housekeeping.
+
+Open questions for the pilots:
+- whether `O_NOATIME` and `fadvise` behave as expected on GPFS (see
+  `opened_without_noatime`);
 - which account's read permissions the job should run under;
 - whether RCC prefers a specific partition or QoS for I/O-bound jobs.
