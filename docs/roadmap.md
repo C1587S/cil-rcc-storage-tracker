@@ -16,6 +16,54 @@ eventually be owned by the Climate Impact Lab rather than a personal account.
 | 6. Low-cost hosting and ownership | Planned (below) |
 | 7. BigQuery experiment | Designed, not started ([bigquery-experiment.md](bigquery-experiment.md)) |
 | 8. Self-hosted SQL assistant | Designed, not started ([sql-assistant-experiment.md](sql-assistant-experiment.md)): local LLM in the browser (WebLLM or Transformers.js, small quantized model) as the primary assistant for question→SQL, ClickHouse↔BigQuery adaptation, error repair and plain-language explanations; SQLGlot as an optional deterministic fallback for translating existing SQL; the manual SQL editor always available; no external AI inference API, third-party model hosting or AI telemetry: model weights are pinned, checksummed and served from our own infrastructure; server-side validation, read-only accounts, limits and cost controls independent of the model |
+| 9. UI/UX redesign | Planned, **after** reporting recovery and data-integrity work. See "UI/UX redesign" below |
+
+## UI/UX redesign (milestone 9)
+
+**Goal:** make the dashboard read as a polished research-infrastructure
+platform, preserving every existing capability, especially custom SQL
+exploration and the interactive visualizations.
+
+1. **Audit first, no rewrite.** Review:
+   - visual hierarchy, typography, spacing, color and consistency;
+   - navigation, information architecture and discoverability;
+   - layouts, tables, filters, search and analytical workflows;
+   - each surface: SQL console, storage explorer (tree), Voronoi,
+     treemap, computing dashboard, housekeeping;
+   - responsive behavior, accessibility (WCAG 2.2 AA: contrast,
+     keyboard, focus, screen-reader labels), loading/empty/error
+     states, perceived performance;
+   - light/dark parity.
+
+   Output: an annotated screenshot inventory and a prioritized findings
+   list.
+2. **Design proposal.** A small design system on the existing stack (Next.js,
+   Tailwind, the current `components/ui` primitives):
+   - tokens for color, type scale, spacing, radius and elevation, shared
+     by light and dark;
+   - a documented component set (page header, filter bar, data table,
+     stat tiles, chart frame, empty/loading/error states);
+   - chart conventions (axis, legend, color for size/age/owner) applied
+     consistently to the treemap, Voronoi and computing charts;
+   - a navigation/IA proposal.
+
+   No large UI framework is added unless a gap justifies it.
+3. **Staged implementation, each stage reviewable visually and testable
+   on its own:**
+   1. Tokens and primitives, with no layout change.
+   2. App shell and navigation.
+   3. Tables, filters and search.
+   4. SQL console.
+   5. Explorer and visualizations.
+   6. Computing and housekeeping.
+   7. Accessibility and responsive pass.
+4. **Per stage:**
+   - before/after screenshots in both themes;
+   - a Playwright smoke test of the affected workflows;
+   - Lighthouse/axe checks;
+   - the read-only benchmark harness to confirm no data-path regressions.
+
+   Work happens on a feature branch, deployed only after review.
 
 ## Low-cost hosting objective: about $0–10/month
 
