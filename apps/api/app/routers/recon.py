@@ -383,14 +383,19 @@ def dismissals(root: str = Query(...)):
 def duplicates(root: str = Query(...), min_size: int = Query(1 << 30, ge=1 << 20),
                max_diverge_level: int = Query(2, ge=1, le=6),
                include_siblings: bool = Query(default=False)):
-    """Probable duplicates: same basename AND same byte size, above a
+    """PROBABLE (unverified) duplicates: same basename AND same byte size, above a
     threshold — WITH a structural bar. On these trees, filename+size alone
     drowns in scenario outputs (thirty legitimate damages.nc4 under sibling
     batch dirs). A group counts only when its copies diverge close to the
     root (structurally unrelated trees = mirror copies); groups whose
     copies share a deep common ancestor are hidden as probable scenario
     siblings. The common ancestor of the whole group is computed from the
-    lexicographic min/max paths — for prefix trees they bound the group."""
+    lexicographic min/max paths — for prefix trees they bound the group.
+
+    No content is read: `potential_upper_bound` ((copies - 1) * size, also
+    returned as the legacy `wasted`) is not confirmed reclaimable storage.
+    Content-verified results live under /api/housekeeping/verified-duplicates.
+    An April 2026 hash check of 200 such groups found no true duplicates."""
     _check_root(root)
     snap = _snap()
     root_parts = len(root.split("/"))  # ['', 'project', 'cil'] -> 3
@@ -419,8 +424,10 @@ def duplicates(root: str = Query(...), min_size: int = Query(1 << 30, ge=1 << 20
         rows = get_client().execute(sql, {
             "snap": snap, "root": root, "rootpfx": root + "/", "min": min_size,
         }, settings={"max_result_rows": 0, "max_result_bytes": 0})
-        return [{"name": n, "bytes": int(sz), "copies": int(c), "wasted": int(w),
-                 "paths": list(ps), "owners": list(os_), "diverge_level": int(dl)}
+        return [{"name": n, "bytes": int(sz), "copies": int(c),
+                 "wasted": int(w), "potential_upper_bound": int(w), "verification": "unverified",
+                 "paths": list(ps), "owners": list(os_), "paths_truncated": int(c) > len(ps),
+                 "diverge_level": int(dl)}
                 for n, sz, c, w, ps, os_, dl in rows]
 
     all_rows = _cached(("dups2", snap, root, min_size), run)
@@ -429,12 +436,16 @@ def duplicates(root: str = Query(...), min_size: int = Query(1 << 30, ge=1 << 20
                 if r["diverge_level"] > max_diverge_level]
     rows = (kept + siblings) if include_siblings else kept
     return {"snapshot": snap, "min_size": min_size,
+            "basis": "name_and_size", "verification": "unverified",
             "rows": rows[:100],
             "hidden_sibling_groups": 0 if include_siblings else len(siblings),
-            "caveat": ("Matched by basename + exact byte size (not content hash), and only "
-                       f"where copies split within the top {max_diverge_level} directory levels "
-                       "— copies that differ only deep in sibling scenario/batch trees are "
-                       "hidden as probable legitimate outputs. Verify before deleting."),
+            "caveat": ("Probable, not verified: matched by basename + exact byte size from "
+                       "metadata; file contents were never read. Only groups whose copies split "
+                       f"within the top {max_diverge_level} directory levels are shown — copies "
+                       "that differ only deep in sibling scenario/batch trees are hidden as "
+                       "probable legitimate outputs (an optional heuristic). The potential figure "
+                       "is an upper bound, not confirmed storage: same-name, same-size scientific "
+                       "outputs usually differ in content. Use content verification before acting."),
             }
 
 

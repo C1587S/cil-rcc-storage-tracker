@@ -13,6 +13,7 @@ T="$(mktemp -d)"
 cleanup() { docker rm -f "$C" >/dev/null 2>&1; rm -rf "$T"; }
 trap cleanup EXIT
 FAIL=0; PASS=0
+exec </dev/null  # docker exec -i must never wait on an inherited stdin
 check() { if eval "$2"; then PASS=$((PASS + 1)); echo "  ok   $1"; else FAIL=$((FAIL + 1)); echo "  FAIL $1"; fi; }
 
 (cd "$REPO/scanner" && cargo build -q -p dupverify) || { echo "build failed"; exit 1; }
@@ -87,5 +88,56 @@ out=$(python3 "$REPO/scripts/dupverify/import_results.py" --out "$T/run" 2>&1)
 check "re-import is a no-op" 'grep -q "\"runs_already_imported\": 1" <<<"$out" && [ "$($CH_EXEC -q "SELECT count() FROM filesystem.dupverify_files")" = 13 ]'
 check "import: run row carries totals" \
   '[ "$($CH_EXEC -q "SELECT duplicate_sets FROM filesystem.dupverify_runs")" = 2 ]'
+
+# A second, separate scope that stops on its budget: recorded, never verified.
+python3 "$REPO/scripts/dupverify/export_candidates.py" --date 2026-01-05 --min-size 2M --max-size 2M \
+  --out "$T/cand2.jsonl" >/dev/null
+"$BIN" --input "$T/cand2.jsonl" --out "$T/run2" --quiet --max-read-mib-s 0 --budget-gib 0.000001 \
+  --sample-kib 1 --samples 1 > /dev/null; rc=$?
+check "budget-stopped run exits 3 (resumable)" '[ $rc = 3 ]'
+python3 "$REPO/scripts/dupverify/import_results.py" --out "$T/run2" >/dev/null
+
+# API queries (the router's own SQL) against the scratch server.
+API_PY="$REPO/apps/api/venv/bin/python"
+if [ -x "$API_PY" ]; then
+  $CH_EXEC -q "CREATE TABLE IF NOT EXISTS filesystem.snapshots (snapshot_date Date) ENGINE = MergeTree ORDER BY snapshot_date" </dev/null 2>/dev/null
+  $CH_EXEC -q "INSERT INTO filesystem.snapshots (snapshot_date) VALUES ('2026-01-05')" </dev/null 2>/dev/null
+  IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$C")
+  api=$(cd "$REPO/apps/api" && CH_IP="$IP" ROOT_DIR="$T/data" "$API_PY" - <<'PY'
+import json, os
+from clickhouse_driver import Client
+from app.routers import dupverify as dv
+c = Client(host=os.environ["CH_IP"], port=9000, user="default", database="filesystem")
+root = os.environ["ROOT_DIR"]
+sets = dv.verified_sets(root, 1, 100, c)
+st = dv.status_summary(root, c)
+inc = dv.pending_groups(root, "incomplete", 100, c)
+lab1 = dv.verified_sets(root + "/lab1", 1, 100, c)
+print(json.dumps({
+    "available": dv.available(c), "n_sets": len(sets), "copies": sorted(s["copies"] for s in sets),
+    "top_logical": sets[0]["potential_logical_bytes"] if sets else None,
+    "link_paths": max(len(s["files"]) for s in sets) if sets else 0,
+    "status_complete": st["groups"].get("complete", {}).get("groups"),
+    "status_incomplete": st["groups"].get("incomplete", {}).get("groups"),
+    "verified_sets": st["verified"]["sets"], "runs": len(st["runs"]),
+    "incomplete_rows": len(inc), "incomplete_reason": list(inc[0]["skip_reasons"]) if inc else [],
+    "lab1_sets": len(lab1), "lab1_in_root": sorted(f["in_root"] for f in lab1[0]["files"]) if lab1 else [],
+}))
+PY
+)
+  echo "    api: $api"
+  j() { python3 -c "import json,sys; d=json.loads(sys.argv[1]); print($1)" "$api"; }
+  check "api: tables detected" '[ "$(j "d[\"available\"]")" = True ]'
+  check "api: two verified sets, 2 and 10 copies" '[ "$(j "d[\"copies\"]")" = "[2, 10]" ]'
+  check "api: largest potential first (9 x (1M+17))" '[ "$(j "d[\"top_logical\"]")" = $(( 9 * ((1<<20) + 17) )) ]'
+  check "api: status counts complete=3, incomplete=1, runs=2" \
+    '[ "$(j "(d[\"status_complete\"], d[\"status_incomplete\"], d[\"runs\"])")" = "(3, 1, 2)" ]'
+  check "api: incomplete group listed with budget reason" \
+    '[ "$(j "d[\"incomplete_rows\"]")" = 1 ] && [ "$(j "d[\"incomplete_reason\"]")" = "['"'"'budget_exhausted'"'"']" ]'
+  check "api: root scoping keeps sets touching the root, flags out-of-root copies" \
+    '[ "$(j "d[\"lab1_sets\"]")" = 1 ] && [ "$(j "d[\"lab1_in_root\"]")" = "[False, True, True]" ]'
+else
+  echo "  skip API checks (apps/api/venv missing)"
+fi
 
 echo; echo "$PASS passed, $FAIL failed"; [ "$FAIL" = 0 ]
