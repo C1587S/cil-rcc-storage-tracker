@@ -132,6 +132,9 @@ pub struct GroupResult {
     pub size: u64,
     pub status: GroupStatus,
     pub files_in: usize,
+    /// Deepest directory containing every input file (for scoping in reports).
+    #[serde(default)]
+    pub common_dir: String,
     /// Distinct inodes that took part in comparison.
     pub inodes_examined: usize,
     /// Inodes shown to differ from every other candidate.

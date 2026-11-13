@@ -120,7 +120,7 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
     let s = ctx.settings;
     let mut res = GroupResult {
         group_id: g.group_id.clone(), size: g.size, status: GroupStatus::Complete,
-        files_in: g.files.len(), inodes_examined: 0, unique_inodes: 0, hardlink_paths: 0,
+        files_in: g.files.len(), common_dir: common_dir(g), inodes_examined: 0, unique_inodes: 0, hardlink_paths: 0,
         duplicate_sets: vec![], skipped: vec![], io: IoCounts::default(), elapsed_ms: 0, note: None,
     };
     let mut new_cache: Vec<CacheEntry> = vec![];
@@ -334,8 +334,49 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
     done(res, new_cache)
 }
 
+/// Deepest directory that contains every file of the group.
+pub fn common_dir(g: &CandidateGroup) -> String {
+    let mut iter = g.files.iter().map(|f| {
+        let p = f.path.as_str();
+        &p[..p.rfind('/').unwrap_or(0)]
+    });
+    let Some(first) = iter.next() else { return String::new() };
+    let mut parts: Vec<&str> = first.split('/').collect();
+    for dir in iter {
+        let n = parts.iter().zip(dir.split('/')).take_while(|(a, b)| *a == b).count();
+        parts.truncate(n);
+    }
+    let d = parts.join("/");
+    if d.is_empty() && first.starts_with('/') { "/".into() } else { d }
+}
+
 fn skip_inode(res: &mut GroupResult, ino: &Inode, reason: SkipReason) {
     for p in &ino.paths {
         res.skipped.push(Skipped { path: p.path.clone(), reason });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn g(paths: &[&str]) -> CandidateGroup {
+        CandidateGroup { group_id: "x".into(), size: 1, truncated: false,
+                         files: paths.iter().map(|p| CandidateFile { path: p.to_string(), owner: None }).collect() }
+    }
+
+    #[test]
+    fn common_dir_is_component_wise() {
+        assert_eq!(common_dir(&g(&["/a/lab1/x/f", "/a/lab1/y/f"])), "/a/lab1");
+        assert_eq!(common_dir(&g(&["/a/lab1/f", "/a/lab10/f"])), "/a", "not a string prefix");
+        assert_eq!(common_dir(&g(&["/a/b/f"])), "/a/b");
+        assert_eq!(common_dir(&g(&["/x/f", "/y/f"])), "/");
+    }
+
+    #[test]
+    fn prefix_scope_respects_component_boundaries() {
+        let p = vec!["/a/lab1/".to_string()];
+        assert!(in_scope("/a/lab1/f", &p));
+        assert!(!in_scope("/a/lab10/f", &p));
     }
 }

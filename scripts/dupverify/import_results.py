@@ -97,7 +97,8 @@ def main() -> int:
             at = ch_time(r["verified_at"])
             groups.append({
                 "snapshot_date": snap, "scope_id": scope, "group_id": r["group_id"], "run_id": run_id,
-                "verified_at": at, "size": r["size"], "status": r["status"], "files_in": r["files_in"],
+                "verified_at": at, "size": r["size"], "status": r["status"],
+                "common_dir": r.get("common_dir", ""), "files_in": r["files_in"],
                 "inodes_examined": r["inodes_examined"], "unique_inodes": r["unique_inodes"],
                 "hardlink_paths": r["hardlink_paths"], "duplicate_sets": len(r["duplicate_sets"]),
                 "skipped": len(r["skipped"]),

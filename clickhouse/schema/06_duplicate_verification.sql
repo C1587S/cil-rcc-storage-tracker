@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS filesystem.dupverify_groups
     verified_at DateTime,
     size UInt64,
     status LowCardinality(String),
+    common_dir String,                       -- deepest directory holding all candidates
     files_in UInt32,
     inodes_examined UInt32,
     unique_inodes UInt32,
