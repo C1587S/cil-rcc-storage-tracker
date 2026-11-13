@@ -1,178 +1,173 @@
 # Self-hosted SQL assistant (future experiment, not started)
 
-**Goal:** keep natural-language query help in the SQL console without
-sending questions to an external AI API. A nontechnical user describes
-what they want and receives a valid, read-only query for whichever
-analytical backend is active (ClickHouse now, possibly BigQuery later).
+**Goal:** keep natural-language help in the SQL console without an
+external AI API or an always-running inference server. A small quantized
+language model runs **entirely in the user's browser**. It:
+
+- understands analytical questions in plain language;
+- writes SQL for the active backend: ClickHouse now, BigQuery if that
+  experiment is adopted;
+- adapts an existing query from one dialect to the other;
+- reads query errors and proposes corrections, iteratively;
+- uses the real schema and metadata as context;
+- explains a query in plain language to users who don't know SQL.
+
+The approach is **model-driven**: dialect adaptation and error correction
+are done by the model, not by hand-written translation rules. The runtime
+(WebLLM or Transformers.js) and the model are chosen later, on measured
+accuracy, speed, browser coverage and resource needs.
+
+**The model is never trusted for security.** Server-side validation,
+read-only permissions, resource limits and cost controls stay exactly as
+they are, independent of whatever wrote the query (§6).
 
 **Today:**
-- `POST /api/nl-to-sql` sends the question, plus the schema prompt, to
-  Groq (`apps/api/app/services/gemini.py`).
-- The answer is linted (`lint_clickhouse_sql`) and checked by the
-  guardrails. It is shown to the user, not executed.
-- Execution goes through `/api/query`, as `tracker_api`, with ClickHouse
+- `POST /api/nl-to-sql` sends the question and schema prompt to Groq
+  (`apps/api/app/services/gemini.py`).
+- The answer is linted and guardrail-checked, then shown, not executed.
+- Execution goes through `/api/query` as `tracker_api`, with ClickHouse
   limits.
 
-**This does not change:** whatever generates SQL, the server stays the
-only authority. Every generated query is re-validated and runs under the
-read-only account and limits.
+## 1. Capabilities and how the model gets its context
 
-## 1. Two complementary pieces
+The browser assembles the prompt; the model sees no data rows, only
+descriptions.
 
-### SQLGlot: deterministic dialect translation and validation
+| Capability | Prompt context | Output |
+|---|---|---|
+| Question → SQL | Schema for the active backend (tables, columns, types, one-line meaning each); key conventions (`snapshot_date` filter, `parent_path`/`path` prefix rules, size units); available snapshot dates; the dialect's allowed functions; 10–20 worked examples from real console usage | One `SELECT` in the active dialect |
+| Adapt a query (ClickHouse ↔ BigQuery) | The query, both schemas, paired examples of the same query in both dialects | Equivalent query in the target dialect |
+| Fix a failing query | The query, the server's validation message or database error (already returned today), the schema | Corrected query + one-line reason |
+| Explain a query | The query, the schema meanings | Short plain-language explanation; no SQL needed to read it |
 
-- **Translate** between the dialect the model writes and the dialect of
-  the active backend (ClickHouse ↔ BigQuery), on the server, in Python.
-  Exact mappings are covered by tests; no model is involved.
-- **Validate structure before any database sees the query.** Parse it into
-  an AST and enforce:
-  - exactly one `SELECT` (or `WITH … SELECT`);
-  - only allowlisted tables;
-  - no table functions, `SETTINGS`, `FORMAT` or `INTO OUTFILE`;
-  - a `snapshot_date` predicate on `entries`;
-  - a `LIMIT`.
+**Repair loop:** generate, then have the server validate (and, if valid,
+dry-run or EXPLAIN). On an error, feed it back to the model. Stop after
+2–3 rounds and show the last attempt and the error. Nothing runs without
+the user pressing Run.
 
-  This is sturdier than today's regex guardrails, which stay as a second
-  layer.
-- **Known limits:**
-  - Some ClickHouse functions pass through untranslated to BigQuery (e.g.
-    `isNaN`, `arrayReverse`, `JSONExtractString`, as reported in sqlglot
-    issues).
-  - Semantic differences (integer division, NULL ordering, time zones,
-    implicit casts) are not detected.
-  - Mitigation: a project-specific function map with tests (the
-    BigQuery-experiment table), an allowlist of functions the assistant
-    may emit, and execution checks on the anonymized dataset.
+The schema and metadata context is generated from the backend itself
+(`DESCRIBE`/`INFORMATION_SCHEMA`) plus a small hand-maintained
+description file. It stays correct when tables change.
 
-### A small quantized model, ideally in the browser
+## 2. Runtimes
 
-The model writes SQL in one canonical dialect (ClickHouse, matching the
-existing prompt and examples). SQLGlot handles the rest.
+| | WebLLM (MLC) | Transformers.js (ONNX Runtime Web) |
+|---|---|---|
+| Acceleration | WebGPU only | WebGPU, automatic WASM (CPU) fallback |
+| Models | Prebuilt q4f16 builds incl. Qwen2.5-Coder 0.5B / 1.5B / 3B / 7B | Any ONNX export with a supported architecture; q4f16 on WebGPU, q4 on WASM |
+| Notes | Mature LLM chat API, KV cache, streaming | Broader device reach; some quantized ops fall back to slower paths on some GPUs |
 
-| Candidate (WebLLM q4f16 builds exist) | Approx. GPU memory* | Approx. download** | Fit |
+## 3. Candidate models (to be measured, not chosen)
+
+| Model | Approx. GPU memory* | Approx. download** | Expectation |
 |---|---|---|---|
-| Qwen2.5-Coder-0.5B-Instruct | about 0.95 GB | about 0.3–0.4 GB | Fast. Weakest SQL; candidate for the CPU fallback |
-| Qwen2.5-Coder-1.5B-Instruct | about 1.6 GB | about 0.9–1.0 GB | Likely sweet spot for laptops |
+| Qwen2.5-Coder-0.5B-Instruct | about 0.95 GB | about 0.3–0.4 GB | Fast; weakest reasoning; only option on CPU/WASM |
+| Qwen2.5-Coder-1.5B-Instruct | about 1.6 GB | about 0.9–1.0 GB | Likely the laptop sweet spot |
 | Qwen2.5-Coder-3B-Instruct | about 2.5 GB | about 1.7–1.9 GB | Best accuracy that still fits common GPUs |
+| Newer small coder/SQL models | — | — | Re-survey when the experiment starts |
 
-\* WebLLM's published VRAM figures for the same-size Qwen2.5 Instruct
-models; the Coder variants are similar. \*\* Estimated from parameter
-count at 4-bit; measure the real artifacts.
+\* WebLLM's published figures for same-size Qwen2.5 models at q4f16.
+\*\* Estimated from parameter count at 4 bits; measure the real artifacts.
 
-Text-to-SQL-specific fine-tunes of 0.5–3B models report about 60–68%
-execution accuracy on BIRD dev and about 85% on Spider. Those are
+Published text-to-SQL results for fine-tuned 0.5–3B models are about
+60–68% execution accuracy on BIRD dev and about 85% on Spider. Those are
 research pipelines on unfamiliar multi-table schemas.
-- **Easier here:** one domain, about 5 tables, well-known column
-  meanings, and examples drawn from real console usage.
-- **Harder here:** ClickHouse dialect specifics.
+- **Easier here:** one domain, about 5 tables, examples from real use,
+  and a repair loop.
+- **Harder here:** dialect specifics.
 
-Accuracy must therefore be measured on our own evaluation set (§4), not
-taken from benchmarks.
+Our own evaluation (§5) decides. If a base model falls short, the next
+lever is fine-tuning a 1.5B model on our question/SQL pairs before
+moving to a bigger model.
 
-**Runtimes:**
-- **WebLLM (MLC):** has prebuilt Qwen2.5-Coder 0.5B–7B builds. It needs
-  WebGPU and offers no CPU path.
-- **Transformers.js (ONNX Runtime Web):** uses WebGPU when available and
-  falls back to WASM automatically. Use q4f16 on WebGPU and q4 on WASM.
-
-## 2. Browser compatibility (as of 2026-11; re-check)
+## 4. Browser compatibility and expected experience (2026-11; re-check)
 
 | Platform | WebGPU |
 |---|---|
-| Chrome / Edge, Windows · macOS · ChromeOS | yes (since 113) |
-| Chrome, Linux | Intel (144+) and NVIDIA (147+) GPUs; others may lack it |
+| Chrome / Edge on Windows, macOS, ChromeOS | yes (since 113) |
+| Chrome on Linux | Intel (144+) and NVIDIA (147+) GPUs; others may lack it |
 | Chrome / Samsung Internet, Android 12+ (Qualcomm/ARM GPUs) | yes |
 | Windows on ARM (Chromium) | behind a flag |
-| Firefox, Windows · Apple-silicon macOS | yes (141+, macOS 145–147+) |
-| Firefox, Linux · Android | pre-release builds only (Aug 2026) |
-| Safari, macOS/iOS/iPadOS 26 | yes; not on iOS ≤ 25 |
+| Firefox on Windows, Apple-silicon macOS | yes (141+; macOS 145–147+) |
+| Firefox on Linux, Android | pre-release builds only (Aug 2026) |
+| Safari on macOS/iOS/iPadOS 26 | yes; not on iOS ≤ 25 |
 
-Even where `navigator.gpu` exists, `requestAdapter()` can return null
-(blocklisted driver, VM, remote desktop). The app must feature-detect and
-check `adapter.limits` against the model's needs before offering
-in-browser generation.
+`navigator.gpu` can exist while `requestAdapter()` returns null
+(blocklisted driver, VM, remote desktop). Feature-detect, and compare
+`adapter.limits` with the model's needs, before offering the assistant.
 
-## 3. Expected experience (estimates to be replaced by measurements)
-
-- **Download:**
-  - The 1.5B model (about 1 GB) takes about 3 min at 50 Mbit/s.
-  - It happens once, is cached (Cache API / IndexedDB), and is opt-in
-    ("Enable local assistant (1 GB)"), never automatic.
+Estimates, to be replaced by measurements:
+- **Download:** the 1.5B model (about 1 GB) takes about 3 min at
+  50 Mbit/s. It downloads once, is cached in the browser, and only on
+  opt-in ("Enable local assistant (≈1 GB)").
 - **Load:** some seconds of shader compilation per session.
 - **Generation (one query is about 80–200 tokens):**
-  - WebGPU: published browser numbers for 0.4–1.1B models are about
-    25–63 tokens/s on discrete GPUs, slower on integrated graphics and for
-    3B. Expect about 2–10 s per query.
+  - WebGPU: published figures for 0.4–1.1B models are about 25–63
+    tokens/s on discrete GPUs, less on integrated graphics and for 3B.
+    Expect about 2–10 s per query.
   - WASM: about 1.6–5 tokens/s for small models, which is too slow for
-    1.5B+ (minutes).
-- **Memory:** about 1.6–2.5 GB of GPU memory for 1.5–3B models, plus about
-  1 GB of page memory. That excludes many older laptops and most phones.
+    1.5B+.
+- **Memory:** about 1.6–2.5 GB GPU memory for 1.5–3B, plus about 1 GB of
+  page memory. That rules out many older laptops and most phones.
 
-## 4. Evaluation before any rollout
+## 5. Evaluation (before any rollout)
 
 - **Evaluation set:** about 100–150 (question, reference SQL) pairs.
-  - Reference SQL comes from normalized real console queries in
-    `system.query_log`, with literals stripped and no paths. Questions
-    are written for them.
-  - Add held-out paraphrases and "trick" questions (cost-heavy,
-    ambiguous).
-- **Metric:** execution accuracy on the anonymized dataset (same result
-  as the reference), plus:
-  - the share of outputs that pass validation;
-  - the share fixed by one automatic repair round, in which validation or
-    ClickHouse errors are fed back to the model, as `/nl-to-sql/fix` does
-    today;
-  - p50/p95 latency per device class.
-- **Compare:** current Groq model (baseline) vs. 0.5B/1.5B/3B in-browser
-  vs. the same models server-side on CPU (llama.cpp), on 3 device classes
-  (discrete GPU, integrated GPU laptop, no WebGPU).
-- **Quality levers before choosing a bigger model:**
-  - Schema plus 10–20 real examples in the prompt.
-  - Constrained output (one statement, allowlisted functions).
-  - A repair loop.
-  - Optionally, fine-tuning a 1.5B model on the evaluation set's
-    training split.
+  - Reference SQL comes from normalized real console queries
+    (`system.query_log`, literals stripped, no paths). Each has a
+    BigQuery twin.
+  - Add paraphrases, ambiguous and cost-heavy questions, plus "fix this
+    error" and "explain this" cases.
+- **Metrics:**
+  - execution accuracy on the anonymized dataset;
+  - share valid on the first try and after the repair loop;
+  - dialect-adaptation accuracy;
+  - explanation correctness, rated by a reviewer;
+  - p50/p95 latency and memory per device class (discrete GPU,
+    integrated-GPU laptop, no WebGPU).
+- **Baseline:** the current Groq setup, for comparison only.
 
-## 5. Fallback chain (no WebGPU, too little memory, or user declines the download)
+## 6. Security and cost: independent of the model
 
-1. In-browser model (WebGPU), if feature-detected and sufficient.
-2. A self-hosted small model on the server (llama.cpp, CPU, 0.5–1.5B
-   q4). Questions stay on infrastructure we control. Needs one modest
-   always-on or scale-to-zero container. It fits the hosting plan only if
-   kept small.
-3. The existing form-based query builder in the Search Console, which
-   builds SQL without any model.
-4. The external API (Groq) only if explicitly configured. It is off by
-   default once a self-hosted path exists.
+The model only produces text. The server treats every generated query as
+untrusted input, the same as a hand-typed one:
 
-## 6. Safety and cost controls (unchanged principle: the model has no privileges)
-
-- Generated SQL is untrusted input. The server parses and validates it
-  (SQLGlot allowlist plus guardrails), then executes it as `tracker_api`
-  (ClickHouse: `SELECT`-only grants and a profile pinning time, rows,
-  bytes and memory).
+- **Parsing and guardrails:** one statement, read-only, allowlisted
+  tables, no table functions, `SETTINGS` or `FORMAT`, a `snapshot_date`
+  filter, a `LIMIT`.
+- **ClickHouse:** runs as `tracker_api`, with `SELECT`-only grants and a
+  settings profile pinning time, rows, bytes and memory. Clients cannot
+  raise these limits.
 - **BigQuery:**
-  - A read-only service account (dataset `dataViewer` plus `jobUser`).
-  - A dry run first, to show the estimated bytes and refuse above a
-    threshold.
-  - `maximum_bytes_billed` on every job.
-  - Custom per-day quotas.
-  - Partitioned and clustered tables so typical questions scan megabytes.
-- Existing per-client rate limits apply to generation and execution.
-- **Privacy:** in-browser generation keeps questions on the user's
-  device. The prompt contains the schema and examples, never data.
+  - a read-only service account;
+  - a dry run first, which shows the estimated bytes and refuses above a
+    threshold;
+  - `maximum_bytes_billed` on every job;
+  - per-day quotas;
+  - tables partitioned and clustered so normal questions scan megabytes.
+- **Rate limits and privacy:** per-client rate limits on execution. In
+  the browser, questions never leave the user's device; the prompt holds
+  schema and descriptions, not data.
 
-## 7. Milestones and exit criteria
+## 7. Devices without WebGPU
 
-1. **Evaluation set** and an offline harness that scores any generator,
-   API or local.
-2. **SQLGlot validation** in `/api/query` and `/api/nl-to-sql`, alongside
-   the regex guardrails. No behavior change for valid queries; measured
-   on the real query corpus.
-3. **Browser prototype:** Transformers.js and WebLLM side by side behind a
-   feature flag, with download/load/latency telemetry kept local to the
-   session.
-4. **Decision:** adopt in-browser generation if, on the target devices,
-   execution accuracy is at least that of the Groq baseline minus 10
-   points, with median latency under 10 s. Keep the server-side small
-   model as the fallback; retire the external API.
+In order:
+1. A smaller model on WASM (0.5B), for short tasks such as explanation
+   or small fixes, with a clear "slow on this device" notice.
+2. The existing form-based query builder in the Search Console, which
+   needs no model.
+3. Optionally, an external API if explicitly configured. It is off by
+   default once the local assistant is adopted. There is no
+   always-running inference server.
+
+## 8. Milestones (on a separate `experiment/` branch)
+
+1. Evaluation set plus an offline scorer that can run any generator.
+2. A schema/metadata context generator for both backends.
+3. Browser prototype behind a feature flag. WebLLM and Transformers.js
+   side by side with 2–3 candidate models, all four capabilities and the
+   repair loop. Telemetry stays local to the session.
+4. **Decision:** adopt if, on the target devices, execution accuracy
+   (with repair) is at least the Groq baseline minus 10 points and median
+   latency is under 10 s. Choose the runtime and model on those numbers
+   and browser coverage.
