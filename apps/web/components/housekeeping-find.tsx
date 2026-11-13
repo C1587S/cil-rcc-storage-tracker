@@ -32,6 +32,7 @@ import { hkApi as api, reconApi as rapi, activeList, setActiveList, toast } from
 import { GridLoader } from "@/components/ui/grid-loader";
 import { formatBytes } from "@/lib/utils/formatters";
 import { cn } from "@/lib/utils";
+import { VerifiedDuplicates } from "@/components/housekeeping-verified-dups";
 
 type Method = "age" | "browse" | "owners" | "largest" | "dups" | "patterns" | "sweep" | "saved";
 
@@ -40,14 +41,14 @@ const METHODS: [Method, string, string][] = [
   ["browse", "Browse", "Directories ranked by file-count pressure; click a path to list its files"],
   ["owners", "Owners", "Who holds what; click an owner for their biggest directories"],
   ["largest", "Largest files", "Biggest single files under the root"],
-  ["dups", "Duplicates", "Same basename + same size above a threshold"],
+  ["dups", "Duplicates", "Probable matches (name + size, unverified) and content-verified sets"],
   ["patterns", "Patterns & size", "Find files by name patterns, size range and age"],
   ["sweep", "Sweep", "Whole-tree thresholds — creates a per-owner worklist directly"],
   ["saved", "Saved", "Selections saved for later from the bar below"],
 ];
 
 /** Unified result row. `kind` decides the scope of a created target. */
-type FindRow = {
+export type FindRow = {
   path: string;
   bytes: number;
   files: number;
@@ -660,8 +661,34 @@ function PreviewBox({ path, root, onChanged, currentUser }:
 }
 
 
-/** Duplicates: grouped table, checkboxes on individual copies only. */
+/** Duplicates: two kinds of evidence, never mixed. "Probable" matches
+ *  metadata only (basename + size; contents never read). "Verified" shows
+ *  imported cil-dupverify results (identical full content). */
 function DuplicatesMethod({ root, selected, toggle }: {
+  root: string; selected: Map<string, FindRow>;
+  toggle: (row: FindRow, source: string) => void;
+}) {
+  const [view, setView] = useState<"probable" | "verified">("probable");
+  return (
+    <>
+      <div className="flex gap-1 text-[11px]">
+        {([["probable", "Probable — name + size (unverified)"], ["verified", "Content-verified"]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setView(k)}
+                  className={cn("px-2 py-0.5 rounded border border-border/60",
+                                view === k ? "bg-muted/50 text-foreground" : "text-muted-foreground hover:text-foreground")}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === "probable"
+        ? <ProbableDuplicates root={root} selected={selected} toggle={toggle} />
+        : <VerifiedDuplicates root={root} selected={selected} toggle={toggle} />}
+    </>
+  );
+}
+
+/** Probable duplicates: grouped table, checkboxes on individual copies only. */
+function ProbableDuplicates({ root, selected, toggle }: {
   root: string; selected: Map<string, FindRow>;
   toggle: (row: FindRow, source: string) => void;
 }) {
@@ -695,7 +722,7 @@ function DuplicatesMethod({ root, selected, toggle }: {
           <th className="px-2 py-1.5">Basename</th>
           <th className="px-2 py-1.5 text-right">Size each</th>
           <th className="px-2 py-1.5 text-right">Copies</th>
-          <th className="px-2 py-1.5 text-right" title="size × extra copies">Wasted</th>
+          <th className="px-2 py-1.5 text-right" title="size × extra copies — an upper bound from metadata, not confirmed storage">Potential (unverified)</th>
           <th className="px-2 py-1.5 text-right" title="Directory level (below root) where the copies' trees separate — low = unrelated trees, high = scenario siblings">Split at</th>
           <th className="px-2 py-1.5">Owners</th>
         </tr></thead>
@@ -714,7 +741,7 @@ function DuplicatesMethod({ root, selected, toggle }: {
                   <td className="px-2 py-1 font-mono truncate max-w-[320px]" title={r.name}>{r.name}</td>
                   <td className="px-2 py-1 text-right font-mono">{formatBytes(r.bytes)}</td>
                   <td className="px-2 py-1 text-right font-mono">×{r.copies}</td>
-                  <td className="px-2 py-1 text-right font-mono font-semibold">{formatBytes(r.wasted)}</td>
+                  <td className="px-2 py-1 text-right font-mono text-muted-foreground">{formatBytes(r.potential_upper_bound ?? r.wasted)}</td>
                   <td className="px-2 py-1 text-right font-mono">L{r.diverge_level}{r.sibling_group ? " (sibling)" : ""}</td>
                   <td className="px-2 py-1 font-mono">{[...new Set(r.owners as string[])].join(", ")}</td>
                 </tr>
@@ -731,6 +758,11 @@ function DuplicatesMethod({ root, selected, toggle }: {
                           <span className="text-muted-foreground">({r.owners[i]})</span>
                         </div>
                       ))}
+                      {r.paths_truncated && (
+                        <div className="text-[11px] text-muted-foreground mt-1">
+                          Showing {r.paths.length} of {r.copies} paths.
+                        </div>
+                      )}
                     </td>
                   </tr>
                 )}
