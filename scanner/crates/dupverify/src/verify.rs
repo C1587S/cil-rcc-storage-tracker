@@ -190,7 +190,8 @@ pub fn process_group(g: &CandidateGroup, ctx: &Ctx) -> (GroupResult, Vec<CacheEn
                 r.skipped.push(Skipped { path: p.path.clone(), reason });
             }
         }
-        r.note = Some(format!("stopped ({reason:?}); nothing in this group counts as verified"));
+        let why = match h { Halt::Budget => "I/O budget reached", Halt::Interrupted => "interrupted" };
+        r.note = Some(format!("stopped: {why}; nothing in this group counts as verified"));
         done(r, c)
     };
 
