@@ -30,7 +30,7 @@ import { API_BASE_URL } from "@/lib/api";
 import { formatBytes } from "@/lib/utils/formatters";
 import { cn } from "@/lib/utils";
 import { FindPanel } from "@/components/housekeeping-find";
-import { hkApi as api, toast, currentIdentity, hkHeaders } from "@/lib/hk";
+import { hkApi as api, toast, currentIdentity, hkHeaders, restoreCommand } from "@/lib/hk";
 import { OperatorKeyControl } from "@/components/operator-key-control";
 import { GridLoader } from "@/components/ui/grid-loader";
 
@@ -660,10 +660,10 @@ function QuarantineSection() {
                               : (
                                 <span className="inline-flex gap-2">
                                   <button className="text-primary hover:underline"
-                                          title={`Copies the exact reverse rename to your clipboard:\nmv '${q.quarantine_path}' '${q.original_path}'`}
+                                          title={`Copies the exact reverse rename to your clipboard:\n${restoreCommand(q.quarantine_path, q.original_path)}`}
                                           onClick={async () => {
                                             await navigator.clipboard.writeText(
-                                              `mv '${q.quarantine_path}' '${q.original_path}'`);
+                                              restoreCommand(q.quarantine_path, q.original_path));
                                             toast("Restore command copied — run it on a Midway login node, then click 'mark restored'.", "success");
                                           }}>
                                     copy restore cmd

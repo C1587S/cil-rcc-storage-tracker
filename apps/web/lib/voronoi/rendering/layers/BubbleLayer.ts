@@ -128,7 +128,18 @@ export class BubbleLayer {
           tooltip.style.display = 'block'
           tooltip.style.left = event.pageX + 10 + 'px'
           tooltip.style.top = event.pageY + 10 + 'px'
-          tooltip.innerHTML = `<div class="font-mono text-xs"><div class="font-bold text-cyan-400">${d.node.name}</div><div class="text-gray-400">${formatBytes(d.node.size)}</div></div>`
+          // File names are chosen by anyone with write access on the
+          // cluster: build nodes with textContent, never innerHTML.
+          const box = document.createElement('div')
+          box.className = 'font-mono text-xs'
+          const name = document.createElement('div')
+          name.className = 'font-bold text-cyan-400'
+          name.textContent = String(d.node.name ?? '')
+          const size = document.createElement('div')
+          size.className = 'text-gray-400'
+          size.textContent = formatBytes(d.node.size)
+          box.append(name, size)
+          tooltip.replaceChildren(box)
         }
         d3.select(event.currentTarget as SVGCircleElement)
           .attr('stroke', this.highlightColor)

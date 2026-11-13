@@ -57,6 +57,22 @@ export async function hkApi(path: string, opts: RequestInit = {}, user?: string 
   return d;
 }
 
+/** POSIX single-quote a string for a pasted shell command. File names are
+ *  chosen by anyone with write access on the cluster, so a `'` in a path
+ *  must not be able to end the quoting. */
+export function shQuote(s: string): string {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
+/** Reverse of a quarantine rename. Recreates the parent directory (the
+ *  executor removes emptied directories) and never overwrites a file that
+ *  has since appeared at the original path (mv -n). */
+export function restoreCommand(quarantinePath: string, originalPath: string): string {
+  const cut = originalPath.lastIndexOf("/");
+  const parent = cut > 0 ? originalPath.slice(0, cut) : "/";
+  return `mkdir -p -- ${shQuote(parent)} && mv -n -- ${shQuote(quarantinePath)} ${shQuote(originalPath)}`;
+}
+
 /** Recon sub-API (candidate discovery, lists, dismissals). */
 export const reconApi = (path: string, opts: RequestInit = {}, user?: string | null) =>
   hkApi(`/recon${path}`, opts, user);
