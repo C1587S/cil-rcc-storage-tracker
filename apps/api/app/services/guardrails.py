@@ -27,6 +27,40 @@ class QueryValidationError(ValueError):
     pass
 
 
+_ARITH_TOKEN = re.compile(r"\d+|[+\-*]")
+# number (op number)*, whitespace only around operators: "5 5" is not 55
+_ARITH_SHAPE = re.compile(r"\s*\d+(?:\s*[+\-*]\s*\d+)*\s*")
+_MAX_OPERAND_DIGITS = 9
+_MAX_RESULT = 10**9
+
+
+def _safe_int_arith(expr: str):
+    """Evaluate `a*b+c-d` style integer arithmetic; None if not that shape.
+
+    Deliberately not eval(): only non-negative integer literals joined by
+    single +, - or * are accepted (no `**`, no unary operators), operands are
+    bounded in length and the result in magnitude, so no input can make the
+    linter burn CPU or memory.
+    """
+    if not _ARITH_SHAPE.fullmatch(expr):
+        return None
+    tokens = _ARITH_TOKEN.findall(expr)  # alternates number, op, number, ...
+    if any(t.isdigit() and len(t) > _MAX_OPERAND_DIGITS for t in tokens):
+        return None
+    total, term, sign = 0, int(tokens[0]), 1
+    for op, num in zip(tokens[1::2], tokens[2::2]):
+        n = int(num)
+        if op == "*":
+            term *= n
+        else:
+            total += sign * term
+            sign, term = (1 if op == "+" else -1), n
+        if abs(term) > _MAX_RESULT or abs(total) > _MAX_RESULT:
+            return None
+    total += sign * term
+    return total if abs(total) <= _MAX_RESULT else None
+
+
 def lint_clickhouse_sql(sql: str) -> str:
     """Auto-fix common LLM mistakes that produce invalid ClickHouse SQL.
 
@@ -61,11 +95,10 @@ def lint_clickhouse_sql(sql: str) -> str:
         expr = m.group(1).strip()
         unit = m.group(2).upper()
         # Evaluate simple arithmetic like 5*365, 2*30
-        try:
-            val = eval(expr, {"__builtins__": {}})  # safe: no builtins
-            return f"INTERVAL {int(val)} {unit}"
-        except Exception:
+        val = _safe_int_arith(expr)
+        if val is None:
             return m.group(0)
+        return f"INTERVAL {val} {unit}"
 
     s = re.sub(
         r"\bINTERVAL\s+([\d\s\*\+\-]+)\s+(YEAR|MONTH|WEEK|DAY|HOUR|MINUTE|SECOND)\b",
