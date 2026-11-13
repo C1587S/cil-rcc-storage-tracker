@@ -419,10 +419,14 @@ export EXPECT_SHA=<REVIEWED_SHA> EXPECT_SHA256=<value from the workstation>
 bash scanner/scripts/dupverify_pilot_check.sh pre        # must end with "RESULT: no failures"
 ```
 
-**Submit** once, from the same shell:
+**Submit** once, from the same shell. The account and partition are passed explicitly.
+The script header also requests `cil`/`cil`, but `SBATCH_ACCOUNT` or `SBATCH_PARTITION`
+in the environment would take precedence over the header; command-line options take
+precedence over both. The preflight reports such variables, and the postflight checks
+the account and partition `sacct` recorded.
 
 ```bash
-sbatch --time=00:30:00 --mem=2G --cpus-per-task=2 \
+sbatch --account=cil --partition=cil --time=00:30:00 --mem=2G --cpus-per-task=2 \
   --export=ALL,CANDIDATES=$HOME/dupverify/pilot0/cand_pilot0.jsonl,OUT=$HOME/dupverify/pilot0/out,DUPV_BIN=$DUPV_BIN,DUPV_WORKERS=1,DUPV_MAX_READ_MIB_S=25,DUPV_BUDGET_GIB=5 \
   scanner/scripts/dupverify_pilot.sh
 squeue -u $USER -n cil_dupverify                         # watch only this job

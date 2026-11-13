@@ -70,6 +70,13 @@ if [ "$MODE" = pre ]; then
     && fail "pilot script calls sbatch (it must not resubmit)" || pass "pilot script never resubmits itself"
   grep -q 'singleton' "$CLONE/scanner/scripts/dupverify_pilot.sh" \
     && fail "pilot script uses a singleton dependency" || pass "pilot script has no job dependencies"
+  hdr_acct=$(grep -m1 -oE '^#SBATCH --account=[^ ]+' "$CLONE/scanner/scripts/dupverify_pilot.sh" | cut -d= -f2)
+  hdr_part=$(grep -m1 -oE '^#SBATCH --partition=[^ ]+' "$CLONE/scanner/scripts/dupverify_pilot.sh" | cut -d= -f2)
+  [ "$hdr_acct" = cil ] && [ "$hdr_part" = "$PARTITION" ] && pass "script header requests account cil, partition $PARTITION" \
+    || fail "script header requests account '${hdr_acct}', partition '${hdr_part}'"
+  for v in SBATCH_ACCOUNT SBATCH_PARTITION SLURM_ACCOUNT SLURM_PARTITION; do
+    [ -n "${!v:-}" ] && warn "$v=${!v} is set in this shell; it would override the script header, so the sbatch command must pass --account=cil --partition=$PARTITION explicitly (the runbook does)"
+  done
   jobs_snapshot > "$PILOT_DIR/pre-jobs.txt"; chmod 600 "$PILOT_DIR/pre-jobs.txt"
   prod_state > "$PILOT_DIR/pre-prod.txt"; chmod 600 "$PILOT_DIR/pre-prod.txt"
   echo "       your queued/running jobs (saved for the postflight comparison):"
@@ -128,6 +135,9 @@ else
   LOG_OUT="$CLONE/slurm_out/dupverify_${JOBID}.out"; LOG_ERR="$CLONE/slurm_out/dupverify_${JOBID}.err"
   echo "== 1. Job outcome"
   sacct -j "$JOBID" -X -n -o JobID,JobName%16,Partition,Account,State,ExitCode,Elapsed,MaxRSS 2>/dev/null | sed 's/^/       /'
+  ap=$(sacct -j "$JOBID" -X -n -P -o Account,Partition 2>/dev/null | head -1)
+  [ "$ap" = "cil|$PARTITION" ] && pass "job ran under account cil on partition $PARTITION" \
+    || fail "job ran under account|partition '$ap', expected cil|$PARTITION"
   state=$(sacct -j "$JOBID" -X -n -o State,ExitCode 2>/dev/null | head -1 | tr -s ' ')
   case "$state" in *COMPLETED*0:0*) pass "job completed" ;;
                    *FAILED*3:0*)    pass "job stopped at its budget or time limit (exit 3, resumable)" ;;
