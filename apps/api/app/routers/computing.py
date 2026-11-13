@@ -116,14 +116,20 @@ def _fetch_report() -> dict | None:
 
 
 def _get_write_client():
-    """Get a ClickHouse client that can write (no readonly)."""
+    """ClickHouse client for the ingest inserts (computing.* only).
+
+    Uses the dedicated tracker_ingest account when configured, so the
+    dashboard's main account can stay strictly read-only."""
     from clickhouse_driver import Client
     settings = get_settings()
+    user = settings.clickhouse_ingest_user or settings.clickhouse_user
+    password = (settings.clickhouse_ingest_password if settings.clickhouse_ingest_user
+                else settings.clickhouse_password)
     return Client(
         host=settings.clickhouse_host,
         port=settings.clickhouse_port,
-        user=settings.clickhouse_user,
-        password=settings.clickhouse_password,
+        user=user,
+        password=password,
     )
 
 

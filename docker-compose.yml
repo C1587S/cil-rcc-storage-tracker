@@ -267,8 +267,15 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-housekeeping}
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: 9000
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      # Least-privilege accounts (scripts/setup-clickhouse-users.sh). Until
+      # CLICKHOUSE_API_USER is set in .env the API keeps using `default`
+      # with a readonly=1 session. With tracker_api, set
+      # CLICKHOUSE_SESSION_READONLY=false (its profile enforces read-only).
+      CLICKHOUSE_USER: ${CLICKHOUSE_API_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_API_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      CLICKHOUSE_SESSION_READONLY: ${CLICKHOUSE_SESSION_READONLY:-true}
+      CLICKHOUSE_INGEST_USER: ${CLICKHOUSE_INGEST_USER:-}
+      CLICKHOUSE_INGEST_PASSWORD: ${CLICKHOUSE_INGEST_PASSWORD:-}
       CLICKHOUSE_DATABASE: filesystem
       MAX_EXECUTION_TIME: 20
       MAX_RESULT_ROWS: 8000

@@ -5,7 +5,11 @@ endpoints from a thread pool. A shared client corrupts its socket under
 concurrent requests and every later query dies with "Bad file descriptor"
 (found live once the recon panel started issuing parallel queries).
 Clients are therefore THREAD-LOCAL, wrapped with one reconnect-and-retry
-for dead sockets — safe because everything here is a read (readonly=1).
+for dead sockets — safe because everything here is a read.
+
+Read-only is enforced by ClickHouse, not by this code: either the account
+is tracker_api (SELECT-only grants and a constrained settings profile), or
+the session sets readonly=1. See session_settings().
 """
 import threading
 from typing import Any
@@ -18,6 +22,25 @@ from app.settings import get_settings
 _tls = threading.local()
 
 
+def session_settings(settings=None) -> dict:
+    """Per-session limits, plus readonly=1 unless the account enforces it.
+
+    A read-only *account* (tracker_api) refuses any attempt to set
+    `readonly`, so it must not be sent. The admin `default` account always
+    gets readonly=1: there it is the only thing blocking writes and table
+    functions, and readonly=2 would let a query raise its own limits.
+    """
+    s = settings or get_settings()
+    out = {
+        "max_execution_time": s.max_execution_time,
+        "max_result_rows": s.max_result_rows,
+        "max_result_bytes": s.max_result_bytes,
+    }
+    if s.clickhouse_session_readonly or s.clickhouse_user == "default":
+        out["readonly"] = 1
+    return out
+
+
 def _new_client() -> Client:
     settings = get_settings()
     return Client(
@@ -26,12 +49,7 @@ def _new_client() -> Client:
         user=settings.clickhouse_user,
         password=settings.clickhouse_password,
         database=settings.clickhouse_database,
-        settings={
-            "max_execution_time": settings.max_execution_time,
-            "max_result_rows": settings.max_result_rows,
-            "max_result_bytes": settings.max_result_bytes,
-            "readonly": 1,  # Enforce read-only mode
-        },
+        settings=session_settings(settings),
     )
 
 

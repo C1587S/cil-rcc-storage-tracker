@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     clickhouse_user: str = "default"
     clickhouse_password: str = ""
     clickhouse_database: str = "filesystem"
+    # True: the session sets readonly=1 (needed when the account itself is
+    # not read-only, e.g. `default`). False: rely on the account's settings
+    # profile (tracker_api, see scripts/setup-clickhouse-users.sh), which
+    # rejects any attempt to set `readonly`. Forced True for `default`.
+    clickhouse_session_readonly: bool = True
+    # Account for /api/computing/ingest (INSERT on computing.* only).
+    # Empty = fall back to the main account.
+    clickhouse_ingest_user: str = ""
+    clickhouse_ingest_password: str = ""
 
     # Query limits and timeouts
     max_execution_time: int = 20  # seconds
