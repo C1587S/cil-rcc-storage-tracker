@@ -222,12 +222,12 @@ class VoronoiStore:
             SELECT path, max(last_modified) AS last_modified
             FROM directory_recursive_sizes
             WHERE snapshot_date = %(snapshot_date)s
-              AND (path = %(root_path)s OR path LIKE %(path_prefix)s)
+              AND (path = %(root_path)s OR startsWith(path, %(path_prefix)s))
               AND (length(path) - length(replaceAll(path, '/', ''))) <= %(max_slashes)s
             GROUP BY path
         ) AS r ON r.path = v.path
         WHERE v.snapshot_date = %(snapshot_date)s
-          AND (v.path = %(root_path)s OR v.path LIKE %(path_prefix)s)
+          AND (v.path = %(root_path)s OR startsWith(v.path, %(path_prefix)s))
           AND v.depth <= %(max_depth)s
           AND (v.depth <= %(full_depth)s OR v.size >= %(min_size)s OR v.file_count >= %(min_files)s)
         ORDER BY v.depth, v.path
@@ -237,7 +237,7 @@ class VoronoiStore:
             {
                 "snapshot_date": snapshot_date,
                 "root_path": root_path,
-                "path_prefix": f"{root_path}/%",
+                "path_prefix": f"{root_path}/",
                 "max_depth": max_absolute_depth,
                 "full_depth": root_depth + 2,
                 "min_size": min_size,

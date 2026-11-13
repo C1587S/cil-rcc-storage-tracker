@@ -133,8 +133,8 @@ def archive_headroom():
     snap = _latest_snapshot()
     rows = get_client().execute(
         "SELECT sum(size) FROM filesystem.entries"
-        " WHERE snapshot_date = %(d)s AND (path = %(r)s OR path LIKE %(p)s) AND is_directory = 0",
-        {"d": snap, "r": ARCHIVE_DESTINATION_ROOT, "p": ARCHIVE_DESTINATION_ROOT + "/%"},
+        " WHERE snapshot_date = %(d)s AND (path = %(r)s OR startsWith(path, %(p)s)) AND is_directory = 0",
+        {"d": snap, "r": ARCHIVE_DESTINATION_ROOT, "p": ARCHIVE_DESTINATION_ROOT + "/"},
     )
     used = rows[0][0] or 0
     free = max(0, ARCHIVE_QUOTA_BYTES - used)
@@ -572,7 +572,7 @@ def sweep(body: SweepIn, x_user: str | None = Header(default=None)):
                owner, sum(size) AS b, count() AS c, max(modified_time) AS mx
         FROM filesystem.entries
         WHERE snapshot_date = %(snap)s
-          AND (path = %(root)s OR path LIKE %(rootpfx)s)
+          AND (path = %(root)s OR startsWith(path, %(rootpfx)s))
           AND is_directory = 0 AND position(owner, char(0)) = 0
         GROUP BY grp, owner
     )
@@ -581,7 +581,7 @@ def sweep(body: SweepIn, x_user: str | None = Header(default=None)):
     ORDER BY bytes DESC
     LIMIT 500
     """
-    groups = ch.execute(sql, {"snap": snap, "root": body.root, "rootpfx": body.root + "/%"},
+    groups = ch.execute(sql, {"snap": snap, "root": body.root, "rootpfx": body.root + "/"},
                         settings={"max_result_rows": 0, "max_result_bytes": 0,
                                   "max_execution_time": 300})
 
@@ -895,8 +895,8 @@ def quarantine_groups():
                 else:
                     held = get_client().execute(
                         "SELECT count() FROM filesystem.entries"
-                        " WHERE snapshot_date = %(d)s AND path LIKE %(q)s AND is_directory = 0",
-                        {"d": snap, "q": m["quarantine_dir"] + "/%"})[0][0]
+                        " WHERE snapshot_date = %(d)s AND startsWith(path, %(q)s) AND is_directory = 0",
+                        {"d": snap, "q": m["quarantine_dir"] + "/"})[0][0]
                     g["on_disk"] = int(held)
                     if held == 0:
                         g["status"] = ("VANISHED — registry says held, snapshot shows nothing;"
@@ -1147,7 +1147,7 @@ def story(path: str = Query(..., min_length=1)):
 
     with hk.tx() as conn:
         args3 = (p, p, p)
-        cover = " (path = %s OR %s LIKE path || '/%%' OR path LIKE %s || '/%%')"
+        cover = " (path = %s OR starts_with(%s, path || '/') OR starts_with(path, %s || '/'))"
 
         for tid, tpath, tname, tby, tat in conn.execute(
                 "SELECT id, path, name, created_by, created_at FROM target WHERE" + cover,
@@ -1222,8 +1222,8 @@ def story(path: str = Query(..., min_length=1)):
             "SELECT countIf(path = %(p)s), countIf(path != %(p)s),"
             " maxIf(is_directory, path = %(p)s), maxIf(size, path = %(p)s)"
             " FROM filesystem.entries WHERE snapshot_date = %(s)s"
-            " AND (path = %(p)s OR path LIKE %(pfx)s)",
-            {"s": snap, "p": p, "pfx": p + "/%"})[0]
+            " AND (path = %(p)s OR startsWith(path, %(pfx)s))",
+            {"s": snap, "p": p, "pfx": p + "/"})[0]
         exact, under, is_dir, size = int(r[0]), int(r[1]), int(r[2] or 0), int(r[3] or 0)
         if exact == 0 and under == 0:
             return None

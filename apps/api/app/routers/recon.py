@@ -123,19 +123,19 @@ def by_age(root: str = Query(...), min_age_days: int = Query(365, ge=30),
         FROM filesystem.directory_recursive_sizes AS r
         LEFT JOIN (
             SELECT path, last_modified FROM filesystem.directory_recursive_sizes
-            WHERE snapshot_date = %(snap)s AND (path = %(root)s OR path LIKE %(rootpfx)s)
+            WHERE snapshot_date = %(snap)s AND (path = %(root)s OR startsWith(path, %(rootpfx)s))
         ) AS p
           ON p.path = arrayStringConcat(arraySlice(splitByChar('/', r.path), 1,
                         length(splitByChar('/', r.path)) - 1), '/')
         WHERE r.snapshot_date = %(snap)s
-          AND (r.path = %(root)s OR r.path LIKE %(rootpfx)s)
+          AND (r.path = %(root)s OR startsWith(r.path, %(rootpfx)s))
           AND r.last_modified > 0 AND r.last_modified < %(cutoff)s
           AND (p.path = '' OR p.last_modified >= %(cutoff)s)
         ORDER BY r.recursive_size_bytes DESC
         LIMIT 200
         """
         rows = get_client().execute(sql, {
-            "snap": snap, "root": root, "rootpfx": root + "/%", "cutoff": cutoff,
+            "snap": snap, "root": root, "rootpfx": root + "/", "cutoff": cutoff,
         }, settings={"max_result_rows": 0, "max_result_bytes": 0})
         return [{"path": p, "bytes": int(b), "files": int(f), "last_modified": int(lm)}
                 for p, b, f, lm in rows]
@@ -167,13 +167,13 @@ def by_directory(root: str = Query(...), include_dismissed: bool = Query(default
                recursive_size_bytes, last_modified
         FROM filesystem.directory_recursive_sizes
         WHERE snapshot_date = %(snap)s
-          AND (path = %(root)s OR path LIKE %(rootpfx)s)
+          AND (path = %(root)s OR startsWith(path, %(rootpfx)s))
           AND (length(path) - length(replaceAll(path, '/', ''))) BETWEEN %(lo)s AND %(hi)s
         ORDER BY recursive_file_count DESC
         LIMIT 200
         """
         rows = get_client().execute(sql, {
-            "snap": snap, "root": root, "rootpfx": root + "/%", "lo": lo, "hi": hi,
+            "snap": snap, "root": root, "rootpfx": root + "/", "lo": lo, "hi": hi,
         })
         return [{"path": p, "direct_files": int(df), "files": int(rf),
                  "bytes": int(b), "last_modified": int(lm)}
@@ -194,11 +194,11 @@ def by_owner(root: str = Query(...)):
         SELECT owner, count() AS files, sum(size) AS bytes
         FROM filesystem.entries
         WHERE snapshot_date = %(snap)s
-          AND (path = %(root)s OR path LIKE %(rootpfx)s)
+          AND (path = %(root)s OR startsWith(path, %(rootpfx)s))
           AND is_directory = 0 AND {CLEAN_OWNER}
         GROUP BY owner ORDER BY bytes DESC LIMIT 100
         """
-        rows = get_client().execute(sql, {"snap": snap, "root": root, "rootpfx": root + "/%"})
+        rows = get_client().execute(sql, {"snap": snap, "root": root, "rootpfx": root + "/"})
         return [{"owner": o, "files": int(f), "bytes": int(b)} for o, f, b in rows]
 
     return {"snapshot": snap, "rows": _cached(("owners", snap, root), run)}
@@ -217,12 +217,12 @@ def owner_directories(root: str = Query(...), owner: str = Query(...)):
                count() AS files, sum(size) AS bytes, max(modified_time) AS lm
         FROM filesystem.entries
         WHERE snapshot_date = %(snap)s
-          AND (path = %(root)s OR path LIKE %(rootpfx)s)
+          AND (path = %(root)s OR startsWith(path, %(rootpfx)s))
           AND is_directory = 0 AND owner = %(owner)s
         GROUP BY grp ORDER BY bytes DESC LIMIT 100
         """
         rows = get_client().execute(sql, {
-            "snap": snap, "root": root, "rootpfx": root + "/%", "owner": owner,
+            "snap": snap, "root": root, "rootpfx": root + "/", "owner": owner,
         })
         return [{"path": g, "files": int(f), "bytes": int(b), "last_modified": int(lm)}
                 for g, f, b, lm in rows]
@@ -242,11 +242,11 @@ def largest_files(root: str = Query(...)):
         SELECT path, owner, size, modified_time, created_time
         FROM filesystem.entries
         WHERE snapshot_date = %(snap)s
-          AND (path = %(root)s OR path LIKE %(rootpfx)s)
+          AND (path = %(root)s OR startsWith(path, %(rootpfx)s))
           AND is_directory = 0 AND {CLEAN_OWNER}
         ORDER BY size DESC LIMIT 200
         """
-        rows = get_client().execute(sql, {"snap": snap, "root": root, "rootpfx": root + "/%"})
+        rows = get_client().execute(sql, {"snap": snap, "root": root, "rootpfx": root + "/"})
         return [{"path": p, "owner": o, "bytes": int(s),
                  "last_modified": int(m), "created": int(c)}
                 for p, o, s, m, c in rows]
@@ -270,11 +270,11 @@ def files_detail(root: str = Query(...), prefix: str = Query(...),
     SELECT path, owner, size, modified_time, created_time
     FROM filesystem.entries
     WHERE snapshot_date = %(snap)s
-      AND (path = %(prefix)s OR path LIKE %(pfx)s)
+      AND (path = %(prefix)s OR startsWith(path, %(pfx)s))
       AND is_directory = 0 AND {CLEAN_OWNER} {owner_cond}
     ORDER BY {order} LIMIT {int(limit)}
     """
-    params = {"snap": snap, "prefix": prefix, "pfx": prefix + "/%"}
+    params = {"snap": snap, "prefix": prefix, "pfx": prefix + "/"}
     if owner:
         params["owner"] = owner
     rows = get_client().execute(sql, params)
@@ -295,9 +295,9 @@ def preview(root: str = Query(...), path: str = Query(...)):
 
     def run():
         ch = get_client()
-        scope = {"snap": snap, "p": path, "pfx": path + "/%"}
+        scope = {"snap": snap, "p": path, "pfx": path + "/"}
         base = ("FROM filesystem.entries WHERE snapshot_date = %(snap)s"
-                " AND (path = %(p)s OR path LIKE %(pfx)s) AND is_directory = 0")
+                " AND (path = %(p)s OR startsWith(path, %(pfx)s)) AND is_directory = 0")
         totals = ch.execute(
             f"SELECT count(), sum(size), min(modified_time), max(modified_time) {base}", scope)[0]
         exts = ch.execute(
@@ -408,7 +408,7 @@ def duplicates(root: str = Query(...), min_size: int = Query(1 << 30, ge=1 << 20
                        arrayEnumerate(splitByChar('/', min(path)))) AS diverge_pos
             FROM filesystem.entries
             WHERE snapshot_date = %(snap)s
-              AND (path = %(root)s OR path LIKE %(rootpfx)s)
+              AND (path = %(root)s OR startsWith(path, %(rootpfx)s))
               AND is_directory = 0 AND size >= %(min)s AND {CLEAN_OWNER}
             GROUP BY name, size
             HAVING copies > 1
@@ -417,7 +417,7 @@ def duplicates(root: str = Query(...), min_size: int = Query(1 << 30, ge=1 << 20
         LIMIT 300
         """
         rows = get_client().execute(sql, {
-            "snap": snap, "root": root, "rootpfx": root + "/%", "min": min_size,
+            "snap": snap, "root": root, "rootpfx": root + "/", "min": min_size,
         }, settings={"max_result_rows": 0, "max_result_bytes": 0})
         return [{"name": n, "bytes": int(sz), "copies": int(c), "wasted": int(w),
                  "paths": list(ps), "owners": list(os_), "diverge_level": int(dl)}

@@ -65,10 +65,10 @@ async def search_files(
                 # No scope filter needed for root
                 pass
             else:
-                # Use parameterized LIKE pattern to avoid % formatting issues
-                scope_filter = "AND (parent_path = %(scope_path)s OR parent_path LIKE %(scope_pattern)s)"
+                # Literal prefix match: `_`/`%` in directory names are not wildcards
+                scope_filter = "AND (parent_path = %(scope_path)s OR startsWith(parent_path, %(scope_pattern)s))"
                 params["scope_path"] = scope_path
-                params["scope_pattern"] = f"{scope_path}/%" # Pattern with % passed as parameter
+                params["scope_pattern"] = f"{scope_path}/"
         except QueryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
