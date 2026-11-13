@@ -3,7 +3,7 @@ import json
 import time
 import os
 import threading
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -13,6 +13,21 @@ from app.errors import internal_error
 from app import rcc_tls
 
 router = APIRouter(prefix="/api/computing", tags=["computing"])
+
+# The RCC chain publishes every 15 minutes; anything older means it stopped.
+MAX_REPORT_AGE_HOURS = 26
+
+
+def report_published_at(data: dict) -> datetime | None:
+    """report_meta.published_at as an aware datetime, or None."""
+    raw = (data.get("report_meta") or {}).get("published_at")
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 # In-memory cache for the live report
 _cache: dict = {"data": None, "ts": 0}
@@ -147,7 +162,19 @@ async def ingest_latest():
     if not data:
         raise HTTPException(status_code=503, detail="No report to ingest")
 
-    today = date.today()
+    # Rows carry the REPORT's date, not today's: re-ingesting an unchanged
+    # report rewrites the same day (ReplacingMergeTree) instead of copying
+    # stale numbers into a new day, which happened every day after the RCC
+    # chain stopped on 2026-09-12.
+    published = report_published_at(data)
+    if published is None:
+        raise HTTPException(status_code=422, detail="report has no report_meta.published_at")
+    age_h = (datetime.now(timezone.utc) - published).total_seconds() / 3600
+    if age_h > MAX_REPORT_AGE_HOURS:
+        raise HTTPException(status_code=409, detail=(
+            f"report is stale: published {published.isoformat()} ({age_h / 24:.1f} days ago); "
+            "the RCC computing chain is not publishing. Not ingesting."))
+    today = published.date()
 
     try:
         client = _get_write_client()
