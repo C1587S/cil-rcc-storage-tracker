@@ -17,6 +17,7 @@ eventually be owned by the Climate Impact Lab rather than a personal account.
 | 7. BigQuery experiment | Designed, not started ([bigquery-experiment.md](bigquery-experiment.md)) |
 | 8. Self-hosted SQL assistant | Designed, not started ([sql-assistant-experiment.md](sql-assistant-experiment.md)): local LLM in the browser (WebLLM or Transformers.js, small quantized model) as the primary assistant for question→SQL, ClickHouse↔BigQuery adaptation, error repair and plain-language explanations; SQLGlot as an optional deterministic fallback for translating existing SQL; the manual SQL editor always available; no external AI inference API, third-party model hosting or AI telemetry: model weights are pinned, checksummed and served from our own infrastructure; server-side validation, read-only accounts, limits and cost controls independent of the model |
 | 9. UI/UX redesign | Planned, **after** reporting recovery and data-integrity work. See "UI/UX redesign" below |
+| 10. Content-verified duplicates | **Implemented on a branch, under review** ([duplicate-verification.md](duplicate-verification.md)): size-only candidates from ClickHouse, read-only I/O-budgeted verifier (`cil-dupverify`: spread samples → BLAKE3 → optional byte compare), import, read-only API and a separate Housekeeping view; name+size matches relabeled as unverified. Next, each with approval: apply the additive schema, then one budgeted RCC pilot |
 
 ## UI/UX redesign (milestone 9)
 

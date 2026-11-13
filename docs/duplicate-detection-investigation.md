@@ -1,7 +1,7 @@
 # Duplicate Detection Investigation
 
 **Date:** April 2026
-**Status:** Closed -- not applicable to this filesystem
+**Status:** Closed -- not applicable to this filesystem. Content verification is now a separate, opt-in workflow: see [duplicate-verification.md](duplicate-verification.md).
 
 ## Summary
 
