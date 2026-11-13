@@ -107,6 +107,11 @@ check "submits the scan array with one SCAN_DATE" 'grep -q -- "--job-name=cil_sc
 check "finalize depends on the array (afterany)" 'grep -q -- "--dependency=afterany:1002 .*--finalize 1002 $(date +%Y-%m-%d)" "$FAKE/sbatch.log"'
 check "marks the scan as running" '[ -f "$T/scratch/.scan_running" ]'
 
+reset_fake f2
+CIL_SCAN_INTERVAL_DAYS=7 CIL_SCAN_CPUS=4 run 604 cil_daily_pipeline scanner/scripts/daily_pipeline.sh > "$FAKE/out" 2>&1
+check "CIL_SCAN_INTERVAL_DAYS sets the next run" 'head -1 "$FAKE/sbatch.log" | grep -q -- "--begin=$(date -d "+7 days" +%Y-%m-%d)T02:00:00"'
+check "CIL_SCAN_CPUS sets scanner threads per source" 'grep -q -- "--job-name=cil_scan --cpus-per-task=4" "$FAKE/sbatch.log"'
+
 reset_fake g
 echo "99 RUNNING cil_scan now" > "$FAKE/queue"
 run 601 cil_daily_pipeline scanner/scripts/daily_pipeline.sh > "$FAKE/out" 2>&1

@@ -74,8 +74,14 @@ if [ "${1:-}" = "--finalize" ]; then
   exit 0
 fi
 
+# Cadence and metadata pressure, both inherited by later runs (sbatch
+# exports the environment): CIL_SCAN_INTERVAL_DAYS (default 1) and
+# CIL_SCAN_CPUS = scanner threads per source (default 8, from the array
+# header). Fewer threads = fewer concurrent stat calls on GPFS, longer runs.
+INTERVAL_DAYS="${CIL_SCAN_INTERVAL_DAYS:-1}"
+
 chain_guard_overlap
-chain_schedule_next "$(date -d 'tomorrow 02:00' +%Y-%m-%dT%H:%M:%S)" \
+chain_schedule_next "$(date -d "+${INTERVAL_DAYS} days 02:00" +%Y-%m-%dT%H:%M:%S)" \
   || chain_log "continuing with today's scan despite the scheduling failure"
 
 if [ -n "$(squeue -h -u "$USER" -n cil_scan -o %i 2>/dev/null)" ]; then
@@ -88,7 +94,9 @@ mkdir -p "$OUTPUT_DIR"
 rm -f "$CHAIN_LOG_DIR"/scan_*.out "$CHAIN_LOG_DIR"/scan_*.err
 echo "started=$(date -Is) date=$DATE" > "$RUNNING_MARK"
 
-ARRAY_ID=$(sbatch --parsable --account="$ACCOUNT" --job-name=cil_scan \
+CPU_ARGS=()
+[ -n "${CIL_SCAN_CPUS:-}" ] && CPU_ARGS=(--cpus-per-task="$CIL_SCAN_CPUS")
+ARRAY_ID=$(sbatch --parsable --account="$ACCOUNT" --job-name=cil_scan "${CPU_ARGS[@]}" \
              --export=ALL,SCAN_DATE="$DATE" "$SCAN_SCRIPT")
 ARRAY_ID="${ARRAY_ID%%;*}"
 chain_log "submitted scan array $ARRAY_ID for $DATE"
