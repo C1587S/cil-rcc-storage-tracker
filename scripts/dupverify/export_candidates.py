@@ -101,6 +101,8 @@ def main() -> int:
     ap.add_argument("--max-groups", type=int, default=0, help="0 = all")
     ap.add_argument("--max-files-per-group", type=int, default=50_000,
                     help="list at most this many paths per group (marked truncated)")
+    ap.add_argument("--skip-groups-over", type=int, default=0,
+                    help="leave out groups with more files than this (0 = keep all); for small pilots")
     ap.add_argument("--batch-sizes", type=int, default=2000, help="sizes per path query")
     a = ap.parse_args()
     dt.date.fromisoformat(a.date)
@@ -109,16 +111,17 @@ def main() -> int:
 
     scope = {"date": a.date, "min_size": a.min_size, "max_size": a.max_size,
              "prefix": sorted(a.prefix), "exclude_prefix": sorted(a.exclude_prefix),
-             "max_files_per_group": a.max_files_per_group}
+             "max_files_per_group": a.max_files_per_group, "skip_groups_over": a.skip_groups_over}
     scope_id = hashlib.blake2b(json.dumps(scope, sort_keys=True).encode(), digest_size=4).hexdigest()
     params = {"d": a.date, "min": a.min_size, "max": a.max_size, "anyp": int(not a.prefix),
               "inc": ch_literal_array(a.prefix), "exc": ch_literal_array(a.exclude_prefix)}
     ch = CH()
 
     limit = f"LIMIT {int(a.max_groups)}" if a.max_groups > 0 else ""
+    having = f"n >= 2 AND n <= {int(a.skip_groups_over)}" if a.skip_groups_over > 0 else "n >= 2"
     groups = list(ch.stream(
         f"SELECT size, count() AS n FROM filesystem.entries WHERE {FILTER} "
-        f"GROUP BY size HAVING n >= 2 ORDER BY {ORDERS[a.order]} {limit}", params))
+        f"GROUP BY size HAVING {having} ORDER BY {ORDERS[a.order]} {limit}", params))
 
     tmp = a.out + ".partial"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

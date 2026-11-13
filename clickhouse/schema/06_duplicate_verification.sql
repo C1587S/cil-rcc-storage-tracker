@@ -88,6 +88,8 @@ CREATE TABLE IF NOT EXISTS filesystem.dupverify_files
     nlink UInt32,
     allocated_bytes UInt64,
     sparse UInt8,
+    mtime_ns Int64,                          -- version verified; compared with later
+    ctime_ns Int64,                          --   snapshots and live stat to detect changes
     path String,
     owner String,
     imported_at DateTime DEFAULT now()

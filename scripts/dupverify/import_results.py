@@ -71,11 +71,17 @@ def main() -> int:
         summaries[s["run_id"]] = s
 
     lines_by_run = defaultdict(list)
+    unparsable = 0
     with open(os.path.join(a.out, "results.jsonl")) as f:
         for line in f:
-            if line.strip():
+            if not line.strip():
+                continue
+            try:
                 r = json.loads(line)
-                lines_by_run[r["run_id"]].append(r)
+            except json.JSONDecodeError:
+                unparsable += 1  # a line cut off by a crash; that group was redone by the next run
+                continue
+            lines_by_run[r["run_id"]].append(r)
 
     run_ids = sorted(lines_by_run)
     known = set()
@@ -119,6 +125,7 @@ def main() -> int:
                             "byte_verified": int(d["byte_verified"]), "copies": d["copies"],
                             "external_links": int(d["external_links"]), "dev": ino["dev"], "inode": ino["ino"],
                             "nlink": ino["nlink"], "allocated_bytes": ino["allocated_bytes"],
+                            "mtime_ns": ino.get("mtime_ns", 0), "ctime_ns": ino.get("ctime_ns", 0),
                             "sparse": int(ino["sparse"]), "path": pe["path"], "owner": pe.get("owner") or "",
                         })
         s = summaries.get(run_id)
@@ -156,7 +163,7 @@ def main() -> int:
         insert("dupverify_files", files)
         insert("dupverify_skipped", skipped)
         insert("dupverify_runs", [run])
-    print(json.dumps({"dry_run": a.dry_run, **totals}))
+    print(json.dumps({"dry_run": a.dry_run, "unparsable_lines": unparsable, **totals}))
     return 0
 
 
