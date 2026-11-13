@@ -59,12 +59,21 @@ fi
 
 # Step 1: Detect latest published date from RCC
 echo "Checking RCC public URL for latest scan..."
-# Anchor on gcp_ (a core daily source): out-of-band sources like cds3 are
-# published on their own schedule and must not advance the snapshot date.
-NEW_DATE=$(rcc_curl -s "${RCC_URL}/" \
-  | grep -oP '(?<=href=")gcp_\d{4}-\d{2}-\d{2}_chunk' \
-  | grep -oP '\d{4}-\d{2}-\d{2}' \
-  | sort -u | tail -1)
+# Preferred: latest_published.txt, written LAST by publish_scans.sh, so a
+# publish still in progress is never picked up half-copied.
+MARKER=$(rcc_curl -sf "${RCC_URL}/latest_published.txt" 2>/dev/null || true)
+if [ -n "$MARKER" ]; then
+  NEW_DATE=$(printf '%s\n' "$MARKER" | sed -n 's/^dates=//p' | tr ' ' '\n' \
+    | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | sort | tail -1)
+  echo "Publish marker: $(printf '%s' "$MARKER" | tr '\n' ' ')"
+else
+  # Legacy publishers (no marker): anchor on gcp_ (a core daily source);
+  # out-of-band sources like cds3 must not advance the snapshot date.
+  NEW_DATE=$(rcc_curl -s "${RCC_URL}/" \
+    | grep -oP '(?<=href=")gcp_\d{4}-\d{2}-\d{2}_chunk' \
+    | grep -oP '\d{4}-\d{2}-\d{2}' \
+    | sort -u | tail -1)
+fi
 
 if [ -z "$NEW_DATE" ]; then
   echo "ERROR: Could not detect published date from ${RCC_URL}"
